@@ -50,8 +50,8 @@ on. (Global preference: `cargo audit` too, before commit/push.)
 ## Running locally
 
 ```bash
-aws sso login --profile umami-dev
-cp .env.example .env    # fill UMAMI_SIGNING_KEY
+aws sso login --profile dbx-dev    # dev testing runs against the shared dbx-dev account
+cp .env.example .env               # fill UMAMI_SIGNING_KEY
 cargo run --features pretty_logs
 ```
 

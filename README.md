@@ -61,7 +61,7 @@ on startup via `with_client`).
 
 ```bash
 cp .env.example .env        # then fill UMAMI_SIGNING_KEY (see below)
-aws sso login --profile umami-dev
+aws sso login --profile dbx-dev
 
 cargo run --features pretty_logs
 ```
