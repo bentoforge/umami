@@ -38,9 +38,15 @@
     )
 )]
 
+mod auth;
+
+use crate::auth::tokens::jwks_route;
 use std::env;
+use std::sync::Arc;
 use wasabi::tools::system::install_termination_listener;
+use wasabi::web::auth::authenticator::Authenticator;
 use wasabi::web::info_service::get_info_route;
+use wasabi::web::user_info_service::get_user_info_route;
 use wasabi::web::warp::run_webserver;
 use wasabi::{APP_NAME, APP_VERSION, CLUSTER_ID, TASK_ID, routes};
 
@@ -85,5 +91,14 @@ async fn app() -> anyhow::Result<()> {
             .join(", ")
     );
 
-    run_webserver(routes![get_info_route()]).await
+    // umami guards its own admin routes with a trusted issuer (for local dev it can trust
+    // itself via the JWKS endpoint below — see AUTH_ISSUER in .env.example).
+    let authenticator = Arc::new(Authenticator::from_env()?);
+
+    run_webserver(routes![
+        get_info_route(),
+        get_user_info_route(authenticator),
+        jwks_route()
+    ])
+    .await
 }

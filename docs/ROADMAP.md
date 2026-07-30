@@ -27,16 +27,26 @@ step ends with a **green gate**: `cargo fmt --check && cargo clippy -- -D warnin
 > (`admin:tenant`, `write:members`, `write:teams`), `REFRESH_COOKIE_NAME`, access/refresh TTL
 > defaults.
 
-## Phase 1 — Skeleton service
+## Phase 1 — Skeleton service  ✅ DONE
 
-- [ ] `src/constants.rs` — first constants wired as their consumers land (see Phase 0 note)
-- [ ] Wire `DynamoClient::from_env()` and `Authenticator::from_env()` into `app()`
-- [ ] Stub `GET /.well-known/jwks.json` returning an empty/static key set
-- [ ] `auth/mod.rs` module skeleton + claim assembly helper (reuse wasabi `CLAIM_*`)
-- [ ] 🟢 boots with Dynamo + auth wired, JWKS stub reachable
+- [x] Wire `Authenticator::from_env()` into `app()`; expose wasabi's `get_user_info_route`
+      (consumes the authenticator, so the wiring is exercised)
+- [x] Stub `GET /.well-known/jwks.json` returning an empty key set (`auth/tokens.rs`)
+- [x] `auth/mod.rs` module skeleton
+- [x] 🟢 boots with auth wired; JWKS stub → `{"keys":[]}`, `/user-info/v1` without token → 401,
+      `/info/v1` → 200
+
+> **Deferred to Phase 2 (dead-code discipline):**
+> - **`DynamoClient::from_env()`** — has no consumer until the first repository, so wiring it now
+>   would be an unused binding. It lands with the `users` repository in Phase 2, which is also the
+>   first real AWS boot test (needs `aws sso login --profile dbx-dev`).
+> - **`constants.rs`** — no consumer in Phase 1 (the JWKS stub needs none); lands with login.
+> - **Claim-assembly helper** — needs a real user/tenant to assemble from; lands with token issuance.
 
 ## Phase 2 — Users + password login + token issuance  *(the crux; prove interop here)*
 
+- [ ] `constants.rs` + `DynamoClient::from_env()` wiring (deferred from Phase 1) — land with the
+      first repository and login handler
 - [ ] `users/` — `User` entity (`userId`, `email`, `name`, `locale`, `passwordHash`, `status`,
       `tokenVersion`, timestamps); `DynamoUserRepository` + `EmailIndex` GSI; email-uniqueness on
       write (conditional put or `user-emails` lookup table)
