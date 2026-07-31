@@ -70,26 +70,38 @@ step ends with a **green gate**: `cargo fmt --check && cargo clippy -- -D warnin
       *(Pointing dbx-core at umami is the same config; a live dbx-core run wasn't needed to prove
       the path. EdDSA remains unexplored — ES256 confirmed working.)*
 
-## Phase 3 — Tenants + memberships + role→permission resolution
+> **Model note (see [SCHEMA.md](SCHEMA.md), which supersedes PLAN.md §3):** tenant **owns** user
+> (no memberships table); global email identity; **no** parent-tenant and **no** switch-tenant in
+> v1 (one tenant per user → the `tenant` claim is always the home tenant). Cross-tenant is a
+> *later* feature built on user-invites. Teams are deferred (a separate authz axis).
 
-- [ ] `tenants/` — `Tenant` entity (incl. status/plan/usage fields), `DynamoTenantRepository`,
-      CRUD routes `POST /tenants`, `GET/PATCH /tenants/{id}`
-- [ ] `memberships/` — `Membership` entity (PK `tenantId`, SK `userId`, `role`, `teamIds`,
-      `status`), `ByUserIndex` GSI; `PUT/DELETE /tenants/{id}/members/{userId}`
-- [ ] Role→permission map (`owner`/`admin`/`member`/`viewer` → wasabi permission strings); resolve
-      **effective permissions for the active tenant** at token-issue time and bake into claim
-- [ ] `auth/me.rs` — `GET /auth/me` (profile + memberships), `POST /auth/switch-tenant`
-      (validate membership → re-issue token scoped to new tenant, update `session.activeTenantId`)
-- [ ] `POST /auth/logout-all` — bump `user.tokenVersion`
-- [ ] 🟢 login → switch-tenant re-issues token with new `tenant` + permissions; logout-all
-      invalidates at next refresh
+## Phase 3 — Tenants + tenant-owned users + role→permissions + /auth/me
 
-## Phase 4 — Teams
+- [ ] `tenants/` — `Tenant` entity (id/name/slug + status/plan/usage), `DynamoTenantRepository`,
+      CRUD `POST /tenants`, `GET /tenants/{id}`, `PATCH /tenants/{id}`
+- [ ] Extend `User` — add `tenantId` (owning tenant) + `role` (`owner`/`admin`/`member`/`viewer`)
+      + `ByTenantIndex` GSI (list a tenant's users)
+- [ ] `POST /tenants` creates the tenant **and its first `owner` user** (email+password) — the
+      self-serve bootstrap that **replaces** the `UMAMI_ALLOW_OPEN_SIGNUP` dev hack
+- [ ] Gate `POST /users` behind `write:members` (create users in the caller's own tenant); add
+      `GET /users/{id}`, list, `PATCH` (role/status)
+- [ ] Role→permission resolver; login/refresh now bake **real** `permissions` (from role) and
+      `tenant` (= home tenant) into the token
+- [ ] `auth/me.rs` — `GET /auth/me` (profile: user + tenant + role)
+- [ ] `POST /auth/logout-all` — bump `user.tokenVersion`; add `sessions` `ByUserIndex` GSI
+- [ ] 🟢 create tenant+owner → login yields a token with role-derived permissions + tenant claim;
+      admin creates a second user; logout-all invalidates at next refresh; protected route on a
+      product service accepts the permissioned token
 
-- [ ] `teams/` — `Team` entity (PK `tenantId`, SK `teamId`), `DynamoTeamRepository`, CRUD
-      `POST /tenants/{id}/teams`, list, `PATCH`, `DELETE`
-- [ ] Team assignment on memberships (`teamIds` maintenance)
-- [ ] 🟢 team CRUD + membership team-assignment covered by tests
+## Phase 4 — User invites  *(onboarding; basis for later cross-tenant)*
+
+- [ ] Invite flow: create a user as `Invited` (no password) + an invite token; accept-invite sets
+      the password and flips to `Active`
+- [ ] Wire invite issuance into `POST /users` (invite vs. direct-create)
+- [ ] 🟢 invite → accept → login works; expired/again-used invite rejected
+
+> Teams (intra-tenant resource authorization) and cross-tenant switching are **post-v1** — see
+> SCHEMA.md "Deferred". Revisit once invites and a real product authorization need exist.
 
 ## Phase 5 — MFA
 
@@ -110,7 +122,7 @@ step ends with a **green gate**: `cargo fmt --check && cargo clippy -- -D warnin
 
 ## Phase 7 — TypeScript SDK (`clients/typescript/`)
 
-- [ ] `login`/`logout`/`switchTenant`/`getMe`; in-memory access token; auto-refresh-on-401 fetch
+- [ ] `login`/`logout`/`getMe`; in-memory access token; auto-refresh-on-401 fetch
       wrapper; `credentials: 'include'`
 - [ ] WebAuthn wrappers (`registerPasskey`/`loginWithPasskey`)
 - [ ] Type generation from the Rust contract (OpenAPI or emitted TS types) so SDK can't drift
@@ -132,7 +144,9 @@ step ends with a **green gate**: `cargo fmt --check && cargo clippy -- -D warnin
 
 SAML, SCIM, social login beyond generic OIDC · hosted/branded login UI · single-table DynamoDB
 design · an embeddable `umami-core` library crate · instant (sub-token-TTL) revocation at product
-services.
+services · **M:N user↔tenant memberships · parent-tenant hierarchy · cross-tenant switching ·
+teams** (see [SCHEMA.md](SCHEMA.md) — tenant owns user; multi-tenant is a later invite-based
+feature).
 
 ## Working agreement
 

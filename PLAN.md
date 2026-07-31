@@ -131,6 +131,12 @@ layout decision worth revisiting later; everything else should just follow dbx-c
 
 ## 3. Data model
 
+> ⚠️ **Superseded by [docs/SCHEMA.md](docs/SCHEMA.md).** The M:N sketch below was the original
+> exploration. The **decided** model is *tenant owns user* (no memberships table), global email
+> identity, no parent-tenant and no cross-tenant switching in v1; teams and multi-tenant (via
+> invites) are deferred. Read SCHEMA.md for the authoritative entities and endpoints; the section
+> below is kept for historical context only.
+
 Interpretation of the requested chain `tenant 1─N team, team M─N user, user 1─N session`:
 
 - A **Tenant** (workspace) has many **Teams**.
