@@ -1,8 +1,24 @@
 //! Application-wide constants for umami.
 //!
-//! Centralizes body-size limits, cookie names, and token/session TTL defaults consumed across the
-//! auth layer. Permission strings (the contract with product services) arrive with the first
-//! permission-gated routes in Phase 3.
+//! Centralizes body-size limits, cookie names, token/session TTL defaults, and the built-in
+//! permission strings consumed across the auth and tenant layers.
+
+// ── Defaults ──────────────────────────────────────────────────────────────────
+
+/// Default BCP-47 locale for users created without an explicit one.
+pub const DEFAULT_LOCALE: &str = "en-US";
+
+// ── Permission strings (umami's own admin surface) ────────────────────────────
+//
+// Provisional role→permission map (see `users::role_permissions`). Product-service permission
+// strings (e.g. dbx-core's `write:blocks`) will be folded in when the permission model is
+// redesigned; for now these gate umami's own tenant/user administration.
+
+/// Full administrative control over a tenant (settings, license).
+pub const ADMIN_TENANT_PERMISSION: &str = "admin:tenant";
+
+/// Manage a tenant's users (create/list/patch, roles, status).
+pub const WRITE_MEMBERS_PERMISSION: &str = "write:members";
 
 // ── Body size limits ──────────────────────────────────────────────────────────
 

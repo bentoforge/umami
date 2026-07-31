@@ -5,6 +5,7 @@
 
 pub mod cookies;
 pub mod login;
+pub mod me;
 pub mod password;
 pub mod session;
 pub mod tokens;

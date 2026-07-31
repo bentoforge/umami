@@ -12,7 +12,7 @@ use crate::auth::session::{
 };
 use crate::auth::tokens::AccessTokenClaims;
 use crate::constants::MAX_TEXT_BODY_SIZE;
-use crate::users::UserStatus;
+use crate::users::{UserStatus, role_permissions};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
@@ -24,12 +24,11 @@ use warp::http::header::SET_COOKIE;
 use wasabi::status_bail;
 use wasabi::web::warp::{into_rejection, with_body_as_json, with_cloneable};
 
-/// Login request body. `tenant` optionally pins the active tenant (memberships arrive in Phase 3).
+/// Login request body. A user belongs to exactly one tenant, so no tenant selection is needed.
 #[derive(Deserialize, Debug)]
 struct LoginRequest {
     email: String,
     password: String,
-    tenant: Option<String>,
 }
 
 /// Login/refresh success body. The access token is returned in the body (kept in memory by the
@@ -154,13 +153,12 @@ async fn login(
 
     let secret = generate_refresh_secret();
     let refresh_hash = hash_refresh_secret(&secret);
-    let active_tenant = request.tenant;
 
     let session = context
         .sessions
         .create_session(NewSession {
             user_id: user.user_id.clone(),
-            active_tenant_id: active_tenant.clone(),
+            active_tenant_id: Some(user.tenant_id.clone()),
             refresh_hash,
             token_version_at_issue: user.token_version,
             ttl_secs: context.refresh_ttl_secs,
@@ -169,8 +167,8 @@ async fn login(
         })
         .await?;
 
-    // Phase 3 resolves effective permissions from the user's membership in the active tenant.
-    let permissions: Vec<String> = Vec::new();
+    // Effective permissions are resolved from the user's role in their (home) tenant.
+    let permissions = role_permissions(user.role);
 
     let (access_token, _exp) = context
         .tokens
@@ -179,7 +177,7 @@ async fn login(
             name: &user.name,
             email: &user.email,
             locale: &user.locale,
-            tenant: active_tenant.as_deref(),
+            tenant: Some(&user.tenant_id),
             permissions: &permissions,
             token_version: user.token_version,
         })
@@ -248,7 +246,7 @@ async fn refresh(
         .rotate_session(&session_id, new_hash, context.refresh_ttl_secs)
         .await?;
 
-    let permissions: Vec<String> = Vec::new();
+    let permissions = role_permissions(user.role);
 
     let (access_token, _exp) = context
         .tokens

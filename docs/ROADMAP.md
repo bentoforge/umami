@@ -75,33 +75,32 @@ step ends with a **green gate**: `cargo fmt --check && cargo clippy -- -D warnin
 > v1 (one tenant per user → the `tenant` claim is always the home tenant). Cross-tenant is a
 > *later* feature built on user-invites. Teams are deferred (a separate authz axis).
 
-## Phase 3 — Tenants + tenant-owned users + role→permissions + /auth/me
+## Phase 3 — Tenants + tenant-owned users + role→permissions + /auth/me  ✅ DONE
 
-- [ ] `tenants/` — `Tenant` entity (id/name/slug + status/plan/usage), `DynamoTenantRepository`,
-      CRUD `POST /tenants`, `GET /tenants/{id}`, `PATCH /tenants/{id}`
-- [ ] Extend `User` — add `tenantId` (owning tenant) + `role` (`owner`/`admin`/`member`/`viewer`)
-      + `ByTenantIndex` GSI (list a tenant's users)
-- [ ] `POST /tenants` creates the tenant **and its first `owner` user** (email+password) — the
-      self-serve bootstrap that **replaces** the `UMAMI_ALLOW_OPEN_SIGNUP` dev hack
-- [ ] Gate `POST /users` behind `write:members` (create users in the caller's own tenant); add
-      `GET /users/{id}`, list, `PATCH` (role/status)
-- [ ] Role→permission resolver; login/refresh now bake **real** `permissions` (from role) and
-      `tenant` (= home tenant) into the token
-- [ ] `auth/me.rs` — `GET /auth/me` (profile: user + tenant + role)
-- [ ] `POST /auth/logout-all` — bump `user.tokenVersion`; add `sessions` `ByUserIndex` GSI
-- [ ] 🟢 create tenant+owner → login yields a token with role-derived permissions + tenant claim;
-      admin creates a second user; logout-all invalidates at next refresh; protected route on a
-      product service accepts the permissioned token
+- [x] `tenants/` — `Tenant` entity (id/name/slug + status/plan/usage), `DynamoTenantRepository`,
+      `POST /tenants`, `GET /tenants/{id}`, `PATCH /tenants/{id}` (name/plan)
+- [x] Extend `User` — `tenantId` (owning tenant) + `role` (`owner`/`admin`/`member`/`viewer`) +
+      `ByTenantIndex` GSI (list a tenant's users)
+- [x] `POST /tenants` creates the tenant **and its first `owner` user** — self-serve bootstrap
+      gated by `UMAMI_ALLOW_SIGNUP`, **replacing** the `UMAMI_ALLOW_OPEN_SIGNUP` hack
+- [x] `POST /users` gated behind `write:members`, scoped to the caller's tenant; `GET /users`
+      (list), `PATCH /users/{id}` (role/status)
+- [x] Role→permission resolver (provisional map); login/refresh bake **real** `permissions` (from
+      role) and `tenant` (= home tenant) into the token
+- [x] `auth/me.rs` — `GET /auth/me` (user + tenant, fresh from the store)
+- [x] `POST /auth/logout-all` — atomic `tokenVersion` bump
+- [x] 🟢 Verified live (DynamoDB): signup → owner token carries `admin:tenant`+`write:members` and
+      the tenant claim; owner creates member+viewer; **viewer (perms `[]`) is 401 on `POST /users`**;
+      GET/PATCH tenant work; logout-all → owner refresh 401; interop `/user-info/v1` still 200.
 
-## Phase 4 — User invites  *(onboarding; basis for later cross-tenant)*
+> `sessions` `ByUserIndex` GSI deferred to the device-list/per-device-logout feature (logout-all
+> works via the `tokenVersion` bump alone). Sequential tenant→owner and email-guard→user writes
+> carry a small orphan risk pending `TransactWriteItems` (hardening).
 
-- [ ] Invite flow: create a user as `Invited` (no password) + an invite token; accept-invite sets
-      the password and flips to `Active`
-- [ ] Wire invite issuance into `POST /users` (invite vs. direct-create)
-- [ ] 🟢 invite → accept → login works; expired/again-used invite rejected
+## Phase 4 — ~~User invites~~  *(struck)*
 
-> Teams (intra-tenant resource authorization) and cross-tenant switching are **post-v1** — see
-> SCHEMA.md "Deferred". Revisit once invites and a real product authorization need exist.
+Struck. Invites, and the permission model more broadly, will be designed differently later — not
+built as a fixed phase now. Teams and cross-tenant switching remain post-v1 (see SCHEMA.md).
 
 ## Phase 5 — MFA
 
