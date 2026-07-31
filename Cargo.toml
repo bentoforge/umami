@@ -31,10 +31,17 @@ tracing = "0.1"
 # crate version, so this MUST match wasabi-core's setting.
 aws-sdk-dynamodb = { version = "1.98", default-features = false, features = ["default-https-client", "rt-tokio"] }
 
-# ── auth core (added as phases consume them) ──────────────────────────────────
-# Phase 2: argon2 (password), jsonwebtoken (ES256 signing — features = ["aws_lc_rs"] to match
-#          wasabi-core), rand + sha2 + base64 (refresh secrets), cookie.
-# Phase 5: totp-rs, webauthn-rs.
+# ── auth core ─────────────────────────────────────────────────────────────────
+argon2 = "0.5"                 # password hashing (argon2id)
+# ES256 signing — features = ["aws_lc_rs"] to match wasabi-core's crypto backend.
+jsonwebtoken = { version = "10", default-features = false, features = ["aws_lc_rs"] }
+p256 = { version = "0.13", features = ["jwk", "pem"] }  # derive the public JWK for the JWKS endpoint
+rand = "0.9"                   # refresh-secret generation
+sha2 = "0.10"                  # refresh-secret hashing
+subtle = "2.6"                 # constant-time secret comparison
+base64 = "0.22"
+cookie = "0.18"                # HttpOnly refresh cookie build/parse
+# Phase 5 will add: totp-rs, webauthn-rs.
 
 [dev-dependencies]
 mockall = "0.14"

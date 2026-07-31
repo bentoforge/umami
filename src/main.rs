@@ -39,10 +39,18 @@
 )]
 
 mod auth;
+mod constants;
+mod users;
 
-use crate::auth::tokens::jwks_route;
+use crate::auth::login::{login_route, logout_route, refresh_route};
+use crate::auth::session::DynamoSessionRepository;
+use crate::auth::tokens::{EnvKeyRepository, KeyRepository, TokenIssuer, jwks_route};
+use crate::auth::{AuthContext, session::SessionRepository};
+use crate::users::repository::{DynamoUserRepository, UserRepository};
+use crate::users::service::create_user_route;
 use std::env;
 use std::sync::Arc;
+use wasabi::aws::dynamodb::client::DynamoClient;
 use wasabi::tools::system::install_termination_listener;
 use wasabi::web::auth::authenticator::Authenticator;
 use wasabi::web::info_service::get_info_route;
@@ -95,10 +103,29 @@ async fn app() -> anyhow::Result<()> {
     // itself via the JWKS endpoint below — see AUTH_ISSUER in .env.example).
     let authenticator = Arc::new(Authenticator::from_env()?);
 
+    let dynamo_client = DynamoClient::from_env().await?;
+
+    let user_repository: Arc<dyn UserRepository> =
+        Arc::new(DynamoUserRepository::with_client(&dynamo_client).await?);
+    let session_repository: Arc<dyn SessionRepository> =
+        Arc::new(DynamoSessionRepository::with_client(&dynamo_client).await?);
+
+    // Signing keys behind a repository: env-backed for now, AWS-backed (with periodic refresh for
+    // rotation) later — the issuer and JWKS route depend only on the trait.
+    let key_repository: Arc<dyn KeyRepository> = Arc::new(EnvKeyRepository::from_env()?);
+    let token_issuer = Arc::new(TokenIssuer::from_env(key_repository.clone())?);
+
+    let auth_context =
+        AuthContext::from_env(user_repository.clone(), session_repository, token_issuer)?;
+
     run_webserver(routes![
         get_info_route(),
         get_user_info_route(authenticator),
-        jwks_route()
+        jwks_route(key_repository),
+        login_route(auth_context.clone()),
+        refresh_route(auth_context.clone()),
+        logout_route(auth_context),
+        create_user_route(user_repository)
     ])
     .await
 }

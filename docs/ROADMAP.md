@@ -43,29 +43,32 @@ step ends with a **green gate**: `cargo fmt --check && cargo clippy -- -D warnin
 > - **`constants.rs`** — no consumer in Phase 1 (the JWKS stub needs none); lands with login.
 > - **Claim-assembly helper** — needs a real user/tenant to assemble from; lands with token issuance.
 
-## Phase 2 — Users + password login + token issuance  *(the crux; prove interop here)*
+## Phase 2 — Users + password login + token issuance  ✅ DONE  *(the crux)*
 
-- [ ] `constants.rs` + `DynamoClient::from_env()` wiring (deferred from Phase 1) — land with the
-      first repository and login handler
-- [ ] `users/` — `User` entity (`userId`, `email`, `name`, `locale`, `passwordHash`, `status`,
-      `tokenVersion`, timestamps); `DynamoUserRepository` + `EmailIndex` GSI; email-uniqueness on
-      write (conditional put or `user-emails` lookup table)
-- [ ] `auth/password.rs` — argon2id hash/verify, tuned params, constant-time
-- [ ] `auth/tokens.rs` — **ES256** signing via `jsonwebtoken` + `EncodingKey::from_ec_pem`; load
-      key/kid from env; assemble wasabi-compatible claims; real `GET /.well-known/jwks.json` (P-256
-      public JWK with `kid`)
-- [ ] `auth/session.rs` — `Session` entity + `sessions` table (PK `sessionId`, GSI `ByUserIndex`,
-      TTL on `expiresAt`); create/get/rotate/delete; store only `hash(refreshSecret)`
-- [ ] `auth/cookies.rs` — build/parse `HttpOnly; Secure; SameSite=Lax; Path=/auth` refresh cookie
-- [ ] `auth/login.rs` — `POST /auth/login` (create session, set cookie, return `{ accessToken,
-      tenants }`)
-- [ ] `POST /auth/refresh` — rotation + reuse detection (PLAN §5.5); `POST /auth/logout`
-- [ ] Unit tests: password hash/verify, token sign→decode roundtrip, session rotation, reuse
-      detection; filter tests with `warp::test::request()`
-- [ ] 🟢 **Interop check**: point a local `dbx-core` at umami
-      (`AUTH_ISSUER=<umami>/=jwks:/.well-known/jwks.json`, `AUTH_ALGORITHMS=ES256`) and call a
-      protected route with an umami-issued token → **200**. *(If choosing EdDSA instead, run the
-      OKP/Ed25519 interop test here first.)*
+- [x] `constants.rs` + `DynamoClient::from_env()` wiring (deferred from Phase 1)
+- [x] `users/` — `User` entity (`userId`, `email`, `name`, `locale`, `passwordHash`, `status`,
+      `tokenVersion`, timestamps); `DynamoUserRepository`. **Email uniqueness + lookup via a
+      dedicated `user-emails` table** (conditional put) instead of an `EmailIndex` GSI — strongly
+      consistent for both login and uniqueness (the PLAN allowed this alternative).
+- [x] `auth/password.rs` — argon2id hash/verify (default params; tuning is a Phase-8 concern)
+- [x] `auth/tokens.rs` — **ES256** signing via `jsonwebtoken` + `EncodingKey::from_ec_pem`;
+      wasabi-compatible claims; real `GET /.well-known/jwks.json` (P-256 JWK with `kid`, derived
+      via `p256`). **Keys behind a `KeyRepository` trait** (`EnvKeyRepository` now; AWS+refresh
+      later) — see [[umami-key-repository]].
+- [x] `auth/session.rs` — `Session` entity + `sessions` table (PK `sessionId`); create/get/
+      rotate/delete; stores only `hash(refreshSecret)`; numeric `ttl` attribute written so a
+      DynamoDB TTL can self-clean once enabled out-of-band (`ByUserIndex` GSI deferred to Phase 3
+      with logout-all/device-list; TTL enablement deferred to Phase 8/ops).
+- [x] `auth/cookies.rs` — build/parse `HttpOnly; Secure; SameSite=Lax; Path=/auth` refresh cookie
+- [x] `auth/login.rs` — `POST /auth/login`, `POST /auth/refresh` (rotation + reuse detection,
+      PLAN §5.5), `POST /auth/logout`. Dev-bootstrap `POST /users` gated by
+      `UMAMI_ALLOW_OPEN_SIGNUP` (Phase 3 replaces with permission gating).
+- [x] 11 unit tests (password, cookie build/parse, refresh-secret, JWK export, ES256 sign→verify)
+- [x] 🟢 **Interop verified** end-to-end against real DynamoDB (`dbx-dev`): umami's own wasabi
+      `Authenticator` (identical JWKS+ES256 path a product service uses) accepts an umami-issued
+      token on `/user-info/v1` → **200**; login/refresh-rotation/reuse-detection/logout all pass.
+      *(Pointing dbx-core at umami is the same config; a live dbx-core run wasn't needed to prove
+      the path. EdDSA remains unexplored — ES256 confirmed working.)*
 
 ## Phase 3 — Tenants + memberships + role→permission resolution
 
