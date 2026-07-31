@@ -4,9 +4,9 @@
 //! from the caller's token), so an admin can never see or touch another tenant's users. The first
 //! user of a tenant is created by `POST /tenants` (see `tenants::service`), not here.
 
-use crate::constants::{DEFAULT_LOCALE, MAX_TEXT_BODY_SIZE, WRITE_MEMBERS_PERMISSION};
+use crate::constants::{DEFAULT_LOCALE, MAX_TEXT_BODY_SIZE, ROLE_MEMBER, WRITE_MEMBERS_PERMISSION};
 use crate::users::repository::{NewUser, UserRepository};
-use crate::users::{User, UserRole, UserStatus};
+use crate::users::{User, UserStatus};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use warp::Filter;
@@ -27,13 +27,13 @@ struct CreateUserRequest {
     password: String,
     name: String,
     locale: Option<String>,
-    role: Option<UserRole>,
+    roles: Option<Vec<String>>,
 }
 
-/// Request body for patching a user's role and/or status.
+/// Request body for patching a user's roles and/or status.
 #[derive(Deserialize, Debug)]
 struct PatchUserRequest {
-    role: Option<UserRole>,
+    roles: Option<Vec<String>>,
     status: Option<UserStatus>,
 }
 
@@ -43,7 +43,7 @@ struct PatchUserRequest {
 struct UserView {
     user_id: String,
     tenant_id: String,
-    role: UserRole,
+    roles: Vec<String>,
     email: String,
     name: String,
     locale: String,
@@ -55,7 +55,7 @@ impl From<User> for UserView {
         UserView {
             user_id: user.user_id,
             tenant_id: user.tenant_id,
-            role: user.role,
+            roles: user.roles,
             email: user.email,
             name: user.name,
             locale: user.locale,
@@ -165,10 +165,14 @@ async fn create_user(
     }
 
     let password_hash = crate::auth::password::hash(&request.password)?;
+    let roles = request
+        .roles
+        .filter(|roles| !roles.is_empty())
+        .unwrap_or_else(|| vec![ROLE_MEMBER.to_owned()]);
     let user = users
         .create_user(NewUser {
             tenant_id,
-            role: request.role.unwrap_or(UserRole::Member),
+            roles,
             email: request.email,
             name: request.name,
             locale: request.locale.unwrap_or_else(|| DEFAULT_LOCALE.to_owned()),
@@ -204,8 +208,8 @@ async fn patch_user(
         _ => client_bail!("No such user in this tenant"),
     };
 
-    if let Some(role) = request.role {
-        user.role = role;
+    if let Some(roles) = request.roles {
+        user.roles = roles;
     }
     if let Some(status) = request.status {
         user.status = status;

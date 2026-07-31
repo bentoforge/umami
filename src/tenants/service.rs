@@ -4,11 +4,9 @@
 //! **and its first `owner` user**, which is the bootstrap that replaces the earlier open-signup
 //! hack. `GET`/`PATCH` require `admin:tenant` and operate only on the caller's own tenant.
 
-use crate::constants::DEFAULT_LOCALE;
-use crate::constants::{ADMIN_TENANT_PERMISSION, MAX_TEXT_BODY_SIZE};
+use crate::constants::{ADMIN_TENANT_PERMISSION, DEFAULT_LOCALE, MAX_TEXT_BODY_SIZE, ROLE_OWNER};
 use crate::tenants::repository::TenantRepository;
 use crate::tenants::{Tenant, slugify};
-use crate::users::UserRole;
 use crate::users::repository::{NewUser, UserRepository};
 use serde::{Deserialize, Serialize};
 use std::env;
@@ -164,7 +162,7 @@ async fn create_tenant(
     let owner = users
         .create_user(NewUser {
             tenant_id: tenant.tenant_id.clone(),
-            role: UserRole::Owner,
+            roles: vec![ROLE_OWNER.to_owned()],
             email: request.owner.email,
             name: request.owner.name,
             locale: request

@@ -12,8 +12,8 @@ codegen-units = 1
 
 [dependencies]
 # Framework. Pinned to a released tag; local path kept for reference during dev.
-#wasabi = { path = "../../0711sw/wasabi", features = ["aws_dynamodb"] }
-wasabi = { git = "https://github.com/0711sw/wasabi", tag = "2.6.0", features = ["aws_dynamodb"] }
+#wasabi = { path = "../../0711sw/wasabi", features = ["aws_dynamodb", "aws_s3"] }
+wasabi = { git = "https://github.com/0711sw/wasabi", tag = "2.6.0", features = ["aws_dynamodb", "aws_s3"] }
 
 dotenvy = "0.15"
 tokio = { version = "1.48", features = ["full"] }
@@ -21,6 +21,8 @@ warp = "0.3.7"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision"] }
 chrono = { version = "0.4", features = ["serde"] }
+# Exact decimals for money/limits (never f64). Matches dbx-core's setting.
+rust_decimal = { version = "1.37", features = ["serde-arbitrary-precision"] }
 anyhow = "1.0"
 async-trait = "0.1"
 futures-util = "0.3"

@@ -103,17 +103,18 @@ Replaces the struck "user invites" phase: the permission model is now **config-d
 `ConfigRepository` (trait, cached, like `KeyRepository`) serves one whole `Config` document
 (roles/features/limits/packages/custom-fields/security/claims). Sub-steps:
 
-- [ ] **Foundation** — `config/` module + `ConfigRepository` trait + `S3ConfigRepository` +
+- [x] **Foundation** — `config/` module + `ConfigRepository` trait + `S3ConfigRepository` +
       `StaticConfigRepository` (`Config::default()`); selection via `UMAMI_CONFIG_BUCKET`
-- [ ] `User.role` → **`roles: [code]`**; permissions = union of `config.roles[code].permissions`
-      (replaces the Phase-3 provisional hardcoded map)
-- [ ] `GET`/`PUT /config` (admin-gated; client loads → edits → writes the whole doc)
+- [x] `User.role` → **`roles: [code]`**; permissions = union of `config.roles[code].permissions`
+      (replaced the Phase-3 provisional hardcoded map)
+- [x] `GET`/`PUT /config` (gated by `manage:config`; PUT uses optimistic `version` concurrency →
+      409 on mismatch; client loads → edits → writes the whole doc)
+- [x] 🟢 Verified live: default config boots; owner token carries config-resolved permissions;
+      `/config` GET/PUT round-trips with a version bump; stale PUT → 409; viewer (perms `[]`) → 401
 - [ ] Security settings: enforce `minPasswordLength`; take access/refresh TTLs from config
 - [ ] Packages + accounting: `tenant.packages`, **optimistic locking** (`version` + conditional
       write + strongly-consistent reads), price schedule, effective-limits resolver
 - [ ] Features + custom fields + configurable token claims
-- [ ] 🟢 default config boots; roles resolve permissions from config; config edit round-trips;
-      accounting write is safe under concurrent updates
 
 *(Teams and cross-tenant switching remain post-v1 — see SCHEMA.md.)*
 

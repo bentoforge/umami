@@ -7,7 +7,6 @@
 pub mod repository;
 pub mod service;
 
-use crate::constants::{ADMIN_TENANT_PERMISSION, WRITE_MEMBERS_PERMISSION};
 use serde::{Deserialize, Serialize};
 
 /// Lifecycle state of a user identity.
@@ -19,34 +18,6 @@ pub enum UserStatus {
     Locked,
     /// Invited but not yet activated (e.g. no password set) — cannot log in yet.
     Invited,
-}
-
-/// A user's role within their (owning) tenant. Resolves to a permission set at token-issue time.
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum UserRole {
-    /// Full control incl. tenant settings/license.
-    Owner,
-    /// Manage users and teams; no tenant-level settings.
-    Admin,
-    /// Regular member.
-    Member,
-    /// Read-only.
-    Viewer,
-}
-
-/// Resolves the effective permissions for a role. **Provisional** — product-service permission
-/// strings will be folded in when the permission model is redesigned; today this gates umami's own
-/// tenant/user administration.
-pub fn role_permissions(role: UserRole) -> Vec<String> {
-    match role {
-        UserRole::Owner => vec![
-            ADMIN_TENANT_PERMISSION.to_owned(),
-            WRITE_MEMBERS_PERMISSION.to_owned(),
-        ],
-        UserRole::Admin => vec![WRITE_MEMBERS_PERMISSION.to_owned()],
-        UserRole::Member | UserRole::Viewer => Vec::new(),
-    }
 }
 
 /// A global user identity as stored in DynamoDB.
@@ -61,8 +32,10 @@ pub struct User {
     pub user_id: String,
     /// The owning (home) tenant. A user belongs to exactly one tenant.
     pub tenant_id: String,
-    /// Role within the owning tenant; resolves to the token's permissions.
-    pub role: UserRole,
+    /// Role codes within the owning tenant (defined in the config catalog); resolve to the token's
+    /// permissions. `#[serde(default)]` tolerates older records written before roles were a list.
+    #[serde(default)]
+    pub roles: Vec<String>,
     /// Normalized login identifier (trimmed + lowercased).
     pub email: String,
     /// Display name.

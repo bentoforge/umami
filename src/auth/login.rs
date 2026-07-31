@@ -12,7 +12,7 @@ use crate::auth::session::{
 };
 use crate::auth::tokens::AccessTokenClaims;
 use crate::constants::MAX_TEXT_BODY_SIZE;
-use crate::users::{UserStatus, role_permissions};
+use crate::users::UserStatus;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
@@ -167,8 +167,9 @@ async fn login(
         })
         .await?;
 
-    // Effective permissions are resolved from the user's role in their (home) tenant.
-    let permissions = role_permissions(user.role);
+    // Effective permissions are resolved from the user's roles via the config catalog.
+    let config = context.config.current().await?;
+    let permissions = config.permissions_for_roles(&user.roles);
 
     let (access_token, _exp) = context
         .tokens
@@ -246,7 +247,8 @@ async fn refresh(
         .rotate_session(&session_id, new_hash, context.refresh_ttl_secs)
         .await?;
 
-    let permissions = role_permissions(user.role);
+    let config = context.config.current().await?;
+    let permissions = config.permissions_for_roles(&user.roles);
 
     let (access_token, _exp) = context
         .tokens

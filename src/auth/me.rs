@@ -7,7 +7,7 @@
 use crate::tenants::Tenant;
 use crate::tenants::repository::TenantRepository;
 use crate::users::repository::UserRepository;
-use crate::users::{User, UserRole, UserStatus};
+use crate::users::{User, UserStatus};
 use serde::Serialize;
 use serde_json::json;
 use std::sync::Arc;
@@ -26,7 +26,7 @@ use wasabi::web::warp::{into_response, with_cloneable};
 struct MeUser {
     user_id: String,
     tenant_id: String,
-    role: UserRole,
+    roles: Vec<String>,
     email: String,
     name: String,
     locale: String,
@@ -38,7 +38,7 @@ impl From<User> for MeUser {
         MeUser {
             user_id: user.user_id,
             tenant_id: user.tenant_id,
-            role: user.role,
+            roles: user.roles,
             email: user.email,
             name: user.name,
             locale: user.locale,

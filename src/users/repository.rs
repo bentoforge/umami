@@ -4,7 +4,7 @@
 //! `user-emails` guard table (keyed by the normalized `email`) that enforces global email
 //! uniqueness via a conditional put and serves the strongly-consistent email→user login lookup.
 
-use crate::users::{User, UserRole, UserStatus, normalize_email};
+use crate::users::{User, UserStatus, normalize_email};
 use anyhow::Context;
 use async_trait::async_trait;
 use aws_sdk_dynamodb::types::{
@@ -62,8 +62,8 @@ struct UserEmail {
 pub struct NewUser {
     /// Owning tenant.
     pub tenant_id: String,
-    /// Role within the tenant.
-    pub role: UserRole,
+    /// Role codes within the tenant (defined in the config catalog).
+    pub roles: Vec<String>,
     /// Login email (will be normalized).
     pub email: String,
     /// Display name.
@@ -158,7 +158,7 @@ impl UserRepository for DynamoUserRepository {
         let user = User {
             user_id: generate_id(),
             tenant_id: new_user.tenant_id,
-            role: new_user.role,
+            roles: new_user.roles,
             email: normalized.clone(),
             name: new_user.name,
             locale: new_user.locale,

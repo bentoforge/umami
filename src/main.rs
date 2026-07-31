@@ -39,6 +39,7 @@
 )]
 
 mod auth;
+mod config;
 mod constants;
 mod tenants;
 mod users;
@@ -48,6 +49,8 @@ use crate::auth::me::{logout_all_route, me_route};
 use crate::auth::session::DynamoSessionRepository;
 use crate::auth::tokens::{EnvKeyRepository, KeyRepository, TokenIssuer, jwks_route};
 use crate::auth::{AuthContext, session::SessionRepository};
+use crate::config::repository::{ConfigRepository, S3ConfigRepository, StaticConfigRepository};
+use crate::config::service::{get_config_route, put_config_route};
 use crate::tenants::repository::{DynamoTenantRepository, TenantRepository};
 use crate::tenants::service::{create_tenant_route, get_tenant_route, patch_tenant_route};
 use crate::users::repository::{DynamoUserRepository, UserRepository};
@@ -55,6 +58,7 @@ use crate::users::service::{create_user_route, list_users_route, patch_user_rout
 use std::env;
 use std::sync::Arc;
 use wasabi::aws::dynamodb::client::DynamoClient;
+use wasabi::aws::s3::S3Client;
 use wasabi::tools::system::install_termination_listener;
 use wasabi::web::auth::authenticator::Authenticator;
 use wasabi::web::info_service::get_info_route;
@@ -121,8 +125,22 @@ async fn app() -> anyhow::Result<()> {
     let key_repository: Arc<dyn KeyRepository> = Arc::new(EnvKeyRepository::from_env()?);
     let token_issuer = Arc::new(TokenIssuer::from_env(key_repository.clone())?);
 
-    let auth_context =
-        AuthContext::from_env(user_repository.clone(), session_repository, token_issuer)?;
+    // Config catalog behind a repository: S3 (whole-document, cached) when a bucket is configured,
+    // otherwise a built-in default (dev/tests/no-S3).
+    let config_repository: Arc<dyn ConfigRepository> = if env::var("UMAMI_CONFIG_BUCKET").is_ok() {
+        let s3_client = S3Client::from_env().await?;
+        Arc::new(S3ConfigRepository::from_env(s3_client).await?)
+    } else {
+        tracing::info!("UMAMI_CONFIG_BUCKET not set — using the built-in default config");
+        Arc::new(StaticConfigRepository::with_default())
+    };
+
+    let auth_context = AuthContext::from_env(
+        user_repository.clone(),
+        session_repository,
+        token_issuer,
+        config_repository.clone(),
+    )?;
 
     run_webserver(routes![
         get_info_route(),
@@ -145,7 +163,10 @@ async fn app() -> anyhow::Result<()> {
         // users (admin, within own tenant)
         create_user_route(user_repository.clone(), authenticator.clone()),
         list_users_route(user_repository.clone(), authenticator.clone()),
-        patch_user_route(user_repository, authenticator)
+        patch_user_route(user_repository, authenticator.clone()),
+        // config (global catalog + settings)
+        get_config_route(config_repository.clone(), authenticator.clone()),
+        put_config_route(config_repository, authenticator)
     ])
     .await
 }

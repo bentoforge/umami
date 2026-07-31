@@ -20,6 +20,19 @@ pub const ADMIN_TENANT_PERMISSION: &str = "admin:tenant";
 /// Manage a tenant's users (create/list/patch, roles, status).
 pub const WRITE_MEMBERS_PERMISSION: &str = "write:members";
 
+/// Read/write the global config document. **Global scope** — in a multi-tenant deployment this
+/// must be restricted to a platform admin, not a tenant owner; the default config grants it to
+/// `owner` for now (single-operator dev).
+pub const MANAGE_CONFIG_PERMISSION: &str = "manage:config";
+
+// ── Built-in role codes (defined in the default config) ───────────────────────
+
+/// Role code for a tenant's first/owning user.
+pub const ROLE_OWNER: &str = "owner";
+
+/// Default role code assigned to a newly created user.
+pub const ROLE_MEMBER: &str = "member";
+
 // ── Body size limits ──────────────────────────────────────────────────────────
 
 /// Maximum accepted size for JSON request bodies (login, user creation), in bytes (1 MiB).
