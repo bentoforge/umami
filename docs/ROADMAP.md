@@ -113,8 +113,11 @@ Replaces the struck "user invites" phase: the permission model is now **config-d
       `/config` GET/PUT round-trips with a version bump; stale PUT → 409; viewer (perms `[]`) → 401
 - [x] Security settings: `minPasswordLength` enforced on user/owner creation; access/refresh TTLs
       taken from `config.security` (no longer env)
-- [ ] Packages + accounting: `tenant.packages`, **optimistic locking** (`version` + conditional
-      write + strongly-consistent reads), price schedule, effective-limits resolver
+- [x] Packages + accounting: `tenant.packages` (assignment records) + `POST`/`DELETE
+      /tenants/{id}/packages`; **optimistic locking** (`version` + conditional write, 409 on
+      conflict) + strongly-consistent tenant reads; effective-limits + monthly-price resolvers;
+      `GET /tenants/{id}/entitlements`. Verified live: entitlements resolve (limit 1000, total 79);
+      **10 concurrent assigns → 2×200 + 8×409** (lock holds)
 - [ ] Features + custom fields + configurable token claims
 
 *(Teams and cross-tenant switching remain post-v1 — see SCHEMA.md.)*

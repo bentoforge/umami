@@ -3,17 +3,23 @@
 use crate::tenants::{Tenant, TenantStatus};
 use anyhow::Context;
 use async_trait::async_trait;
-use aws_sdk_dynamodb::types::BillingMode;
+use aws_sdk_dynamodb::types::{AttributeValue, BillingMode};
 use chrono::Utc;
+use std::collections::BTreeMap;
+use warp::http::StatusCode;
 use wasabi::aws::dynamodb::client::DynamoClient;
 use wasabi::aws::dynamodb::schema::{str_attribute, with_hash_index};
 use wasabi::aws::dynamodb::{deserialize_entity, generate_id, str};
+use wasabi::status_bail;
 
 /// Table storing tenants.
 const TABLE_TENANTS: &str = "tenants";
 
 /// Hash key of the `tenants` table.
 const FIELD_TENANT_ID: &str = "tenantId";
+
+/// Optimistic-concurrency attribute.
+const FIELD_VERSION: &str = "version";
 
 /// Default plan assigned to a freshly created tenant.
 const DEFAULT_PLAN: &str = "free";
@@ -61,6 +67,9 @@ impl TenantRepository for DynamoTenantRepository {
         let now = Utc::now();
         let tenant = Tenant {
             tenant_id: generate_id(),
+            version: 0,
+            packages: Vec::new(),
+            limit_overrides: BTreeMap::new(),
             name: name.to_owned(),
             slug: slug.to_owned(),
             status: TenantStatus::Active,
@@ -86,10 +95,13 @@ impl TenantRepository for DynamoTenantRepository {
 
     #[tracing::instrument(level = "debug", skip(self), err(Display))]
     async fn get_tenant(&self, tenant_id: &str) -> anyhow::Result<Option<Tenant>> {
+        // Strongly consistent: accounting mutations read-modify-write this record, so a stale read
+        // must never be the basis of a write.
         let result = self
             .client
             .get_item(TABLE_TENANTS)
             .key(FIELD_TENANT_ID, str(tenant_id))
+            .consistent_read(true)
             .send()
             .await
             .context("Error searching table 'tenants'")?;
@@ -99,14 +111,37 @@ impl TenantRepository for DynamoTenantRepository {
 
     #[tracing::instrument(level = "debug", skip(self), err(Display))]
     async fn put_tenant(&self, mut tenant: Tenant) -> anyhow::Result<Tenant> {
+        // Optimistic lock: require the stored version to equal the one we read, then bump it. A
+        // concurrent writer that already bumped it makes this fail → 409, forcing a reload.
+        let expected_version = tenant.version;
+        tenant.version = expected_version + 1;
         tenant.last_updated = Utc::now();
 
-        let _ = self
+        let result = self
             .client
             .put_entity(TABLE_TENANTS, &tenant)?
+            .condition_expression("#version = :expected")
+            .expression_attribute_names("#version", FIELD_VERSION)
+            .expression_attribute_values(
+                ":expected",
+                AttributeValue::N(expected_version.to_string()),
+            )
             .send()
-            .await
-            .context("Error updating 'tenants' table")?;
+            .await;
+
+        if let Err(err) = result {
+            if err
+                .as_service_error()
+                .map(|service_err| service_err.is_conditional_check_failed_exception())
+                .unwrap_or(false)
+            {
+                status_bail!(
+                    StatusCode::CONFLICT,
+                    "Tenant was modified concurrently — reload and retry"
+                );
+            }
+            return Err(anyhow::Error::new(err).context("Error updating 'tenants' table"));
+        }
 
         Ok(tenant)
     }
