@@ -9,7 +9,6 @@
 //! implementation with a periodic refresh (for rotation) drops in without touching the issuer or
 //! the JWKS route.
 
-use crate::constants::DEFAULT_ACCESS_TTL_SECS;
 use anyhow::Context;
 use async_trait::async_trait;
 use chrono::Utc;
@@ -136,42 +135,36 @@ pub struct TokenIssuer {
     keys: Arc<dyn KeyRepository>,
     issuer: String,
     default_audience: Option<String>,
-    access_ttl_secs: i64,
 }
 
 impl TokenIssuer {
     /// Builds the issuer from the environment: `UMAMI_ISSUER` (required, must match the issuer
-    /// product services trust), `UMAMI_DEFAULT_AUDIENCE` (optional), `UMAMI_ACCESS_TTL_SECS`.
+    /// product services trust) and `UMAMI_DEFAULT_AUDIENCE` (optional). The access-token lifetime
+    /// comes from the config `security` settings, passed per call.
     pub fn from_env(keys: Arc<dyn KeyRepository>) -> anyhow::Result<Self> {
         let issuer = env::var("UMAMI_ISSUER")
             .context("Please provide UMAMI_ISSUER (e.g. https://umami.example.com/)")?;
         let default_audience = env::var("UMAMI_DEFAULT_AUDIENCE").ok();
-        let access_ttl_secs = match env::var("UMAMI_ACCESS_TTL_SECS") {
-            Ok(raw) => raw
-                .parse::<i64>()
-                .context("UMAMI_ACCESS_TTL_SECS must be an integer number of seconds")?,
-            Err(_) => DEFAULT_ACCESS_TTL_SECS as i64,
-        };
 
         Ok(Self {
             keys,
             issuer,
             default_audience,
-            access_ttl_secs,
         })
     }
 
-    /// Signs an access token for the given user/tenant. Returns the token string and its `exp`
-    /// (epoch seconds).
+    /// Signs an access token for the given user/tenant with the given lifetime (from config).
+    /// Returns the token string and its `exp` (epoch seconds).
     #[tracing::instrument(level = "debug", skip(self, request), err(Display))]
     pub async fn issue_access_token(
         &self,
         request: &AccessTokenClaims<'_>,
+        access_ttl_secs: i64,
     ) -> anyhow::Result<(String, i64)> {
         let key_set = self.keys.current().await?;
 
         let iat = Utc::now().timestamp();
-        let exp = iat + self.access_ttl_secs;
+        let exp = iat + access_ttl_secs;
 
         let claims = AccessClaims {
             iss: &self.issuer,
@@ -252,20 +245,22 @@ mod tests {
             keys,
             issuer: "https://umami.test/".to_owned(),
             default_audience: Some("umami".to_owned()),
-            access_ttl_secs: 600,
         };
 
         let perms = vec!["write:blocks".to_owned()];
         let (token, exp) = issuer
-            .issue_access_token(&AccessTokenClaims {
-                subject: "u1",
-                name: "Jane",
-                email: "jane@test",
-                locale: "en-US",
-                tenant: Some("t1"),
-                permissions: &perms,
-                token_version: 3,
-            })
+            .issue_access_token(
+                &AccessTokenClaims {
+                    subject: "u1",
+                    name: "Jane",
+                    email: "jane@test",
+                    locale: "en-US",
+                    tenant: Some("t1"),
+                    permissions: &perms,
+                    token_version: 3,
+                },
+                600,
+            )
             .await
             .unwrap();
         assert!(exp > Utc::now().timestamp());

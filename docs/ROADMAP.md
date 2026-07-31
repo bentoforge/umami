@@ -111,7 +111,8 @@ Replaces the struck "user invites" phase: the permission model is now **config-d
       409 on mismatch; client loads → edits → writes the whole doc)
 - [x] 🟢 Verified live: default config boots; owner token carries config-resolved permissions;
       `/config` GET/PUT round-trips with a version bump; stale PUT → 409; viewer (perms `[]`) → 401
-- [ ] Security settings: enforce `minPasswordLength`; take access/refresh TTLs from config
+- [x] Security settings: `minPasswordLength` enforced on user/owner creation; access/refresh TTLs
+      taken from `config.security` (no longer env)
 - [ ] Packages + accounting: `tenant.packages`, **optimistic locking** (`version` + conditional
       write + strongly-consistent reads), price schedule, effective-limits resolver
 - [ ] Features + custom fields + configurable token claims

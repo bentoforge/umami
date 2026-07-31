@@ -8,12 +8,14 @@ pub mod repository;
 pub mod service;
 
 use crate::constants::{
-    ADMIN_TENANT_PERMISSION, MANAGE_CONFIG_PERMISSION, WRITE_MEMBERS_PERMISSION,
+    ADMIN_TENANT_PERMISSION, DEFAULT_ACCESS_TTL_SECS, DEFAULT_REFRESH_TTL_SECS,
+    MANAGE_CONFIG_PERMISSION, WRITE_MEMBERS_PERMISSION,
 };
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use wasabi::client_bail;
 
 /// A role: a code, a display name, and the permission strings it grants.
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -151,6 +153,19 @@ pub struct Config {
 }
 
 impl Config {
+    /// Rejects a password shorter than `security.min_password_length` (counted in characters) with
+    /// a client error.
+    pub fn validate_password(&self, password: &str) -> anyhow::Result<()> {
+        let length = password.chars().count() as u32;
+        if length < self.security.min_password_length {
+            client_bail!(
+                "Password must be at least {} characters",
+                self.security.min_password_length
+            );
+        }
+        Ok(())
+    }
+
     /// Resolves the union of permissions granted by the given role codes (sorted, deduped).
     pub fn permissions_for_roles(&self, role_codes: &[String]) -> Vec<String> {
         let mut granted: HashSet<&str> = HashSet::new();
@@ -204,8 +219,8 @@ impl Default for Config {
             custom_user_fields: Vec::new(),
             security: SecuritySettings {
                 min_password_length: 8,
-                access_ttl_secs: 600,
-                refresh_ttl_secs: 2_592_000,
+                access_ttl_secs: DEFAULT_ACCESS_TTL_SECS,
+                refresh_ttl_secs: DEFAULT_REFRESH_TTL_SECS,
             },
             token_claims: Vec::new(),
         }

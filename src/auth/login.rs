@@ -151,6 +151,11 @@ async fn login(
         status_bail!(StatusCode::UNAUTHORIZED, "Invalid email or password");
     }
 
+    // Config drives permissions and the access/refresh lifetimes.
+    let config = context.config.current().await?;
+    let refresh_ttl_secs = config.security.refresh_ttl_secs as i64;
+    let access_ttl_secs = config.security.access_ttl_secs as i64;
+
     let secret = generate_refresh_secret();
     let refresh_hash = hash_refresh_secret(&secret);
 
@@ -161,34 +166,35 @@ async fn login(
             active_tenant_id: Some(user.tenant_id.clone()),
             refresh_hash,
             token_version_at_issue: user.token_version,
-            ttl_secs: context.refresh_ttl_secs,
+            ttl_secs: refresh_ttl_secs,
             user_agent,
             ip,
         })
         .await?;
 
-    // Effective permissions are resolved from the user's roles via the config catalog.
-    let config = context.config.current().await?;
     let permissions = config.permissions_for_roles(&user.roles);
 
     let (access_token, _exp) = context
         .tokens
-        .issue_access_token(&AccessTokenClaims {
-            subject: &user.user_id,
-            name: &user.name,
-            email: &user.email,
-            locale: &user.locale,
-            tenant: Some(&user.tenant_id),
-            permissions: &permissions,
-            token_version: user.token_version,
-        })
+        .issue_access_token(
+            &AccessTokenClaims {
+                subject: &user.user_id,
+                name: &user.name,
+                email: &user.email,
+                locale: &user.locale,
+                tenant: Some(&user.tenant_id),
+                permissions: &permissions,
+                token_version: user.token_version,
+            },
+            access_ttl_secs,
+        )
         .await?;
 
     let set_cookie = build_refresh_cookie(
         &session.session_id,
         &secret,
         context.cookie_domain.as_deref(),
-        context.refresh_ttl_secs,
+        refresh_ttl_secs,
     );
 
     Ok((
@@ -240,34 +246,40 @@ async fn refresh(
         status_bail!(StatusCode::UNAUTHORIZED, "Session revoked");
     }
 
+    let config = context.config.current().await?;
+    let refresh_ttl_secs = config.security.refresh_ttl_secs as i64;
+    let access_ttl_secs = config.security.access_ttl_secs as i64;
+
     let new_secret = generate_refresh_secret();
     let new_hash = hash_refresh_secret(&new_secret);
     context
         .sessions
-        .rotate_session(&session_id, new_hash, context.refresh_ttl_secs)
+        .rotate_session(&session_id, new_hash, refresh_ttl_secs)
         .await?;
 
-    let config = context.config.current().await?;
     let permissions = config.permissions_for_roles(&user.roles);
 
     let (access_token, _exp) = context
         .tokens
-        .issue_access_token(&AccessTokenClaims {
-            subject: &user.user_id,
-            name: &user.name,
-            email: &user.email,
-            locale: &user.locale,
-            tenant: session.active_tenant_id.as_deref(),
-            permissions: &permissions,
-            token_version: user.token_version,
-        })
+        .issue_access_token(
+            &AccessTokenClaims {
+                subject: &user.user_id,
+                name: &user.name,
+                email: &user.email,
+                locale: &user.locale,
+                tenant: session.active_tenant_id.as_deref(),
+                permissions: &permissions,
+                token_version: user.token_version,
+            },
+            access_ttl_secs,
+        )
         .await?;
 
     let set_cookie = build_refresh_cookie(
         &session_id,
         &new_secret,
         context.cookie_domain.as_deref(),
-        context.refresh_ttl_secs,
+        refresh_ttl_secs,
     );
 
     Ok((

@@ -4,6 +4,7 @@
 //! **and its first `owner` user**, which is the bootstrap that replaces the earlier open-signup
 //! hack. `GET`/`PATCH` require `admin:tenant` and operate only on the caller's own tenant.
 
+use crate::config::repository::ConfigRepository;
 use crate::constants::{ADMIN_TENANT_PERMISSION, DEFAULT_LOCALE, MAX_TEXT_BODY_SIZE, ROLE_OWNER};
 use crate::tenants::repository::TenantRepository;
 use crate::tenants::{Tenant, slugify};
@@ -60,12 +61,14 @@ struct PatchTenantRequest {
 pub fn create_tenant_route(
     tenants: Arc<dyn TenantRepository>,
     users: Arc<dyn UserRepository>,
+    config: Arc<dyn ConfigRepository>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("tenants")
         .and(warp::post())
         .and(with_body_as_json::<CreateTenantRequest>(MAX_TEXT_BODY_SIZE))
         .and(with_cloneable(tenants))
         .and(with_cloneable(users))
+        .and(with_cloneable(config))
         .and_then(handle_create_tenant_route)
         .boxed()
 }
@@ -110,8 +113,9 @@ async fn handle_create_tenant_route(
     request: CreateTenantRequest,
     tenants: Arc<dyn TenantRepository>,
     users: Arc<dyn UserRepository>,
+    config: Arc<dyn ConfigRepository>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(create_tenant(request, tenants, users).await)
+    into_response(create_tenant(request, tenants, users, config).await)
 }
 
 #[tracing::instrument(level = "debug", name = "GET /tenants/{id}", skip_all)]
@@ -139,6 +143,7 @@ async fn create_tenant(
     request: CreateTenantRequest,
     tenants: Arc<dyn TenantRepository>,
     users: Arc<dyn UserRepository>,
+    config: Arc<dyn ConfigRepository>,
 ) -> anyhow::Result<CreateTenantResponse> {
     if env::var("UMAMI_ALLOW_SIGNUP").as_deref() != Ok("true") {
         status_bail!(
@@ -150,9 +155,13 @@ async fn create_tenant(
     if request.name.trim().is_empty() {
         client_bail!("Tenant 'name' is required");
     }
-    if request.owner.email.trim().is_empty() || request.owner.password.is_empty() {
-        client_bail!("Owner 'email' and 'password' are required");
+    if request.owner.email.trim().is_empty() {
+        client_bail!("Owner 'email' is required");
     }
+    config
+        .current()
+        .await?
+        .validate_password(&request.owner.password)?;
 
     let tenant = tenants
         .create_tenant(request.name.trim(), &slugify(&request.name))

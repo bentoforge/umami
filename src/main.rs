@@ -157,11 +157,19 @@ async fn app() -> anyhow::Result<()> {
         ),
         logout_all_route(user_repository.clone(), authenticator.clone()),
         // tenants
-        create_tenant_route(tenant_repository.clone(), user_repository.clone()),
+        create_tenant_route(
+            tenant_repository.clone(),
+            user_repository.clone(),
+            config_repository.clone()
+        ),
         get_tenant_route(tenant_repository.clone(), authenticator.clone()),
         patch_tenant_route(tenant_repository, authenticator.clone()),
         // users (admin, within own tenant)
-        create_user_route(user_repository.clone(), authenticator.clone()),
+        create_user_route(
+            user_repository.clone(),
+            config_repository.clone(),
+            authenticator.clone()
+        ),
         list_users_route(user_repository.clone(), authenticator.clone()),
         patch_user_route(user_repository, authenticator.clone()),
         // config (global catalog + settings)

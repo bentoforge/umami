@@ -13,9 +13,7 @@ pub mod tokens;
 use crate::auth::session::SessionRepository;
 use crate::auth::tokens::TokenIssuer;
 use crate::config::repository::ConfigRepository;
-use crate::constants::DEFAULT_REFRESH_TTL_SECS;
 use crate::users::repository::UserRepository;
-use anyhow::Context;
 use std::env;
 use std::sync::Arc;
 
@@ -28,29 +26,21 @@ pub struct AuthContext {
     pub sessions: Arc<dyn SessionRepository>,
     /// ES256 access-token issuer.
     pub tokens: Arc<TokenIssuer>,
-    /// Config source — resolves role codes to permissions at token-issue time.
+    /// Config source — resolves role permissions and the access/refresh TTLs at token-issue time.
     pub config: Arc<dyn ConfigRepository>,
-    /// Refresh/session lifetime in seconds (`UMAMI_REFRESH_TTL_SECS`).
-    pub refresh_ttl_secs: i64,
     /// Optional `Domain` attribute for the refresh cookie (`UMAMI_COOKIE_DOMAIN`).
     pub cookie_domain: Option<String>,
 }
 
 impl AuthContext {
-    /// Assembles the context from its repositories/issuer/config plus `UMAMI_REFRESH_TTL_SECS` and
-    /// `UMAMI_COOKIE_DOMAIN`.
+    /// Assembles the context from its repositories/issuer/config plus `UMAMI_COOKIE_DOMAIN`.
+    /// Access/refresh lifetimes come from the config `security` settings, not env.
     pub fn from_env(
         users: Arc<dyn UserRepository>,
         sessions: Arc<dyn SessionRepository>,
         tokens: Arc<TokenIssuer>,
         config: Arc<dyn ConfigRepository>,
     ) -> anyhow::Result<Self> {
-        let refresh_ttl_secs = match env::var("UMAMI_REFRESH_TTL_SECS") {
-            Ok(raw) => raw
-                .parse::<i64>()
-                .context("UMAMI_REFRESH_TTL_SECS must be an integer number of seconds")?,
-            Err(_) => DEFAULT_REFRESH_TTL_SECS as i64,
-        };
         let cookie_domain = env::var("UMAMI_COOKIE_DOMAIN")
             .ok()
             .filter(|d| !d.is_empty());
@@ -60,7 +50,6 @@ impl AuthContext {
             sessions,
             tokens,
             config,
-            refresh_ttl_secs,
             cookie_domain,
         })
     }

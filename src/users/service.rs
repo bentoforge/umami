@@ -4,6 +4,7 @@
 //! from the caller's token), so an admin can never see or touch another tenant's users. The first
 //! user of a tenant is created by `POST /tenants` (see `tenants::service`), not here.
 
+use crate::config::repository::ConfigRepository;
 use crate::constants::{DEFAULT_LOCALE, MAX_TEXT_BODY_SIZE, ROLE_MEMBER, WRITE_MEMBERS_PERMISSION};
 use crate::users::repository::{NewUser, UserRepository};
 use crate::users::{User, UserStatus};
@@ -75,12 +76,14 @@ struct UserListResponse {
 /// `POST /users` — create a user in the caller's tenant (requires `write:members`).
 pub fn create_user_route(
     users: Arc<dyn UserRepository>,
+    config: Arc<dyn ConfigRepository>,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("users")
         .and(warp::post())
         .and(with_body_as_json::<CreateUserRequest>(MAX_TEXT_BODY_SIZE))
         .and(with_cloneable(users))
+        .and(with_cloneable(config))
         .and(with_user_with_any_permission(
             authenticator,
             REQUIRE_WRITE_MEMBERS,
@@ -128,9 +131,10 @@ pub fn patch_user_route(
 async fn handle_create_user_route(
     request: CreateUserRequest,
     users: Arc<dyn UserRepository>,
+    config: Arc<dyn ConfigRepository>,
     caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(create_user(request, users, caller).await)
+    into_response(create_user(request, users, config, caller).await)
 }
 
 #[tracing::instrument(level = "debug", name = "GET /users", skip_all)]
@@ -156,13 +160,18 @@ async fn handle_patch_user_route(
 async fn create_user(
     request: CreateUserRequest,
     users: Arc<dyn UserRepository>,
+    config: Arc<dyn ConfigRepository>,
     caller: AuthUser,
 ) -> anyhow::Result<UserView> {
     let tenant_id = caller.tenant_id()?.to_owned();
 
-    if request.email.trim().is_empty() || request.password.is_empty() {
-        client_bail!("Both 'email' and 'password' are required");
+    if request.email.trim().is_empty() {
+        client_bail!("'email' is required");
     }
+    config
+        .current()
+        .await?
+        .validate_password(&request.password)?;
 
     let password_hash = crate::auth::password::hash(&request.password)?;
     let roles = request
