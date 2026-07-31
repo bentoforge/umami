@@ -13,6 +13,7 @@ pub mod tokens;
 use crate::auth::session::SessionRepository;
 use crate::auth::tokens::TokenIssuer;
 use crate::config::repository::ConfigRepository;
+use crate::tenants::repository::TenantRepository;
 use crate::users::repository::UserRepository;
 use std::env;
 use std::sync::Arc;
@@ -22,6 +23,8 @@ use std::sync::Arc;
 pub struct AuthContext {
     /// User identity persistence.
     pub users: Arc<dyn UserRepository>,
+    /// Tenant persistence — used to resolve config-driven token claims (e.g. `features`).
+    pub tenants: Arc<dyn TenantRepository>,
     /// Session persistence backing the refresh flow.
     pub sessions: Arc<dyn SessionRepository>,
     /// ES256 access-token issuer.
@@ -37,6 +40,7 @@ impl AuthContext {
     /// Access/refresh lifetimes come from the config `security` settings, not env.
     pub fn from_env(
         users: Arc<dyn UserRepository>,
+        tenants: Arc<dyn TenantRepository>,
         sessions: Arc<dyn SessionRepository>,
         tokens: Arc<TokenIssuer>,
         config: Arc<dyn ConfigRepository>,
@@ -47,6 +51,7 @@ impl AuthContext {
 
         Ok(Self {
             users,
+            tenants,
             sessions,
             tokens,
             config,

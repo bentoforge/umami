@@ -51,7 +51,9 @@ use crate::auth::tokens::{EnvKeyRepository, KeyRepository, TokenIssuer, jwks_rou
 use crate::auth::{AuthContext, session::SessionRepository};
 use crate::config::repository::{ConfigRepository, S3ConfigRepository, StaticConfigRepository};
 use crate::config::service::{get_config_route, put_config_route};
-use crate::tenants::packages::{assign_package_route, entitlements_route, remove_package_route};
+use crate::tenants::packages::{
+    assign_package_route, entitlements_route, remove_package_route, set_feature_route,
+};
 use crate::tenants::repository::{DynamoTenantRepository, TenantRepository};
 use crate::tenants::service::{create_tenant_route, get_tenant_route, patch_tenant_route};
 use crate::users::repository::{DynamoUserRepository, UserRepository};
@@ -138,6 +140,7 @@ async fn app() -> anyhow::Result<()> {
 
     let auth_context = AuthContext::from_env(
         user_repository.clone(),
+        tenant_repository.clone(),
         session_repository,
         token_issuer,
         config_repository.clone(),
@@ -164,14 +167,23 @@ async fn app() -> anyhow::Result<()> {
             config_repository.clone()
         ),
         get_tenant_route(tenant_repository.clone(), authenticator.clone()),
-        patch_tenant_route(tenant_repository.clone(), authenticator.clone()),
-        // tenant packages + entitlements (accounting)
+        patch_tenant_route(
+            tenant_repository.clone(),
+            config_repository.clone(),
+            authenticator.clone()
+        ),
+        // tenant packages, features + entitlements (accounting)
         assign_package_route(
             tenant_repository.clone(),
             config_repository.clone(),
             authenticator.clone()
         ),
         remove_package_route(tenant_repository.clone(), authenticator.clone()),
+        set_feature_route(
+            tenant_repository.clone(),
+            config_repository.clone(),
+            authenticator.clone()
+        ),
         entitlements_route(
             tenant_repository,
             config_repository.clone(),
@@ -184,7 +196,11 @@ async fn app() -> anyhow::Result<()> {
             authenticator.clone()
         ),
         list_users_route(user_repository.clone(), authenticator.clone()),
-        patch_user_route(user_repository, authenticator.clone()),
+        patch_user_route(
+            user_repository,
+            config_repository.clone(),
+            authenticator.clone()
+        ),
         // config (global catalog + settings)
         get_config_route(config_repository.clone(), authenticator.clone()),
         put_config_route(config_repository, authenticator)

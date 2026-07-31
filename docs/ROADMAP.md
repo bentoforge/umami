@@ -97,7 +97,7 @@ step ends with a **green gate**: `cargo fmt --check && cargo clippy -- -D warnin
 > works via the `tokenVersion` bump alone). Sequential tenant→owner and email-guard→user writes
 > carry a small orphan risk pending `TransactWriteItems` (hardening).
 
-## Phase 4 — Config (catalog + settings)  *(see [CONFIG.md](CONFIG.md))*
+## Phase 4 — Config (catalog + settings)  ✅ DONE  *(see [CONFIG.md](CONFIG.md))*
 
 Replaces the struck "user invites" phase: the permission model is now **config-driven**. A
 `ConfigRepository` (trait, cached, like `KeyRepository`) serves one whole `Config` document
@@ -118,7 +118,12 @@ Replaces the struck "user invites" phase: the permission model is now **config-d
       conflict) + strongly-consistent tenant reads; effective-limits + monthly-price resolvers;
       `GET /tenants/{id}/entitlements`. Verified live: entitlements resolve (limit 1000, total 79);
       **10 concurrent assigns → 2×200 + 8×409** (lock holds)
-- [ ] Features + custom fields + configurable token claims
+- [x] Features + custom fields + configurable token claims: per-tenant `FeatureToggle`
+      (standard/on/off) + `effective_features`; `PUT /tenants/{id}/features/{code}`; `features` in
+      entitlements; config-defined custom tenant/user fields, schema-validated on write;
+      `config.tokenClaims` drives extra JWT claims (`features` + selected custom user fields).
+      Verified live: feature inherit/off propagates to entitlements and the token; custom-field
+      validation (unknown/wrong-type → 400)
 
 *(Teams and cross-tenant switching remain post-v1 — see SCHEMA.md.)*
 

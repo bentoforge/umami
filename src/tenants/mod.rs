@@ -12,7 +12,21 @@ use crate::config::Config;
 use chrono::{DateTime, NaiveDate, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use serde_json::Value;
+use std::collections::{BTreeMap, BTreeSet};
+
+/// Per-tenant feature toggle: inherit from packages, or force on/off.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum FeatureToggle {
+    /// Inherit from the tenant's active packages (the default).
+    #[default]
+    Standard,
+    /// Force the feature on regardless of packages.
+    On,
+    /// Force the feature off regardless of packages.
+    Off,
+}
 
 /// Customer lifecycle state of a tenant (micro-CRM).
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,6 +83,12 @@ pub struct Tenant {
     /// active packages.
     #[serde(default)]
     pub limit_overrides: BTreeMap<String, Decimal>,
+    /// Per-tenant feature toggles (`featureCode` → on/off); absent means inherit from packages.
+    #[serde(default)]
+    pub feature_overrides: BTreeMap<String, FeatureToggle>,
+    /// Values for the config-defined custom tenant fields.
+    #[serde(default)]
+    pub custom_fields: BTreeMap<String, Value>,
     /// Display name.
     pub name: String,
     /// URL-friendly handle derived from the name (not enforced unique in v1).
@@ -176,6 +196,43 @@ pub fn effective_price(
         .map(|entry| entry.price)
 }
 
+/// Resolves the set of enabled feature codes for a tenant: a feature is on if an active package
+/// provides it (the `Standard` baseline), unless the tenant forces it `On`/`Off`.
+pub fn effective_features(config: &Config, tenant: &Tenant) -> BTreeSet<String> {
+    let mut enabled = BTreeSet::new();
+
+    for feature in &config.features {
+        let baseline = tenant
+            .packages
+            .iter()
+            .filter(|assignment| assignment.active)
+            .any(|assignment| {
+                config
+                    .packages
+                    .iter()
+                    .find(|package| package.code == assignment.code)
+                    .is_some_and(|package| package.features.contains(&feature.code))
+            });
+
+        let on = match tenant
+            .feature_overrides
+            .get(&feature.code)
+            .copied()
+            .unwrap_or_default()
+        {
+            FeatureToggle::Standard => baseline,
+            FeatureToggle::On => true,
+            FeatureToggle::Off => false,
+        };
+
+        if on {
+            let _ = enabled.insert(feature.code.clone());
+        }
+    }
+
+    enabled
+}
+
 /// Sums the effective monthly price of a tenant's active packages at a date.
 pub fn monthly_total(config: &Config, tenant: &Tenant, at: NaiveDate) -> Decimal {
     tenant
@@ -235,6 +292,8 @@ mod tests {
             version: 0,
             packages,
             limit_overrides: BTreeMap::new(),
+            feature_overrides: BTreeMap::new(),
+            custom_fields: BTreeMap::new(),
             name: "T".to_owned(),
             slug: "t".to_owned(),
             status: TenantStatus::Active,
@@ -313,5 +372,48 @@ mod tests {
         let at = NaiveDate::from_ymd_opt(2026, 6, 1).unwrap();
         let tenant = tenant_with(vec![plus_assignment(None), plus_assignment(Some(dec(30)))]);
         assert_eq!(monthly_total(&config, &tenant, at), dec(79));
+    }
+
+    fn config_with_feature() -> Config {
+        Config {
+            features: vec![crate::config::FeatureDef {
+                code: "ai".to_owned(),
+                name: "AI".to_owned(),
+            }],
+            packages: vec![PackageDef {
+                code: "plus".to_owned(),
+                name: "Plus".to_owned(),
+                features: vec!["ai".to_owned()],
+                limits: vec![],
+                prices: vec![],
+            }],
+            ..Config::default()
+        }
+    }
+
+    #[test]
+    fn feature_inherited_from_active_package() {
+        let config = config_with_feature();
+        let tenant = tenant_with(vec![plus_assignment(None)]);
+        assert!(effective_features(&config, &tenant).contains("ai"));
+    }
+
+    #[test]
+    fn feature_override_forces_on_and_off() {
+        let config = config_with_feature();
+
+        // Force ON without any package.
+        let mut on = tenant_with(vec![]);
+        let _ = on
+            .feature_overrides
+            .insert("ai".to_owned(), FeatureToggle::On);
+        assert!(effective_features(&config, &on).contains("ai"));
+
+        // Force OFF despite the package providing it.
+        let mut off = tenant_with(vec![plus_assignment(None)]);
+        let _ = off
+            .feature_overrides
+            .insert("ai".to_owned(), FeatureToggle::Off);
+        assert!(!effective_features(&config, &off).contains("ai"));
     }
 }

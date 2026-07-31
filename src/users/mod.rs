@@ -49,6 +49,9 @@ pub struct User {
     /// Global revocation counter. Bumping it invalidates every session at its next refresh
     /// (see the `sessions` reuse/rotation logic).
     pub token_version: u32,
+    /// Values for the config-defined custom user fields.
+    #[serde(default)]
+    pub custom_fields: std::collections::BTreeMap<String, serde_json::Value>,
     /// RFC 3339 creation timestamp.
     pub created: chrono::DateTime<chrono::Utc>,
     /// RFC 3339 timestamp of the last update to this record.

@@ -11,10 +11,14 @@ use crate::auth::session::{
     NewSession, generate_refresh_secret, hash_refresh_secret, verify_refresh_secret,
 };
 use crate::auth::tokens::AccessTokenClaims;
+use crate::config::Config;
 use crate::constants::MAX_TEXT_BODY_SIZE;
-use crate::users::UserStatus;
+use crate::tenants::{effective_features, repository::TenantRepository};
+use crate::users::{User, UserStatus};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use warp::Filter;
@@ -129,6 +133,38 @@ fn reply_with_cookie<S: Serialize>(
 
 // ── Business logic ──────────────────────────────────────────────────────────────
 
+/// Builds the config-driven extra token claims: `features` (the tenant's effective features) and
+/// any configured custom user fields. Empty when `config.token_claims` is empty.
+async fn build_extra_claims(
+    config: &Config,
+    tenants: &Arc<dyn TenantRepository>,
+    user: &User,
+) -> anyhow::Result<BTreeMap<String, Value>> {
+    let mut extra = BTreeMap::new();
+    if config.token_claims.is_empty() {
+        return Ok(extra);
+    }
+
+    let tenant = if config.token_claims.iter().any(|claim| claim == "features") {
+        tenants.get_tenant(&user.tenant_id).await?
+    } else {
+        None
+    };
+
+    for claim in &config.token_claims {
+        if claim == "features" {
+            if let Some(tenant) = &tenant {
+                let codes: Vec<String> = effective_features(config, tenant).into_iter().collect();
+                let _ = extra.insert("features".to_owned(), json!(codes));
+            }
+        } else if let Some(value) = user.custom_fields.get(claim) {
+            let _ = extra.insert(claim.clone(), value.clone());
+        }
+    }
+
+    Ok(extra)
+}
+
 async fn login(
     context: &AuthContext,
     request: LoginRequest,
@@ -173,6 +209,7 @@ async fn login(
         .await?;
 
     let permissions = config.permissions_for_roles(&user.roles);
+    let extra = build_extra_claims(&config, &context.tenants, &user).await?;
 
     let (access_token, _exp) = context
         .tokens
@@ -185,6 +222,7 @@ async fn login(
                 tenant: Some(&user.tenant_id),
                 permissions: &permissions,
                 token_version: user.token_version,
+                extra: &extra,
             },
             access_ttl_secs,
         )
@@ -258,6 +296,7 @@ async fn refresh(
         .await?;
 
     let permissions = config.permissions_for_roles(&user.roles);
+    let extra = build_extra_claims(&config, &context.tenants, &user).await?;
 
     let (access_token, _exp) = context
         .tokens
@@ -270,6 +309,7 @@ async fn refresh(
                 tenant: session.active_tenant_id.as_deref(),
                 permissions: &permissions,
                 token_version: user.token_version,
+                extra: &extra,
             },
             access_ttl_secs,
         )

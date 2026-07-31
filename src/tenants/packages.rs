@@ -8,11 +8,13 @@
 use crate::config::repository::ConfigRepository;
 use crate::constants::{ADMIN_TENANT_PERMISSION, MAX_TEXT_BODY_SIZE};
 use crate::tenants::repository::TenantRepository;
-use crate::tenants::{PackageAssignment, effective_limits, monthly_total};
+use crate::tenants::{
+    FeatureToggle, PackageAssignment, effective_features, effective_limits, monthly_total,
+};
 use chrono::{NaiveDate, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use warp::Filter;
 use warp::filters::BoxedFilter;
@@ -37,11 +39,18 @@ struct AssignPackageRequest {
     accounted_until: Option<NaiveDate>,
 }
 
+/// Request body for setting a tenant feature toggle.
+#[derive(Deserialize, Debug)]
+struct SetFeatureRequest {
+    value: FeatureToggle,
+}
+
 /// Resolved entitlements for a tenant.
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct EntitlementsResponse {
     limits: BTreeMap<String, Decimal>,
+    features: BTreeSet<String>,
     monthly_total: Decimal,
     packages: Vec<PackageAssignment>,
 }
@@ -80,6 +89,25 @@ pub fn remove_package_route(
             REQUIRE_ADMIN_TENANT,
         ))
         .and_then(handle_remove_package_route)
+        .boxed()
+}
+
+/// `PUT /tenants/{id}/features/{code}` — set a feature toggle (standard/on/off).
+pub fn set_feature_route(
+    tenants: Arc<dyn TenantRepository>,
+    config: Arc<dyn ConfigRepository>,
+    authenticator: Arc<Authenticator>,
+) -> BoxedFilter<(impl warp::Reply,)> {
+    warp::path!("tenants" / String / "features" / String)
+        .and(warp::put())
+        .and(with_body_as_json::<SetFeatureRequest>(MAX_TEXT_BODY_SIZE))
+        .and(with_cloneable(tenants))
+        .and(with_cloneable(config))
+        .and(with_user_with_any_permission(
+            authenticator,
+            REQUIRE_ADMIN_TENANT,
+        ))
+        .and_then(handle_set_feature_route)
         .boxed()
 }
 
@@ -124,6 +152,18 @@ async fn handle_remove_package_route(
     caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
     into_response(remove_package(tenant_id, assignment_id, tenants, caller).await)
+}
+
+#[tracing::instrument(level = "debug", name = "PUT /tenants/{id}/features/{code}", skip_all)]
+async fn handle_set_feature_route(
+    tenant_id: String,
+    feature_code: String,
+    request: SetFeatureRequest,
+    tenants: Arc<dyn TenantRepository>,
+    config: Arc<dyn ConfigRepository>,
+    caller: AuthUser,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    into_response(set_feature(tenant_id, feature_code, request, tenants, config, caller).await)
 }
 
 #[tracing::instrument(level = "debug", name = "GET /tenants/{id}/entitlements", skip_all)]
@@ -207,6 +247,43 @@ async fn remove_package(
     tenants.put_tenant(tenant).await
 }
 
+async fn set_feature(
+    tenant_id: String,
+    feature_code: String,
+    request: SetFeatureRequest,
+    tenants: Arc<dyn TenantRepository>,
+    config: Arc<dyn ConfigRepository>,
+    caller: AuthUser,
+) -> anyhow::Result<crate::tenants::Tenant> {
+    enforce_own(&tenant_id, &caller)?;
+
+    let config = config.current().await?;
+    if !config
+        .features
+        .iter()
+        .any(|feature| feature.code == feature_code)
+    {
+        client_bail!("Unknown feature code '{feature_code}'");
+    }
+
+    let mut tenant = match tenants.get_tenant(&tenant_id).await? {
+        Some(tenant) => tenant,
+        None => client_bail!("No such tenant"),
+    };
+
+    // `Standard` is the default (inherit), so store it as the absence of an override.
+    match request.value {
+        FeatureToggle::Standard => {
+            let _ = tenant.feature_overrides.remove(&feature_code);
+        }
+        toggle => {
+            let _ = tenant.feature_overrides.insert(feature_code, toggle);
+        }
+    }
+
+    tenants.put_tenant(tenant).await
+}
+
 async fn entitlements(
     tenant_id: String,
     tenants: Arc<dyn TenantRepository>,
@@ -224,6 +301,7 @@ async fn entitlements(
     let at = Utc::now().date_naive();
     Ok(EntitlementsResponse {
         limits: effective_limits(&config, &tenant),
+        features: effective_features(&config, &tenant),
         monthly_total: monthly_total(&config, &tenant, at),
         packages: tenant.packages,
     })

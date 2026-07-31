@@ -70,6 +70,8 @@ impl TenantRepository for DynamoTenantRepository {
             version: 0,
             packages: Vec::new(),
             limit_overrides: BTreeMap::new(),
+            feature_overrides: BTreeMap::new(),
+            custom_fields: BTreeMap::new(),
             name: name.to_owned(),
             slug: slug.to_owned(),
             status: TenantStatus::Active,

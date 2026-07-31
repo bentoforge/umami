@@ -17,6 +17,7 @@ use p256::SecretKey;
 use p256::pkcs8::DecodePrivateKey;
 use serde::Serialize;
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use std::env;
 use std::sync::Arc;
 use warp::Filter;
@@ -110,6 +111,9 @@ struct AccessClaims<'a> {
     iat: i64,
     exp: i64,
     ver: u32,
+    /// Config-driven extra claims (e.g. `features`, selected custom fields), flattened in.
+    #[serde(flatten)]
+    extra: &'a BTreeMap<String, Value>,
 }
 
 /// The inputs needed to mint an access token for a user in a given active tenant.
@@ -128,6 +132,8 @@ pub struct AccessTokenClaims<'a> {
     pub permissions: &'a [String],
     /// `user.tokenVersion` snapshot → `ver`.
     pub token_version: u32,
+    /// Config-driven extra claims flattened into the token (e.g. `features`).
+    pub extra: &'a BTreeMap<String, Value>,
 }
 
 /// Issues signed ES256 access tokens with wasabi-compatible claims.
@@ -178,6 +184,7 @@ impl TokenIssuer {
             iat,
             exp,
             ver: request.token_version,
+            extra: request.extra,
         };
 
         let mut header = Header::new(Algorithm::ES256);
@@ -248,6 +255,7 @@ mod tests {
         };
 
         let perms = vec!["write:blocks".to_owned()];
+        let extra = BTreeMap::new();
         let (token, exp) = issuer
             .issue_access_token(
                 &AccessTokenClaims {
@@ -258,6 +266,7 @@ mod tests {
                     tenant: Some("t1"),
                     permissions: &perms,
                     token_version: 3,
+                    extra: &extra,
                 },
                 600,
             )

@@ -14,7 +14,8 @@ use crate::constants::{
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use serde_json::Value;
+use std::collections::{BTreeMap, HashSet};
 use wasabi::client_bail;
 
 /// A role: a code, a display name, and the permission strings it grants.
@@ -162,6 +163,35 @@ impl Config {
                 "Password must be at least {} characters",
                 self.security.min_password_length
             );
+        }
+        Ok(())
+    }
+
+    /// Validates provided custom-field values against a schema: every key must be defined and, for
+    /// the known types, the JSON value must match. Returns a client error otherwise.
+    pub fn validate_custom_fields(
+        definitions: &[CustomFieldDef],
+        values: &BTreeMap<String, Value>,
+    ) -> anyhow::Result<()> {
+        for (key, value) in values {
+            let definition = match definitions.iter().find(|def| &def.key == key) {
+                Some(definition) => definition,
+                None => client_bail!("Unknown custom field '{key}'"),
+            };
+
+            let type_ok = match definition.field_type.as_str() {
+                "string" => value.is_string(),
+                "number" => value.is_number(),
+                "bool" | "boolean" => value.is_boolean(),
+                // Unknown/complex types are accepted as-is.
+                _ => true,
+            };
+            if !type_ok {
+                client_bail!(
+                    "Custom field '{key}' must be of type {}",
+                    definition.field_type
+                );
+            }
         }
         Ok(())
     }

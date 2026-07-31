@@ -72,6 +72,8 @@ pub struct NewUser {
     pub locale: String,
     /// argon2id hash, or `None` for invite/SSO-only users.
     pub password_hash: Option<String>,
+    /// Values for the config-defined custom user fields.
+    pub custom_fields: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 /// Persistence interface for user identities.
@@ -165,6 +167,7 @@ impl UserRepository for DynamoUserRepository {
             password_hash: new_user.password_hash,
             status: UserStatus::Active,
             token_version: 0,
+            custom_fields: new_user.custom_fields,
             created: now,
             last_updated: now,
         };

@@ -4,12 +4,15 @@
 //! **and its first `owner` user**, which is the bootstrap that replaces the earlier open-signup
 //! hack. `GET`/`PATCH` require `admin:tenant` and operate only on the caller's own tenant.
 
+use crate::config::Config;
 use crate::config::repository::ConfigRepository;
 use crate::constants::{ADMIN_TENANT_PERMISSION, DEFAULT_LOCALE, MAX_TEXT_BODY_SIZE, ROLE_OWNER};
 use crate::tenants::repository::TenantRepository;
 use crate::tenants::{Tenant, slugify};
 use crate::users::repository::{NewUser, UserRepository};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::collections::BTreeMap;
 use std::env;
 use std::sync::Arc;
 use warp::Filter;
@@ -48,11 +51,13 @@ struct CreateTenantResponse {
     owner_user_id: String,
 }
 
-/// Request body for patching a tenant's name/plan.
+/// Request body for patching a tenant's name/plan/custom fields.
 #[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
 struct PatchTenantRequest {
     name: Option<String>,
     plan: Option<String>,
+    custom_fields: Option<BTreeMap<String, Value>>,
 }
 
 // ── Routes ──────────────────────────────────────────────────────────────────────
@@ -92,12 +97,14 @@ pub fn get_tenant_route(
 /// `PATCH /tenants/{id}` — update the caller's own tenant's name/plan (requires `admin:tenant`).
 pub fn patch_tenant_route(
     tenants: Arc<dyn TenantRepository>,
+    config: Arc<dyn ConfigRepository>,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("tenants" / String)
         .and(warp::patch())
         .and(with_body_as_json::<PatchTenantRequest>(MAX_TEXT_BODY_SIZE))
         .and(with_cloneable(tenants))
+        .and(with_cloneable(config))
         .and(with_user_with_any_permission(
             authenticator,
             REQUIRE_ADMIN_TENANT,
@@ -132,9 +139,10 @@ async fn handle_patch_tenant_route(
     tenant_id: String,
     request: PatchTenantRequest,
     tenants: Arc<dyn TenantRepository>,
+    config: Arc<dyn ConfigRepository>,
     caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(patch_tenant(tenant_id, request, tenants, caller).await)
+    into_response(patch_tenant(tenant_id, request, tenants, config, caller).await)
 }
 
 // ── Business logic ──────────────────────────────────────────────────────────────
@@ -179,6 +187,7 @@ async fn create_tenant(
                 .locale
                 .unwrap_or_else(|| DEFAULT_LOCALE.to_owned()),
             password_hash: Some(password_hash),
+            custom_fields: BTreeMap::new(),
         })
         .await?;
 
@@ -205,6 +214,7 @@ async fn patch_tenant(
     tenant_id: String,
     request: PatchTenantRequest,
     tenants: Arc<dyn TenantRepository>,
+    config: Arc<dyn ConfigRepository>,
     caller: AuthUser,
 ) -> anyhow::Result<Tenant> {
     enforce_own_tenant(&tenant_id, &caller)?;
@@ -219,6 +229,13 @@ async fn patch_tenant(
     }
     if let Some(plan) = request.plan {
         tenant.plan = plan;
+    }
+    if let Some(custom_fields) = request.custom_fields {
+        Config::validate_custom_fields(
+            &config.current().await?.custom_tenant_fields,
+            &custom_fields,
+        )?;
+        tenant.custom_fields = custom_fields;
     }
 
     tenants.put_tenant(tenant).await
