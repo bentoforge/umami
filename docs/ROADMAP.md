@@ -144,6 +144,19 @@ Replaces the struck "user invites" phase: the permission model is now **config-d
       `GET /tenants/{id}/usage`
 - [ ] 🟢 status/license/usage routes with rollover tested
 
+## Phase 6b — API keys (machine-to-machine)  *(see [API-KEYS.md](API-KEYS.md))*
+
+- [ ] `api-keys` table (PK `keyId`, `tenantId` + `ByTenantIndex`, `secretHash`, `roles`, `name`,
+      `status`, `expiresAt?`, `lastUsedAt?`) + repo
+- [ ] `POST /auth/token` — exchange `umk_<keyId>_<secret>` (raw key over TLS; `sha256` compare) →
+      access token (no session/cookie); `sub = keyId`, `kind: "api_key"`, permissions from roles
+- [ ] `POST`/`GET`/`DELETE /tenants/{id}/api-keys` (create returns the secret once; list; revoke)
+- [ ] Rate-limit `/auth/token`; track `lastUsedAt`
+- [ ] 🟢 create key → exchange → product service accepts the machine token; revoke → exchange 401
+
+> **Keys are server-side only** — never in browser JS (client-side hashing is not a substitute).
+> Browser apps use user-auth or a BFF that hands out short-lived JWTs. PoP/HMAC variant deferred.
+
 ## Phase 7 — TypeScript SDK (`clients/typescript/`)
 
 - [ ] `login`/`logout`/`getMe`; in-memory access token; auto-refresh-on-401 fetch
