@@ -144,18 +144,25 @@ Replaces the struck "user invites" phase: the permission model is now **config-d
       `GET /tenants/{id}/usage`
 - [ ] 🟢 status/license/usage routes with rollover tested
 
-## Phase 6b — API keys (machine-to-machine)  *(see [API-KEYS.md](API-KEYS.md))*
+## Phase 6b — API keys (machine-to-machine & frontend)  *(see [API-KEYS.md](API-KEYS.md))*
+
+Three customer-selectable modes: **1) key + Origin allowlist** (frontend, quota-bounded),
+**2) signed HMAC** (proof-of-possession), **3) BFF** (server-side key → short-lived JWT).
 
 - [ ] `api-keys` table (PK `keyId`, `tenantId` + `ByTenantIndex`, `secretHash`, `roles`, `name`,
-      `status`, `expiresAt?`, `lastUsedAt?`) + repo
-- [ ] `POST /auth/token` — exchange `umk_<keyId>_<secret>` (raw key over TLS; `sha256` compare) →
-      access token (no session/cookie); `sub = keyId`, `kind: "api_key"`, permissions from roles
+      `status`, `allowedOrigins?`, `expiresAt?`, `lastUsedAt?`) + repo
+- [ ] `POST /auth/token` — accepts the raw key **or** the signed form (`keyId`/`timestamp`/`nonce`/
+      `mac = HMAC-SHA256(secret, …)`); `sha256`/HMAC compare; issues an access token (no
+      session/cookie), `sub = keyId`, `kind: "api_key"`, permissions from roles
+- [ ] Mode 1: enforce `allowedOrigins` against the `Origin` header; **hard tenant/key quota** is the
+      real cost cap. Mode 2: freshness window + `nonces` table (TTL) for replay protection
 - [ ] `POST`/`GET`/`DELETE /tenants/{id}/api-keys` (create returns the secret once; list; revoke)
 - [ ] Rate-limit `/auth/token`; track `lastUsedAt`
-- [ ] 🟢 create key → exchange → product service accepts the machine token; revoke → exchange 401
+- [ ] 🟢 all three modes: exchange → product service accepts the machine token; revoke → 401;
+      Origin/quota enforced; replayed nonce rejected
 
-> **Keys are server-side only** — never in browser JS (client-side hashing is not a substitute).
-> Browser apps use user-auth or a BFF that hands out short-lived JWTs. PoP/HMAC variant deferred.
+> A browser-exposed key is treated as semi-public (Mode 1) and capped by quota; Modes 2/3 keep the
+> secret off the browser/wire. Framing (which shop may embed) = CSP `frame-ancestors`, not the key.
 
 ## Phase 7 — TypeScript SDK (`clients/typescript/`)
 
