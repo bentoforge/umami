@@ -1,0 +1,215 @@
+//! DynamoDB persistence for API keys.
+//!
+//! `api-keys` (PK `keyId`, GSI `ByTenantIndex` on `tenantId`) stores each key's metadata + the
+//! SHA-256 hash of its secret. The secret itself is never stored.
+
+use anyhow::Context;
+use async_trait::async_trait;
+use aws_sdk_dynamodb::types::{
+    AttributeValue, BillingMode, GlobalSecondaryIndex, KeySchemaElement, KeyType, Projection,
+    ProjectionType,
+};
+use chrono::{DateTime, SecondsFormat, Utc};
+use serde::{Deserialize, Serialize};
+use wasabi::aws::dynamodb::client::DynamoClient;
+use wasabi::aws::dynamodb::schema::{str_attribute, with_hash_index};
+use wasabi::aws::dynamodb::{deserialize_entity, find_all, str};
+
+const TABLE_API_KEYS: &str = "api-keys";
+const FIELD_KEY_ID: &str = "keyId";
+const FIELD_TENANT_ID: &str = "tenantId";
+const FIELD_LAST_USED_AT: &str = "lastUsedAt";
+const INDEX_BY_TENANT: &str = "ByTenantIndex";
+
+/// Lifecycle state of an API key.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApiKeyStatus {
+    /// Usable.
+    Active,
+    /// Revoked — exchange rejected.
+    Revoked,
+}
+
+/// A persisted API key (metadata + secret hash).
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiKey {
+    /// Primary key.
+    pub key_id: String,
+    /// Owning tenant.
+    pub tenant_id: String,
+    /// SHA-256 (base64url) of the secret.
+    pub secret_hash: String,
+    /// Human-readable label.
+    pub name: String,
+    /// Role codes → permissions at exchange.
+    #[serde(default)]
+    pub roles: Vec<String>,
+    /// Lifecycle state.
+    pub status: ApiKeyStatus,
+    /// Origins permitted to exchange this key (Mode 1); empty = unrestricted.
+    #[serde(default)]
+    pub allowed_origins: Vec<String>,
+    /// Optional expiry.
+    pub expires_at: Option<DateTime<Utc>>,
+    /// Last successful exchange.
+    pub last_used_at: Option<DateTime<Utc>>,
+    /// Creation timestamp.
+    pub created: DateTime<Utc>,
+}
+
+/// Parameters for creating an API key.
+pub struct NewApiKey {
+    pub key_id: String,
+    pub tenant_id: String,
+    pub secret_hash: String,
+    pub name: String,
+    pub roles: Vec<String>,
+    pub allowed_origins: Vec<String>,
+    pub expires_at: Option<DateTime<Utc>>,
+}
+
+/// Persistence for API keys.
+#[async_trait]
+pub trait ApiKeyRepository: Send + Sync {
+    /// Stores a new key.
+    async fn create(&self, new_key: NewApiKey) -> anyhow::Result<()>;
+
+    /// Fetches a key by id.
+    async fn get(&self, key_id: &str) -> anyhow::Result<Option<ApiKey>>;
+
+    /// Lists a tenant's keys (via `ByTenantIndex`).
+    async fn list_by_tenant(&self, tenant_id: &str) -> anyhow::Result<Vec<ApiKey>>;
+
+    /// Deletes (revokes) a key.
+    async fn delete(&self, key_id: &str) -> anyhow::Result<()>;
+
+    /// Best-effort `lastUsedAt` bump after a successful exchange.
+    async fn touch_last_used(&self, key_id: &str) -> anyhow::Result<()>;
+}
+
+/// DynamoDB-backed implementation of [`ApiKeyRepository`].
+#[derive(Clone)]
+pub struct DynamoApiKeyRepository {
+    client: DynamoClient,
+}
+
+impl DynamoApiKeyRepository {
+    #[tracing::instrument(skip(client), err(Display))]
+    pub async fn with_client(client: &DynamoClient) -> anyhow::Result<Self> {
+        client
+            .create_table(TABLE_API_KEYS, |table| {
+                let by_tenant = GlobalSecondaryIndex::builder()
+                    .index_name(INDEX_BY_TENANT)
+                    .key_schema(
+                        KeySchemaElement::builder()
+                            .attribute_name(FIELD_TENANT_ID)
+                            .key_type(KeyType::Hash)
+                            .build()?,
+                    )
+                    .projection(
+                        Projection::builder()
+                            .projection_type(ProjectionType::All)
+                            .build(),
+                    )
+                    .build()?;
+
+                let table = table
+                    .attribute_definitions(str_attribute(FIELD_KEY_ID)?)
+                    .attribute_definitions(str_attribute(FIELD_TENANT_ID)?);
+                let table = with_hash_index(table, FIELD_KEY_ID)?;
+
+                Ok(table
+                    .global_secondary_indexes(by_tenant)
+                    .billing_mode(BillingMode::PayPerRequest))
+            })
+            .await?;
+
+        Ok(Self {
+            client: client.clone(),
+        })
+    }
+}
+
+#[async_trait]
+impl ApiKeyRepository for DynamoApiKeyRepository {
+    #[tracing::instrument(level = "debug", skip(self, new_key), err(Display))]
+    async fn create(&self, new_key: NewApiKey) -> anyhow::Result<()> {
+        let key = ApiKey {
+            key_id: new_key.key_id,
+            tenant_id: new_key.tenant_id,
+            secret_hash: new_key.secret_hash,
+            name: new_key.name,
+            roles: new_key.roles,
+            status: ApiKeyStatus::Active,
+            allowed_origins: new_key.allowed_origins,
+            expires_at: new_key.expires_at,
+            last_used_at: None,
+            created: Utc::now(),
+        };
+        let _ = self
+            .client
+            .put_entity(TABLE_API_KEYS, &key)?
+            .send()
+            .await
+            .context("Error inserting into 'api-keys'")?;
+        Ok(())
+    }
+
+    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    async fn get(&self, key_id: &str) -> anyhow::Result<Option<ApiKey>> {
+        let result = self
+            .client
+            .get_item(TABLE_API_KEYS)
+            .key(FIELD_KEY_ID, str(key_id))
+            .send()
+            .await
+            .context("Error searching 'api-keys'")?;
+        deserialize_entity(result.item)
+    }
+
+    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    async fn list_by_tenant(&self, tenant_id: &str) -> anyhow::Result<Vec<ApiKey>> {
+        let query = self
+            .client
+            .query(TABLE_API_KEYS)
+            .index_name(INDEX_BY_TENANT)
+            .key_condition_expression("#tenantId = :tenantId")
+            .expression_attribute_names("#tenantId", FIELD_TENANT_ID)
+            .expression_attribute_values(":tenantId", str(tenant_id))
+            .limit(100);
+        find_all(query).await.context("Error listing 'api-keys'")
+    }
+
+    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    async fn delete(&self, key_id: &str) -> anyhow::Result<()> {
+        let _ = self
+            .client
+            .delete_item(TABLE_API_KEYS)
+            .key(FIELD_KEY_ID, str(key_id))
+            .send()
+            .await
+            .context("Error deleting from 'api-keys'")?;
+        Ok(())
+    }
+
+    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    async fn touch_last_used(&self, key_id: &str) -> anyhow::Result<()> {
+        let _ = self
+            .client
+            .update_item(TABLE_API_KEYS)
+            .key(FIELD_KEY_ID, str(key_id))
+            .update_expression("SET #lastUsedAt = :now")
+            .condition_expression("attribute_exists(#keyId)")
+            .expression_attribute_names("#keyId", FIELD_KEY_ID)
+            .expression_attribute_names("#lastUsedAt", FIELD_LAST_USED_AT)
+            .expression_attribute_values(
+                ":now",
+                AttributeValue::S(Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)),
+            )
+            .send()
+            .await
+            .context("Error updating 'api-keys'")?;
+        Ok(())
+    }
+}

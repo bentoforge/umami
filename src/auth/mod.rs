@@ -3,6 +3,7 @@
 //! Later phases add `/auth/me`, tenant switching and MFA. Shared dependencies for the auth routes
 //! are bundled in [`AuthContext`].
 
+pub mod apikeys;
 pub mod cookies;
 pub mod login;
 pub mod me;

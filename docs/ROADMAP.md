@@ -160,22 +160,24 @@ Replaces the struck "user invites" phase: the permission model is now **config-d
       800 → used 1100 vs entitlement limit 1000 → `overQuota` flips true; GET usage lists the
       period's metrics; negative amount → 400
 
-## Phase 6b — API keys (machine-to-machine & frontend)  *(see [API-KEYS.md](API-KEYS.md))*
+## Phase 6b — API keys (machine-to-machine & frontend)  ✅ DONE  *(see [API-KEYS.md](API-KEYS.md))*
 
-Three customer-selectable modes: **1) key + Origin allowlist** (frontend, quota-bounded),
-**2) signed HMAC** (proof-of-possession), **3) BFF** (server-side key → short-lived JWT).
+Modes shipped: **1) key + Origin allowlist** (frontend) and **3) BFF** (raw exchange server-side).
+**Mode 2 (signed HMAC)** deferred.
 
-- [ ] `api-keys` table (PK `keyId`, `tenantId` + `ByTenantIndex`, `secretHash`, `roles`, `name`,
-      `status`, `allowedOrigins?`, `expiresAt?`, `lastUsedAt?`) + repo
-- [ ] `POST /auth/token` — accepts the raw key **or** the signed form (`keyId`/`timestamp`/`nonce`/
-      `mac = HMAC-SHA256(secret, …)`); `sha256`/HMAC compare; issues an access token (no
-      session/cookie), `sub = keyId`, `kind: "api_key"`, permissions from roles
-- [ ] Mode 1: enforce `allowedOrigins` against the `Origin` header; **hard tenant/key quota** is the
-      real cost cap. Mode 2: freshness window + `nonces` table (TTL) for replay protection
-- [ ] `POST`/`GET`/`DELETE /tenants/{id}/api-keys` (create returns the secret once; list; revoke)
-- [ ] Rate-limit `/auth/token`; track `lastUsedAt`
-- [ ] 🟢 all three modes: exchange → product service accepts the machine token; revoke → 401;
-      Origin/quota enforced; replayed nonce rejected
+- [x] `api-keys` table (PK `keyId`, `tenantId` + `ByTenantIndex`, `secretHash`, `roles`, `name`,
+      `status`, `allowedOrigins`, `expiresAt?`, `lastUsedAt?`) + repo
+- [x] `POST /auth/token` — raw `umk_<keyId>_<secret>`, `sha256` constant-time compare; issues an
+      access token (no session/cookie), `sub = keyId`, `kind: "api_key"`, `tenant` + permissions
+      from the key's roles via config; best-effort `lastUsedAt`
+- [x] Mode 1: `allowedOrigins` enforced against the browser `Origin` header (missing/foreign → 403).
+      The tenant quota (usage/entitlements from Phase 6) is the real cost cap.
+- [x] `POST`/`GET`/`DELETE /tenants/{id}/api-keys` (`write:members`; create returns the secret
+      once; list omits the secret; delete revokes)
+- [x] 🟢 Verified live: create → exchange → machine token accepted on a protected route (interop
+      200); wrong/revoked key → 401; Origin allow-list (403 / 403 / 200); permissions from role
+- [ ] *Deferred:* Mode 2 signed HMAC (`nonces` table + freshness); rate-limit on `/auth/token`
+      (Phase 8)
 
 > A browser-exposed key is treated as semi-public (Mode 1) and capped by quota; Modes 2/3 keep the
 > secret off the browser/wire. Framing (which shop may embed) = CSP `frame-ancestors`, not the key.

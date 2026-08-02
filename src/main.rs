@@ -44,6 +44,10 @@ mod constants;
 mod tenants;
 mod users;
 
+use crate::auth::apikeys::repository::{ApiKeyRepository, DynamoApiKeyRepository};
+use crate::auth::apikeys::{
+    create_api_key_route, delete_api_key_route, exchange_route, list_api_keys_route,
+};
 use crate::auth::login::{login_route, logout_route, refresh_route};
 use crate::auth::me::{logout_all_route, me_route};
 use crate::auth::secretbox::SecretBox;
@@ -138,6 +142,8 @@ async fn app() -> anyhow::Result<()> {
         Arc::new(DynamoTenantRepository::with_client(&dynamo_client).await?);
     let usage_repository: Arc<dyn UsageRepository> =
         Arc::new(DynamoUsageRepository::with_client(&dynamo_client).await?);
+    let api_key_repository: Arc<dyn ApiKeyRepository> =
+        Arc::new(DynamoApiKeyRepository::with_client(&dynamo_client).await?);
 
     // Signing keys behind a repository: env-backed for now, AWS-backed (with periodic refresh for
     // rotation) later — the issuer and JWKS route depend only on the trait.
@@ -166,7 +172,7 @@ async fn app() -> anyhow::Result<()> {
         user_repository.clone(),
         tenant_repository.clone(),
         session_repository,
-        token_issuer,
+        token_issuer.clone(),
         config_repository.clone(),
         mfa.clone(),
     )?;
@@ -207,6 +213,16 @@ async fn app() -> anyhow::Result<()> {
             webauthn_repository.clone()
         ),
         webauthn_login_finish_route(auth_context.clone(), webauthn_service, webauthn_repository),
+        // API keys (machine-to-machine)
+        exchange_route(
+            api_key_repository.clone(),
+            tenant_repository.clone(),
+            config_repository.clone(),
+            token_issuer
+        ),
+        create_api_key_route(api_key_repository.clone(), authenticator.clone()),
+        list_api_keys_route(api_key_repository.clone(), authenticator.clone()),
+        delete_api_key_route(api_key_repository, authenticator.clone()),
         // tenants
         create_tenant_route(
             tenant_repository.clone(),
