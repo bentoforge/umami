@@ -147,13 +147,18 @@ Replaces the struck "user invites" phase: the permission model is now **config-d
       test, state round-tripped through JSON); HTTP wiring smoke-tested live (register/start →
       options; no-token 401; no-passkey 401; bad ceremony 400)
 
-## Phase 6 — CRM / licensing
+## Phase 6 — CRM / licensing  ✅ DONE
 
-- [ ] Tenant `status` transitions (`Lead`…`Churned`), `plan`/`billedUntil`/`seatsLimit`;
-      `PATCH /tenants/{id}/status`, `PATCH /tenants/{id}/license`
-- [ ] Usage metering: `POST /tenants/{id}/usage/ai-tokens` (increment + period rollover),
-      `GET /tenants/{id}/usage`
-- [ ] 🟢 status/license/usage routes with rollover tested
+- [x] `PATCH /tenants/{id}/status` (CRM status `Lead`…`Churned`), `PATCH /tenants/{id}/license`
+      (`plan`/`billedUntil`/`seatsLimit`), both `admin:tenant`, optimistic-locked
+- [x] Usage metering — **generic per-metric** `POST /tenants/{id}/usage/{metric}` (atomic `ADD`)
+      + `GET /tenants/{id}/usage`, gated by `write:usage`. Counters live in a `usage` table keyed
+      by `{period}#{metric}` (period = calendar month → **rollover is automatic**, no reset logic).
+      **Quotas resolved from the config limits/entitlements**, not stored inline — so the inline
+      `aiTokensUsed`/`aiTokensQuota`/`usagePeriodStart` fields were dropped from `Tenant`.
+- [x] 🟢 Verified live: status→Onboarding; license→pro/billedUntil/seats; meter ai-tokens 300 then
+      800 → used 1100 vs entitlement limit 1000 → `overQuota` flips true; GET usage lists the
+      period's metrics; negative amount → 400
 
 ## Phase 6b — API keys (machine-to-machine & frontend)  *(see [API-KEYS.md](API-KEYS.md))*
 

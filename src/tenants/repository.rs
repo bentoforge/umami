@@ -78,9 +78,6 @@ impl TenantRepository for DynamoTenantRepository {
             plan: DEFAULT_PLAN.to_owned(),
             billed_until: None,
             seats_limit: None,
-            usage_period_start: None,
-            ai_tokens_used: 0,
-            ai_tokens_quota: None,
             created: now,
             last_updated: now,
         };

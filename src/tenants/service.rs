@@ -8,8 +8,9 @@ use crate::config::Config;
 use crate::config::repository::ConfigRepository;
 use crate::constants::{ADMIN_TENANT_PERMISSION, DEFAULT_LOCALE, MAX_TEXT_BODY_SIZE, ROLE_OWNER};
 use crate::tenants::repository::TenantRepository;
-use crate::tenants::{Tenant, slugify};
+use crate::tenants::{Tenant, TenantStatus, slugify};
 use crate::users::repository::{NewUser, UserRepository};
+use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -58,6 +59,21 @@ struct PatchTenantRequest {
     name: Option<String>,
     plan: Option<String>,
     custom_fields: Option<BTreeMap<String, Value>>,
+}
+
+/// Request body for a tenant status transition (micro-CRM).
+#[derive(Deserialize, Debug)]
+struct PatchStatusRequest {
+    status: TenantStatus,
+}
+
+/// Request body for licensing changes.
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct PatchLicenseRequest {
+    plan: Option<String>,
+    billed_until: Option<NaiveDate>,
+    seats_limit: Option<u32>,
 }
 
 // ── Routes ──────────────────────────────────────────────────────────────────────
@@ -113,6 +129,40 @@ pub fn patch_tenant_route(
         .boxed()
 }
 
+/// `PATCH /tenants/{id}/status` — set the tenant's CRM status (requires `admin:tenant`).
+pub fn patch_status_route(
+    tenants: Arc<dyn TenantRepository>,
+    authenticator: Arc<Authenticator>,
+) -> BoxedFilter<(impl warp::Reply,)> {
+    warp::path!("tenants" / String / "status")
+        .and(warp::patch())
+        .and(with_body_as_json::<PatchStatusRequest>(MAX_TEXT_BODY_SIZE))
+        .and(with_cloneable(tenants))
+        .and(with_user_with_any_permission(
+            authenticator,
+            REQUIRE_ADMIN_TENANT,
+        ))
+        .and_then(handle_patch_status_route)
+        .boxed()
+}
+
+/// `PATCH /tenants/{id}/license` — set plan/billing/seats (requires `admin:tenant`).
+pub fn patch_license_route(
+    tenants: Arc<dyn TenantRepository>,
+    authenticator: Arc<Authenticator>,
+) -> BoxedFilter<(impl warp::Reply,)> {
+    warp::path!("tenants" / String / "license")
+        .and(warp::patch())
+        .and(with_body_as_json::<PatchLicenseRequest>(MAX_TEXT_BODY_SIZE))
+        .and(with_cloneable(tenants))
+        .and(with_user_with_any_permission(
+            authenticator,
+            REQUIRE_ADMIN_TENANT,
+        ))
+        .and_then(handle_patch_license_route)
+        .boxed()
+}
+
 // ── Handlers ─────────────────────────────────────────────────────────────────
 
 #[tracing::instrument(level = "debug", name = "POST /tenants", skip_all)]
@@ -143,6 +193,26 @@ async fn handle_patch_tenant_route(
     caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
     into_response(patch_tenant(tenant_id, request, tenants, config, caller).await)
+}
+
+#[tracing::instrument(level = "debug", name = "PATCH /tenants/{id}/status", skip_all)]
+async fn handle_patch_status_route(
+    tenant_id: String,
+    request: PatchStatusRequest,
+    tenants: Arc<dyn TenantRepository>,
+    caller: AuthUser,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    into_response(patch_status(tenant_id, request, tenants, caller).await)
+}
+
+#[tracing::instrument(level = "debug", name = "PATCH /tenants/{id}/license", skip_all)]
+async fn handle_patch_license_route(
+    tenant_id: String,
+    request: PatchLicenseRequest,
+    tenants: Arc<dyn TenantRepository>,
+    caller: AuthUser,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    into_response(patch_license(tenant_id, request, tenants, caller).await)
 }
 
 // ── Business logic ──────────────────────────────────────────────────────────────
@@ -238,6 +308,46 @@ async fn patch_tenant(
         tenant.custom_fields = custom_fields;
     }
 
+    tenants.put_tenant(tenant).await
+}
+
+async fn patch_status(
+    tenant_id: String,
+    request: PatchStatusRequest,
+    tenants: Arc<dyn TenantRepository>,
+    caller: AuthUser,
+) -> anyhow::Result<Tenant> {
+    enforce_own_tenant(&tenant_id, &caller)?;
+
+    let mut tenant = match tenants.get_tenant(&tenant_id).await? {
+        Some(tenant) => tenant,
+        None => client_bail!("No such tenant"),
+    };
+    tenant.status = request.status;
+    tenants.put_tenant(tenant).await
+}
+
+async fn patch_license(
+    tenant_id: String,
+    request: PatchLicenseRequest,
+    tenants: Arc<dyn TenantRepository>,
+    caller: AuthUser,
+) -> anyhow::Result<Tenant> {
+    enforce_own_tenant(&tenant_id, &caller)?;
+
+    let mut tenant = match tenants.get_tenant(&tenant_id).await? {
+        Some(tenant) => tenant,
+        None => client_bail!("No such tenant"),
+    };
+    if let Some(plan) = request.plan {
+        tenant.plan = plan;
+    }
+    if request.billed_until.is_some() {
+        tenant.billed_until = request.billed_until;
+    }
+    if request.seats_limit.is_some() {
+        tenant.seats_limit = request.seats_limit;
+    }
     tenants.put_tenant(tenant).await
 }
 

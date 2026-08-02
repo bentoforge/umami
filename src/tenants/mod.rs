@@ -7,6 +7,7 @@
 pub mod packages;
 pub mod repository;
 pub mod service;
+pub mod usage;
 
 use crate::config::Config;
 use chrono::{DateTime, NaiveDate, Utc};
@@ -101,12 +102,8 @@ pub struct Tenant {
     pub billed_until: Option<NaiveDate>,
     /// Seat cap, if any.
     pub seats_limit: Option<u32>,
-    /// Start of the current usage period.
-    pub usage_period_start: Option<NaiveDate>,
-    /// AI tokens consumed this period.
-    pub ai_tokens_used: u64,
-    /// AI-token quota for the period, if any.
-    pub ai_tokens_quota: Option<u64>,
+    // Usage counters live in the `usage` table (per period + metric, atomically incremented) and
+    // quotas are resolved from the config limits/entitlements — not stored inline here.
     /// RFC 3339 creation timestamp.
     pub created: DateTime<Utc>,
     /// RFC 3339 timestamp of the last update.
@@ -300,9 +297,6 @@ mod tests {
             plan: "free".to_owned(),
             billed_until: None,
             seats_limit: None,
-            usage_period_start: None,
-            ai_tokens_used: 0,
-            ai_tokens_quota: None,
             created: now,
             last_updated: now,
         }

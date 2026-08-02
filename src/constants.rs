@@ -25,6 +25,10 @@ pub const WRITE_MEMBERS_PERMISSION: &str = "write:members";
 /// `owner` for now (single-operator dev).
 pub const MANAGE_CONFIG_PERMISSION: &str = "manage:config";
 
+/// Read and increment a tenant's usage counters (metering). Product services meter usage with a
+/// token carrying this permission.
+pub const WRITE_USAGE_PERMISSION: &str = "write:usage";
+
 // ── Built-in role codes (defined in the default config) ───────────────────────
 
 /// Role code for a tenant's first/owning user.

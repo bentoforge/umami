@@ -9,7 +9,7 @@ pub mod service;
 
 use crate::constants::{
     ADMIN_TENANT_PERMISSION, DEFAULT_ACCESS_TTL_SECS, DEFAULT_REFRESH_TTL_SECS,
-    MANAGE_CONFIG_PERMISSION, WRITE_MEMBERS_PERMISSION,
+    MANAGE_CONFIG_PERMISSION, WRITE_MEMBERS_PERMISSION, WRITE_USAGE_PERMISSION,
 };
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
@@ -224,17 +224,21 @@ impl Default for Config {
                         ADMIN_TENANT_PERMISSION.to_owned(),
                         WRITE_MEMBERS_PERMISSION.to_owned(),
                         MANAGE_CONFIG_PERMISSION.to_owned(),
+                        WRITE_USAGE_PERMISSION.to_owned(),
                     ],
                 },
                 RoleDef {
                     code: "admin".to_owned(),
                     name: "Administrator".to_owned(),
-                    permissions: vec![WRITE_MEMBERS_PERMISSION.to_owned()],
+                    permissions: vec![
+                        WRITE_MEMBERS_PERMISSION.to_owned(),
+                        WRITE_USAGE_PERMISSION.to_owned(),
+                    ],
                 },
                 RoleDef {
                     code: "member".to_owned(),
                     name: "Member".to_owned(),
-                    permissions: Vec::new(),
+                    permissions: vec![WRITE_USAGE_PERMISSION.to_owned()],
                 },
                 RoleDef {
                     code: "viewer".to_owned(),

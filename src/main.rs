@@ -63,7 +63,13 @@ use crate::tenants::packages::{
     assign_package_route, entitlements_route, remove_package_route, set_feature_route,
 };
 use crate::tenants::repository::{DynamoTenantRepository, TenantRepository};
-use crate::tenants::service::{create_tenant_route, get_tenant_route, patch_tenant_route};
+use crate::tenants::service::{
+    create_tenant_route, get_tenant_route, patch_license_route, patch_status_route,
+    patch_tenant_route,
+};
+use crate::tenants::usage::{
+    DynamoUsageRepository, UsageRepository, get_usage_route, increment_usage_route,
+};
 use crate::users::repository::{DynamoUserRepository, UserRepository};
 use crate::users::service::{create_user_route, list_users_route, patch_user_route};
 use std::env;
@@ -130,6 +136,8 @@ async fn app() -> anyhow::Result<()> {
         Arc::new(DynamoSessionRepository::with_client(&dynamo_client).await?);
     let tenant_repository: Arc<dyn TenantRepository> =
         Arc::new(DynamoTenantRepository::with_client(&dynamo_client).await?);
+    let usage_repository: Arc<dyn UsageRepository> =
+        Arc::new(DynamoUsageRepository::with_client(&dynamo_client).await?);
 
     // Signing keys behind a repository: env-backed for now, AWS-backed (with periodic refresh for
     // rotation) later — the issuer and JWKS route depend only on the trait.
@@ -207,6 +215,21 @@ async fn app() -> anyhow::Result<()> {
         ),
         get_tenant_route(tenant_repository.clone(), authenticator.clone()),
         patch_tenant_route(
+            tenant_repository.clone(),
+            config_repository.clone(),
+            authenticator.clone()
+        ),
+        // tenant CRM/licensing + usage metering
+        patch_status_route(tenant_repository.clone(), authenticator.clone()),
+        patch_license_route(tenant_repository.clone(), authenticator.clone()),
+        increment_usage_route(
+            usage_repository.clone(),
+            tenant_repository.clone(),
+            config_repository.clone(),
+            authenticator.clone()
+        ),
+        get_usage_route(
+            usage_repository,
             tenant_repository.clone(),
             config_repository.clone(),
             authenticator.clone()
