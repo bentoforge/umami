@@ -43,7 +43,9 @@ sha2 = "0.10"                  # refresh-secret hashing
 subtle = "2.6"                 # constant-time secret comparison
 base64 = "0.22"
 cookie = "0.18"                # HttpOnly refresh cookie build/parse
-# Phase 5 will add: totp-rs, webauthn-rs.
+totp-rs = { version = "5", features = ["gen_secret", "otpauth"] }  # TOTP MFA
+aes-gcm = "0.10"               # encrypt the TOTP secret at rest (AES-256-GCM)
+# Phase 5 (WebAuthn) will add: webauthn-rs.
 
 [dev-dependencies]
 mockall = "0.14"

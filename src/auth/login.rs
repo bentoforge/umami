@@ -15,6 +15,7 @@ use crate::config::Config;
 use crate::constants::MAX_TEXT_BODY_SIZE;
 use crate::tenants::{effective_features, repository::TenantRepository};
 use crate::users::{User, UserStatus};
+use anyhow::Context;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -24,24 +25,38 @@ use std::sync::Arc;
 use warp::Filter;
 use warp::filters::BoxedFilter;
 use warp::http::StatusCode;
-use warp::http::header::SET_COOKIE;
+use warp::http::header::{CONTENT_TYPE, HeaderValue, SET_COOKIE};
+use warp::reply::Response;
 use wasabi::status_bail;
 use wasabi::web::warp::{into_rejection, with_body_as_json, with_cloneable};
 
 /// Login request body. A user belongs to exactly one tenant, so no tenant selection is needed.
+/// `totp_code` completes the second factor when the account has MFA enabled.
 #[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
 struct LoginRequest {
     email: String,
     password: String,
+    totp_code: Option<String>,
 }
 
-/// Login/refresh success body. The access token is returned in the body (kept in memory by the
-/// client); the refresh token travels only in the `HttpOnly` cookie.
+/// Refresh success body — the access token is returned in the body (kept in memory by the client);
+/// the refresh token travels only in the `HttpOnly` cookie.
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct TokenResponse {
     access_token: String,
-    /// Tenants the user can act in (empty until memberships land in Phase 3).
+    tenants: Vec<String>,
+}
+
+/// Login response: either an MFA challenge (`mfaRequired: true`, no token/cookie) or success
+/// (an access token + refresh cookie).
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct LoginResponse {
+    mfa_required: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    access_token: Option<String>,
     tenants: Vec<String>,
 }
 
@@ -90,7 +105,12 @@ async fn handle_login_route(
 ) -> Result<impl warp::Reply, warp::Rejection> {
     let ip = remote.map(|addr| addr.ip().to_string());
     match login(&context, request, user_agent, ip).await {
-        Ok((body, set_cookie)) => Ok(reply_with_cookie(StatusCode::OK, body, set_cookie)),
+        Ok((body, set_cookie)) => {
+            match json_with_optional_cookie(StatusCode::OK, &body, set_cookie) {
+                Ok(reply) => Ok(reply),
+                Err(err) => Err(into_rejection(err)),
+            }
+        }
         Err(err) => Err(into_rejection(err)),
     }
 }
@@ -129,6 +149,26 @@ fn reply_with_cookie<S: Serialize>(
     let reply = warp::reply::json(&body);
     let reply = warp::reply::with_header(reply, SET_COOKIE, set_cookie);
     warp::reply::with_status(reply, status)
+}
+
+/// Builds a JSON response, attaching a `Set-Cookie` header only when one is provided (the login
+/// MFA-challenge path sets no cookie).
+fn json_with_optional_cookie<S: Serialize>(
+    status: StatusCode,
+    body: &S,
+    set_cookie: Option<String>,
+) -> anyhow::Result<Response> {
+    let bytes = serde_json::to_vec(body).context("Failed to serialize response")?;
+    let mut response = Response::new(bytes.into());
+    *response.status_mut() = status;
+    let _ = response
+        .headers_mut()
+        .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    if let Some(cookie) = set_cookie {
+        let value = HeaderValue::from_str(&cookie).context("Invalid Set-Cookie header value")?;
+        let _ = response.headers_mut().insert(SET_COOKIE, value);
+    }
+    Ok(response)
 }
 
 // ── Business logic ──────────────────────────────────────────────────────────────
@@ -170,7 +210,7 @@ async fn login(
     request: LoginRequest,
     user_agent: Option<String>,
     ip: Option<String>,
-) -> anyhow::Result<(TokenResponse, String)> {
+) -> anyhow::Result<(LoginResponse, Option<String>)> {
     // Uniform "invalid credentials" for unknown email / wrong password / inactive account, so we
     // don't reveal which users exist.
     let user = match context.users.find_by_email(&request.email).await? {
@@ -185,6 +225,32 @@ async fn login(
 
     if !password::verify(&request.password, password_hash)? {
         status_bail!(StatusCode::UNAUTHORIZED, "Invalid email or password");
+    }
+
+    // Second factor: if TOTP MFA is enabled, a valid code is required. Without one, return a
+    // challenge (no session/token) so the client can prompt and retry with the code.
+    if let Some(encrypted_secret) = user.totp_secret.as_deref() {
+        let code = match request.totp_code.as_deref() {
+            Some(code) if !code.is_empty() => code,
+            _ => {
+                return Ok((
+                    LoginResponse {
+                        mfa_required: true,
+                        access_token: None,
+                        tenants: Vec::new(),
+                    },
+                    None,
+                ));
+            }
+        };
+        if !crate::auth::totp::verify_encrypted_totp(
+            &context.mfa,
+            encrypted_secret,
+            &user.email,
+            code,
+        )? {
+            status_bail!(StatusCode::UNAUTHORIZED, "Invalid TOTP code");
+        }
     }
 
     // Config drives permissions and the access/refresh lifetimes.
@@ -236,11 +302,12 @@ async fn login(
     );
 
     Ok((
-        TokenResponse {
-            access_token,
+        LoginResponse {
+            mfa_required: false,
+            access_token: Some(access_token),
             tenants: Vec::new(),
         },
-        set_cookie,
+        Some(set_cookie),
     ))
 }
 

@@ -129,12 +129,17 @@ Replaces the struck "user invites" phase: the permission model is now **config-d
 
 ## Phase 5 — MFA
 
-- [ ] `auth/totp.rs` — `POST /auth/mfa/totp/setup` (provisioning secret/QR) + `/verify`; encrypt
-      `totpSecret` at rest
-- [ ] Fold MFA challenge into `/auth/login` (return challenge instead of token when MFA enabled)
+- [x] `auth/totp.rs` — `POST /auth/mfa/totp/setup` (secret + otpauth URL) + `/verify` + `/disable`;
+      secret **encrypted at rest** (AES-256-GCM, `auth/secretbox.rs`, key from `UMAMI_MFA_KEY`);
+      pending→active on verify
+- [x] MFA challenge folded into `/auth/login`: `totpCode` optional; enabled + no code →
+      `{mfaRequired:true}` (no token/cookie); wrong code → 401; correct code → token
+- [x] 🟢 TOTP verified live: setup → verify(wrong 401 / right enabled) → login challenge → wrong
+      401 → right token → disable → login without code succeeds
 - [ ] `auth/webauthn.rs` — `webauthn-rs` register (`start`/`finish`) + login (`start`/`finish`);
-      `webauthn-credentials` table (PK `userId`, SK `credentialId`) + `CredentialIndex` GSI
-- [ ] 🟢 TOTP + WebAuthn ceremonies pass; login MFA branch tested
+      `webauthn-credentials` table (PK `userId`, SK `credentialId`) + `CredentialIndex` GSI.
+      *Testable headless via a soft authenticator (`webauthn-authenticator-rs` dev-dep).*
+- [ ] 🟢 WebAuthn register + login ceremonies pass (soft-authenticator integration test)
 
 ## Phase 6 — CRM / licensing
 

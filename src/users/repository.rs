@@ -167,6 +167,8 @@ impl UserRepository for DynamoUserRepository {
             password_hash: new_user.password_hash,
             status: UserStatus::Active,
             token_version: 0,
+            totp_secret: None,
+            totp_pending: None,
             custom_fields: new_user.custom_fields,
             created: now,
             last_updated: now,

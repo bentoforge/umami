@@ -49,6 +49,12 @@ pub struct User {
     /// Global revocation counter. Bumping it invalidates every session at its next refresh
     /// (see the `sessions` reuse/rotation logic).
     pub token_version: u32,
+    /// Active TOTP secret (AES-GCM encrypted). `Some` means TOTP MFA is enabled.
+    #[serde(default)]
+    pub totp_secret: Option<String>,
+    /// Pending TOTP secret during setup (encrypted), before it is confirmed by a valid code.
+    #[serde(default)]
+    pub totp_pending: Option<String>,
     /// Values for the config-defined custom user fields.
     #[serde(default)]
     pub custom_fields: std::collections::BTreeMap<String, serde_json::Value>,

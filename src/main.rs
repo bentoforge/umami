@@ -46,8 +46,10 @@ mod users;
 
 use crate::auth::login::{login_route, logout_route, refresh_route};
 use crate::auth::me::{logout_all_route, me_route};
+use crate::auth::secretbox::SecretBox;
 use crate::auth::session::DynamoSessionRepository;
 use crate::auth::tokens::{EnvKeyRepository, KeyRepository, TokenIssuer, jwks_route};
+use crate::auth::totp::{totp_disable_route, totp_setup_route, totp_verify_route};
 use crate::auth::{AuthContext, session::SessionRepository};
 use crate::config::repository::{ConfigRepository, S3ConfigRepository, StaticConfigRepository};
 use crate::config::service::{get_config_route, put_config_route};
@@ -138,12 +140,16 @@ async fn app() -> anyhow::Result<()> {
         Arc::new(StaticConfigRepository::with_default())
     };
 
+    // Symmetric key for encrypting MFA secrets at rest.
+    let mfa = Arc::new(SecretBox::from_env()?);
+
     let auth_context = AuthContext::from_env(
         user_repository.clone(),
         tenant_repository.clone(),
         session_repository,
         token_issuer,
         config_repository.clone(),
+        mfa.clone(),
     )?;
 
     run_webserver(routes![
@@ -160,6 +166,10 @@ async fn app() -> anyhow::Result<()> {
             authenticator.clone()
         ),
         logout_all_route(user_repository.clone(), authenticator.clone()),
+        // MFA (TOTP)
+        totp_setup_route(user_repository.clone(), mfa.clone(), authenticator.clone()),
+        totp_verify_route(user_repository.clone(), mfa.clone(), authenticator.clone()),
+        totp_disable_route(user_repository.clone(), mfa, authenticator.clone()),
         // tenants
         create_tenant_route(
             tenant_repository.clone(),

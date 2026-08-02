@@ -7,9 +7,12 @@ pub mod cookies;
 pub mod login;
 pub mod me;
 pub mod password;
+pub mod secretbox;
 pub mod session;
 pub mod tokens;
+pub mod totp;
 
+use crate::auth::secretbox::SecretBox;
 use crate::auth::session::SessionRepository;
 use crate::auth::tokens::TokenIssuer;
 use crate::config::repository::ConfigRepository;
@@ -31,12 +34,14 @@ pub struct AuthContext {
     pub tokens: Arc<TokenIssuer>,
     /// Config source — resolves role permissions and the access/refresh TTLs at token-issue time.
     pub config: Arc<dyn ConfigRepository>,
+    /// Decrypts the TOTP secret to verify the MFA code during login.
+    pub mfa: Arc<SecretBox>,
     /// Optional `Domain` attribute for the refresh cookie (`UMAMI_COOKIE_DOMAIN`).
     pub cookie_domain: Option<String>,
 }
 
 impl AuthContext {
-    /// Assembles the context from its repositories/issuer/config plus `UMAMI_COOKIE_DOMAIN`.
+    /// Assembles the context from its repositories/issuer/config/mfa plus `UMAMI_COOKIE_DOMAIN`.
     /// Access/refresh lifetimes come from the config `security` settings, not env.
     pub fn from_env(
         users: Arc<dyn UserRepository>,
@@ -44,6 +49,7 @@ impl AuthContext {
         sessions: Arc<dyn SessionRepository>,
         tokens: Arc<TokenIssuer>,
         config: Arc<dyn ConfigRepository>,
+        mfa: Arc<SecretBox>,
     ) -> anyhow::Result<Self> {
         let cookie_domain = env::var("UMAMI_COOKIE_DOMAIN")
             .ok()
@@ -55,6 +61,7 @@ impl AuthContext {
             sessions,
             tokens,
             config,
+            mfa,
             cookie_domain,
         })
     }
