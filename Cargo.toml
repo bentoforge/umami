@@ -45,10 +45,14 @@ base64 = "0.22"
 cookie = "0.18"                # HttpOnly refresh cookie build/parse
 totp-rs = { version = "5", features = ["gen_secret", "otpauth"] }  # TOTP MFA
 aes-gcm = "0.10"               # encrypt the TOTP secret at rest (AES-256-GCM)
-# Phase 5 (WebAuthn) will add: webauthn-rs.
+# WebAuthn/FIDO2 (passkeys + hardware keys). The state-serialisation feature lets us persist the
+# short-lived ceremony state server-side (in a TTL'd table) between start and finish.
+webauthn-rs = { version = "0.5", features = ["danger-allow-state-serialisation"] }
 
 [dev-dependencies]
 mockall = "0.14"
+# Software authenticator to drive WebAuthn ceremonies headlessly in tests.
+webauthn-authenticator-rs = { version = "0.5", features = ["softpasskey"] }
 
 [features]
 default = []

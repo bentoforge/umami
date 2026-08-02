@@ -127,7 +127,7 @@ Replaces the struck "user invites" phase: the permission model is now **config-d
 
 *(Teams and cross-tenant switching remain post-v1 — see SCHEMA.md.)*
 
-## Phase 5 — MFA
+## Phase 5 — MFA  ✅ DONE
 
 - [x] `auth/totp.rs` — `POST /auth/mfa/totp/setup` (secret + otpauth URL) + `/verify` + `/disable`;
       secret **encrypted at rest** (AES-256-GCM, `auth/secretbox.rs`, key from `UMAMI_MFA_KEY`);
@@ -136,10 +136,16 @@ Replaces the struck "user invites" phase: the permission model is now **config-d
       `{mfaRequired:true}` (no token/cookie); wrong code → 401; correct code → token
 - [x] 🟢 TOTP verified live: setup → verify(wrong 401 / right enabled) → login challenge → wrong
       401 → right token → disable → login without code succeeds
-- [ ] `auth/webauthn.rs` — `webauthn-rs` register (`start`/`finish`) + login (`start`/`finish`);
-      `webauthn-credentials` table (PK `userId`, SK `credentialId`) + `CredentialIndex` GSI.
-      *Testable headless via a soft authenticator (`webauthn-authenticator-rs` dev-dep).*
-- [ ] 🟢 WebAuthn register + login ceremonies pass (soft-authenticator integration test)
+- [x] `auth/webauthn.rs` — `webauthn-rs` register (`start`/`finish`) + passwordless login
+      (`start`/`finish`); `WebauthnService` + `webauthn-credentials` (PK `userId`, SK
+      `credentialId`) and `webauthn-ceremonies` (PK `ceremonyId`, TTL) tables; ceremony state
+      persisted between start/finish and consumed once (delete-and-return); login reuses the shared
+      `issue_session`. RP config from `UMAMI_WEBAUTHN_RP_ID`/`UMAMI_WEBAUTHN_ORIGIN`.
+      *(`CredentialIndex` GSI deferred — email-first flow queries by `userId`; add it for
+      discoverable/usernameless login.)*
+- [x] 🟢 WebAuthn register + authenticate ceremony passes headless (soft-authenticator integration
+      test, state round-tripped through JSON); HTTP wiring smoke-tested live (register/start →
+      options; no-token 401; no-passkey 401; bad ceremony 400)
 
 ## Phase 6 — CRM / licensing
 

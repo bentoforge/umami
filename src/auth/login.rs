@@ -253,7 +253,26 @@ async fn login(
         }
     }
 
-    // Config drives permissions and the access/refresh lifetimes.
+    let (access_token, set_cookie) = issue_session(context, &user, user_agent, ip).await?;
+
+    Ok((
+        LoginResponse {
+            mfa_required: false,
+            access_token: Some(access_token),
+            tenants: Vec::new(),
+        },
+        Some(set_cookie),
+    ))
+}
+
+/// Creates a session and issues an access token + refresh cookie for an already-authenticated user.
+/// Shared by password login and the WebAuthn passkey login. Returns `(access_token, set_cookie)`.
+pub(crate) async fn issue_session(
+    context: &AuthContext,
+    user: &User,
+    user_agent: Option<String>,
+    ip: Option<String>,
+) -> anyhow::Result<(String, String)> {
     let config = context.config.current().await?;
     let refresh_ttl_secs = config.security.refresh_ttl_secs as i64;
     let access_ttl_secs = config.security.access_ttl_secs as i64;
@@ -275,7 +294,7 @@ async fn login(
         .await?;
 
     let permissions = config.permissions_for_roles(&user.roles);
-    let extra = build_extra_claims(&config, &context.tenants, &user).await?;
+    let extra = build_extra_claims(&config, &context.tenants, user).await?;
 
     let (access_token, _exp) = context
         .tokens
@@ -301,14 +320,7 @@ async fn login(
         refresh_ttl_secs,
     );
 
-    Ok((
-        LoginResponse {
-            mfa_required: false,
-            access_token: Some(access_token),
-            tenants: Vec::new(),
-        },
-        Some(set_cookie),
-    ))
+    Ok((access_token, set_cookie))
 }
 
 async fn refresh(

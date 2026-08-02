@@ -11,6 +11,7 @@ pub mod secretbox;
 pub mod session;
 pub mod tokens;
 pub mod totp;
+pub mod webauthn;
 
 use crate::auth::secretbox::SecretBox;
 use crate::auth::session::SessionRepository;

@@ -50,6 +50,12 @@ use crate::auth::secretbox::SecretBox;
 use crate::auth::session::DynamoSessionRepository;
 use crate::auth::tokens::{EnvKeyRepository, KeyRepository, TokenIssuer, jwks_route};
 use crate::auth::totp::{totp_disable_route, totp_setup_route, totp_verify_route};
+use crate::auth::webauthn::WebauthnService;
+use crate::auth::webauthn::repository::{DynamoWebauthnRepository, WebauthnRepository};
+use crate::auth::webauthn::{
+    webauthn_login_finish_route, webauthn_login_start_route, webauthn_register_finish_route,
+    webauthn_register_start_route,
+};
 use crate::auth::{AuthContext, session::SessionRepository};
 use crate::config::repository::{ConfigRepository, S3ConfigRepository, StaticConfigRepository};
 use crate::config::service::{get_config_route, put_config_route};
@@ -143,6 +149,11 @@ async fn app() -> anyhow::Result<()> {
     // Symmetric key for encrypting MFA secrets at rest.
     let mfa = Arc::new(SecretBox::from_env()?);
 
+    // WebAuthn relying party + passkey/ceremony storage.
+    let webauthn_service = Arc::new(WebauthnService::from_env()?);
+    let webauthn_repository: Arc<dyn WebauthnRepository> =
+        Arc::new(DynamoWebauthnRepository::with_client(&dynamo_client).await?);
+
     let auth_context = AuthContext::from_env(
         user_repository.clone(),
         tenant_repository.clone(),
@@ -159,7 +170,7 @@ async fn app() -> anyhow::Result<()> {
         // auth
         login_route(auth_context.clone()),
         refresh_route(auth_context.clone()),
-        logout_route(auth_context),
+        logout_route(auth_context.clone()),
         me_route(
             user_repository.clone(),
             tenant_repository.clone(),
@@ -170,6 +181,24 @@ async fn app() -> anyhow::Result<()> {
         totp_setup_route(user_repository.clone(), mfa.clone(), authenticator.clone()),
         totp_verify_route(user_repository.clone(), mfa.clone(), authenticator.clone()),
         totp_disable_route(user_repository.clone(), mfa, authenticator.clone()),
+        // MFA (WebAuthn passkeys)
+        webauthn_register_start_route(
+            webauthn_service.clone(),
+            webauthn_repository.clone(),
+            user_repository.clone(),
+            authenticator.clone()
+        ),
+        webauthn_register_finish_route(
+            webauthn_service.clone(),
+            webauthn_repository.clone(),
+            authenticator.clone()
+        ),
+        webauthn_login_start_route(
+            auth_context.clone(),
+            webauthn_service.clone(),
+            webauthn_repository.clone()
+        ),
+        webauthn_login_finish_route(auth_context.clone(), webauthn_service, webauthn_repository),
         // tenants
         create_tenant_route(
             tenant_repository.clone(),
