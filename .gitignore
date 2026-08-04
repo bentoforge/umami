@@ -2,6 +2,7 @@ target
 .idea
 .env
 .claude
-clients/typescript/node_modules
-clients/typescript/dist
+clients/**/node_modules
+clients/**/dist
+clients/**/.vite
 .DS_Store

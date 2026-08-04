@@ -1,0 +1,23 @@
+{
+  "app": { "title": "umami" },
+  "login": {
+    "heading": "Anmelden",
+    "email": "E-Mail",
+    "password": "Passwort",
+    "totp": "Authenticator-Code",
+    "submit": "Anmelden",
+    "mfaHint": "Gib den 6-stelligen Code aus deiner Authenticator-App ein.",
+    "passkey": "Mit Passkey anmelden",
+    "failed": "Anmeldung fehlgeschlagen"
+  },
+  "dashboard": {
+    "signedInAs": "Angemeldet als",
+    "tenant": "Mandant",
+    "role": "Rollen",
+    "permissions": "Berechtigungen",
+    "registerPasskey": "Passkey registrieren",
+    "logout": "Abmelden",
+    "logoutAll": "Überall abmelden",
+    "passkeyAdded": "Passkey registriert."
+  }
+}

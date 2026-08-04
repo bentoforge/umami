@@ -1,0 +1,23 @@
+{
+  "app": { "title": "umami" },
+  "login": {
+    "heading": "Sign in",
+    "email": "Email",
+    "password": "Password",
+    "totp": "Authenticator code",
+    "submit": "Sign in",
+    "mfaHint": "Enter the 6-digit code from your authenticator app.",
+    "passkey": "Sign in with a passkey",
+    "failed": "Sign-in failed"
+  },
+  "dashboard": {
+    "signedInAs": "Signed in as",
+    "tenant": "Tenant",
+    "role": "Roles",
+    "permissions": "Permissions",
+    "registerPasskey": "Register a passkey",
+    "logout": "Log out",
+    "logoutAll": "Log out everywhere",
+    "passkeyAdded": "Passkey registered."
+  }
+}

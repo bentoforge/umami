@@ -182,14 +182,25 @@ Modes shipped: **1) key + Origin allowlist** (frontend) and **3) BFF** (raw exch
 > A browser-exposed key is treated as semi-public (Mode 1) and capped by quota; Modes 2/3 keep the
 > secret off the browser/wire. Framing (which shop may embed) = CSP `frame-ancestors`, not the key.
 
-## Phase 7 — TypeScript SDK (`clients/typescript/`)
+## Phase 7 — TypeScript SDK + admin UI  ✅ DONE
 
-- [ ] `login`/`logout`/`getMe`; in-memory access token; auto-refresh-on-401 fetch
-      wrapper; `credentials: 'include'`
-- [ ] WebAuthn wrappers (`registerPasskey`/`loginWithPasskey`)
-- [ ] Type generation from the Rust contract (OpenAPI or emitted TS types) so SDK can't drift
-- [ ] npm publish from subdirectory via CI
-- [ ] 🟢 SDK builds; typecheck green against server contract
+**SDK** (`clients/typescript/`, `umami-client`):
+- [x] `UmamiClient`: `login`/`refresh`/`logout`/`logoutAll`/`getMe`, in-memory access token +
+      **auto-refresh-on-401** fetch wrapper (`credentials:'include'`), `getClaims`/`hasPermission`
+- [x] WebAuthn wrappers (`registerPasskey`/`loginWithPasskey` over `navigator.credentials`, with
+      base64url↔buffer helpers), TOTP, API-key `exchangeApiKey`, and tenant/user/config/api-key CRUD
+- [x] Full request/response **types** hand-mirrored from the Rust contract (`src/types.ts`);
+      `UmamiError` carries status + body. *(OpenAPI/codegen is a future anti-drift option.)*
+
+**UI** (`clients/ui/`, `umami-ui`) — React 18 + Vite + Tailwind + i18next, TSX, analogous to
+`dpp-ui`, consuming the SDK via `file:../typescript`:
+- [x] Login-starter: login screen (+ MFA challenge field + passkey button), authenticated shell
+      reading `/auth/me`, permission chips from the token, i18n (en/de), dev proxy to umami
+- [x] 🟢 Verified: both packages typecheck + build; **live browser E2E** — SPA → SDK → umami login
+      → dashboard shows the owner + tenant + decoded permissions
+
+- [ ] *Deferred:* npm publish via CI (Phase 8); fuller admin screens (users/keys/config editor);
+      optional `@durablox/ui` component lib; serving the built UI from S3 via umami (like dbx-core)
 
 ## Phase 8 — Hardening
 
