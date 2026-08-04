@@ -98,7 +98,7 @@ repository's `with_client`. Tables are prefixed with `DYNAMO_TABLE_PREFIX`.
 - **AWS SDK feature flags**: `aws-sdk-dynamodb = { version = "1", default-features = false,
   features = ["default-https-client", "rt-tokio"] }` — must match wasabi-core so cargo unions to a
   single version and avoids the legacy rustls 0.21 CVE path.
-- Pin `wasabi` to a released tag (currently **`2.6.0`**); confirm shared crate versions
+- Pin `wasabi` to a released tag (currently **`2.7.0`**); confirm shared crate versions
   (`aws-sdk-*`, `jsonwebtoken`) resolve to a single version against wasabi's lockfile.
 
 ## Token claims (must match `wasabi::web::auth::User`)
