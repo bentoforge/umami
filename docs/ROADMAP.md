@@ -223,8 +223,25 @@ each with its own `aud`, eligibility gate, permission projection and claim mappi
       new `exchange(api)`. Rust 30 tests green (4 new config tests); live-verified: login-with-api,
       refresh keeps `aud`, unknown-API 400, key multi-API selection (400/403 guards), api-key `kind`.
 - [ ] *Deferred:* `perm:`/`feat:` DSL namespacing; per-API rate limits; audience-scoped key-creation
-      restrictions; a config with a real second product API for a full non-`umami` live projection
-      test (unit tests cover the logic).
+      restrictions.
+- [x] 🟢 Full non-`umami` projection verified **live** against a real S3-backed config (added a
+      `dbx-core` API via `PUT /config`): `login {api:"dbx-core"}` → `aud=dbx-core`, permissions =
+      union of matching DSL rules, claims mapped, base perms filtered; eligibility-403 confirmed.
+
+## Phase 7c — S3 config store: auto-provision + versioning  ✅ DONE
+
+- [x] `S3ConfigRepository` now **auto-creates** its bucket on boot (like each repo's DynamoDB table)
+      and uses wasabi's naming schema: `UMAMI_CONFIG_BUCKET` is the **prefix**, effective bucket
+      `<prefix>.<S3_BUCKET_SUFFIX>` (no more `FullyQualifiedName`).
+- [x] **Bucket versioning** enabled on boot for config rollback, via a new wasabi primitive
+      `S3Client::enable_versioning(bucket, Option<VersionRetention>)` (**wasabi 2.7.0**). Optional
+      noncurrent-version retention from env: `UMAMI_CONFIG_VERSIONS_KEEP` (keep newest N) /
+      `UMAMI_CONFIG_VERSIONS_EXPIRE_DAYS` (expire after N days) → S3 lifecycle rule.
+- [x] Best-effort: a missing `s3:PutBucketVersioning`/`s3:PutLifecycleConfiguration` grant logs a
+      WARN instead of crashing the service (versioning is a durability nicety, not a boot gate).
+- [x] Live-verified against dbx-dev: bucket auto-created as `<prefix>.<suffix>` + config.json seeded
+      + service boots. Versioning/retention calls fire but need the two S3 grants on the deploy role
+      to take effect (dev SSO role lacks them). wasabi bumped 2.6.0 → **2.7.0**.
 
 ## Phase 8 — Hardening
 
