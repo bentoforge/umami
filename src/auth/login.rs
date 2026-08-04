@@ -5,20 +5,19 @@
 //! `POST /auth/logout` deletes the session and clears the cookie.
 
 use crate::auth::AuthContext;
+use crate::auth::broker::{MintParams, mint_for_api};
 use crate::auth::cookies::{build_refresh_cookie, clear_refresh_cookie, parse_refresh_cookie};
 use crate::auth::password;
 use crate::auth::session::{
     NewSession, generate_refresh_secret, hash_refresh_secret, verify_refresh_secret,
 };
-use crate::auth::tokens::AccessTokenClaims;
 use crate::config::Config;
 use crate::constants::MAX_TEXT_BODY_SIZE;
-use crate::tenants::{effective_features, repository::TenantRepository};
+use crate::tenants::effective_features;
 use crate::users::{User, UserStatus};
 use anyhow::Context;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -38,6 +37,10 @@ struct LoginRequest {
     email: String,
     password: String,
     totp_code: Option<String>,
+    /// Optional target API (from the config `apis` catalog) to mint the access token for directly,
+    /// skipping a follow-up `/auth/exchange`. Defaults to the `umami` admin API. The session
+    /// remembers this so `refresh` keeps minting for the same API.
+    api: Option<String>,
 }
 
 /// Refresh success body — the access token is returned in the body (kept in memory by the client);
@@ -173,36 +176,51 @@ fn json_with_optional_cookie<S: Serialize>(
 
 // ── Business logic ──────────────────────────────────────────────────────────────
 
-/// Builds the config-driven extra token claims: `features` (the tenant's effective features) and
-/// any configured custom user fields. Empty when `config.token_claims` is empty.
-async fn build_extra_claims(
+/// Mints an access token for the given target API, resolving the user's roles/features through the
+/// config `apis` catalog (eligibility, permission projection, claim mapping). Shared by password
+/// login, WebAuthn login, and refresh — every session-issued access token is minted here.
+async fn mint_access_token(
+    context: &AuthContext,
     config: &Config,
-    tenants: &Arc<dyn TenantRepository>,
     user: &User,
-) -> anyhow::Result<BTreeMap<String, Value>> {
-    let mut extra = BTreeMap::new();
-    if config.token_claims.is_empty() {
-        return Ok(extra);
-    }
+    tenant_id: &str,
+    api_code: &str,
+) -> anyhow::Result<String> {
+    let access_ttl_secs = config.security.access_ttl_secs as i64;
 
-    let tenant = if config.token_claims.iter().any(|claim| claim == "features") {
-        tenants.get_tenant(&user.tenant_id).await?
-    } else {
-        None
-    };
+    let tenant = context.tenants.get_tenant(tenant_id).await?;
+    let features: Vec<String> = tenant
+        .as_ref()
+        .map(|tenant| effective_features(config, tenant).into_iter().collect())
+        .unwrap_or_default();
+    let empty_fields = BTreeMap::new();
+    let tenant_custom_fields = tenant
+        .as_ref()
+        .map(|tenant| &tenant.custom_fields)
+        .unwrap_or(&empty_fields);
 
-    for claim in &config.token_claims {
-        if claim == "features" {
-            if let Some(tenant) = &tenant {
-                let codes: Vec<String> = effective_features(config, tenant).into_iter().collect();
-                let _ = extra.insert("features".to_owned(), json!(codes));
-            }
-        } else if let Some(value) = user.custom_fields.get(claim) {
-            let _ = extra.insert(claim.clone(), value.clone());
-        }
-    }
+    let (access_token, _exp) = mint_for_api(
+        &context.tokens,
+        config,
+        MintParams {
+            api_code,
+            subject: &user.user_id,
+            name: &user.name,
+            email: &user.email,
+            locale: &user.locale,
+            tenant_id,
+            token_version: user.token_version,
+            roles: &user.roles,
+            features: &features,
+            user_custom_fields: &user.custom_fields,
+            tenant_custom_fields,
+            kind: None,
+            access_ttl_secs,
+        },
+    )
+    .await?;
 
-    Ok(extra)
+    Ok(access_token)
 }
 
 async fn login(
@@ -253,7 +271,10 @@ async fn login(
         }
     }
 
-    let (access_token, set_cookie) = issue_session(context, &user, user_agent, ip).await?;
+    // Default to the umami admin API when the caller didn't request a specific target.
+    let api_code = request.api.as_deref().unwrap_or("umami");
+    let (access_token, set_cookie) =
+        issue_session(context, &user, api_code, user_agent, ip).await?;
 
     Ok((
         LoginResponse {
@@ -266,16 +287,21 @@ async fn login(
 }
 
 /// Creates a session and issues an access token + refresh cookie for an already-authenticated user.
-/// Shared by password login and the WebAuthn passkey login. Returns `(access_token, set_cookie)`.
+/// `api_code` selects the target API the access token (and every later refresh) is minted for; the
+/// session records it. Shared by password login and the WebAuthn passkey login. Returns
+/// `(access_token, set_cookie)`.
 pub(crate) async fn issue_session(
     context: &AuthContext,
     user: &User,
+    api_code: &str,
     user_agent: Option<String>,
     ip: Option<String>,
 ) -> anyhow::Result<(String, String)> {
     let config = context.config.current().await?;
     let refresh_ttl_secs = config.security.refresh_ttl_secs as i64;
-    let access_ttl_secs = config.security.access_ttl_secs as i64;
+
+    // Mint first: if the user isn't eligible for the requested API, fail before creating a session.
+    let access_token = mint_access_token(context, &config, user, &user.tenant_id, api_code).await?;
 
     let secret = generate_refresh_secret();
     let refresh_hash = hash_refresh_secret(&secret);
@@ -285,32 +311,13 @@ pub(crate) async fn issue_session(
         .create_session(NewSession {
             user_id: user.user_id.clone(),
             active_tenant_id: Some(user.tenant_id.clone()),
+            api_code: api_code.to_owned(),
             refresh_hash,
             token_version_at_issue: user.token_version,
             ttl_secs: refresh_ttl_secs,
             user_agent,
             ip,
         })
-        .await?;
-
-    let permissions = config.permissions_for_roles(&user.roles);
-    let extra = build_extra_claims(&config, &context.tenants, user).await?;
-
-    let (access_token, _exp) = context
-        .tokens
-        .issue_access_token(
-            &AccessTokenClaims {
-                subject: &user.user_id,
-                name: &user.name,
-                email: &user.email,
-                locale: &user.locale,
-                tenant: Some(&user.tenant_id),
-                permissions: &permissions,
-                token_version: user.token_version,
-                extra: &extra,
-            },
-            access_ttl_secs,
-        )
         .await?;
 
     let set_cookie = build_refresh_cookie(
@@ -365,7 +372,6 @@ async fn refresh(
 
     let config = context.config.current().await?;
     let refresh_ttl_secs = config.security.refresh_ttl_secs as i64;
-    let access_ttl_secs = config.security.access_ttl_secs as i64;
 
     let new_secret = generate_refresh_secret();
     let new_hash = hash_refresh_secret(&new_secret);
@@ -374,25 +380,14 @@ async fn refresh(
         .rotate_session(&session_id, new_hash, refresh_ttl_secs)
         .await?;
 
-    let permissions = config.permissions_for_roles(&user.roles);
-    let extra = build_extra_claims(&config, &context.tenants, &user).await?;
-
-    let (access_token, _exp) = context
-        .tokens
-        .issue_access_token(
-            &AccessTokenClaims {
-                subject: &user.user_id,
-                name: &user.name,
-                email: &user.email,
-                locale: &user.locale,
-                tenant: session.active_tenant_id.as_deref(),
-                permissions: &permissions,
-                token_version: user.token_version,
-                extra: &extra,
-            },
-            access_ttl_secs,
-        )
-        .await?;
+    // The session's active tenant is the user's home tenant (single-tenant v1); fall back to it.
+    let tenant_id = session
+        .active_tenant_id
+        .as_deref()
+        .unwrap_or(&user.tenant_id);
+    // Re-mint for the API this session was opened against, so the audience stays stable.
+    let access_token =
+        mint_access_token(context, &config, &user, tenant_id, &session.api_code).await?;
 
     let set_cookie = build_refresh_cookie(
         &session_id,

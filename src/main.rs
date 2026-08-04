@@ -48,6 +48,7 @@ use crate::auth::apikeys::repository::{ApiKeyRepository, DynamoApiKeyRepository}
 use crate::auth::apikeys::{
     create_api_key_route, delete_api_key_route, exchange_route, list_api_keys_route,
 };
+use crate::auth::exchange::{ExchangeDeps, exchange_route as user_exchange_route};
 use crate::auth::login::{login_route, logout_route, refresh_route};
 use crate::auth::me::{logout_all_route, me_route};
 use crate::auth::secretbox::SecretBox;
@@ -218,11 +219,21 @@ async fn app() -> anyhow::Result<()> {
             api_key_repository.clone(),
             tenant_repository.clone(),
             config_repository.clone(),
-            token_issuer
+            token_issuer.clone()
         ),
         create_api_key_route(api_key_repository.clone(), authenticator.clone()),
         list_api_keys_route(api_key_repository.clone(), authenticator.clone()),
         delete_api_key_route(api_key_repository, authenticator.clone()),
+        // downstream token exchange (authenticated user → product API)
+        user_exchange_route(
+            ExchangeDeps {
+                users: user_repository.clone(),
+                tenants: tenant_repository.clone(),
+                config: config_repository.clone(),
+                tokens: token_issuer,
+            },
+            authenticator.clone()
+        ),
         // tenants
         create_tenant_route(
             tenant_repository.clone(),

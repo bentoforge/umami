@@ -202,6 +202,30 @@ Modes shipped: **1) key + Origin allowlist** (frontend) and **3) BFF** (raw exch
 - [ ] *Deferred:* npm publish via CI (Phase 8); fuller admin screens (users/keys/config editor);
       optional `@durablox/ui` component lib; serving the built UI from S3 via umami (like dbx-core)
 
+## Phase 7b — Audiences & token projection  ✅ DONE  *(see [AUDIENCES.md](AUDIENCES.md))*
+
+umami is now a **token broker**: it mints tokens for any target API in the config `apis` catalog,
+each with its own `aud`, eligibility gate, permission projection and claim mapping.
+
+- [x] `config.apis: [ApiDef]` — `code`, `audience`, `passthrough`, `eligibility` (bool expr),
+      `permissions` (rule map `expr → [perm]`), `claims` (`name → source`). Mini-DSL: `,`=OR,
+      `+`=AND over **S = permissions ∪ features**. Default config ships the `umami` API
+      (`passthrough`, `claims:{features}`); top-level `tokenClaims` superseded (kept for back-compat).
+- [x] `auth/broker.rs` — shared `mint_for_api(MintParams)`: resolve API → eligibility (403) →
+      `project_permissions` → `build_claims` (+ `kind` for machine tokens) → sign with `aud`.
+- [x] **Three mint paths**, all through the broker:
+      login `POST /auth/login {api?}` **and passkey `…/webauthn/login/finish {api?}`** (session
+      records `api_code`; refresh reuses it),
+      API-key `POST /auth/token {apiKey, api?}` (key carries `apis:[code]`, default `["umami"]`),
+      user downstream `POST /auth/exchange {api}` (authenticated, no session).
+- [x] `AccessTokenClaims.audience`, `Session.api_code`, `ApiKey.apis` (+ create/view/DSL).
+- [x] SDK: `Config.apis`/`ApiDef`, `ApiKey.apis`, `login(…, api?)`, `exchangeApiKey(key, api?)`,
+      new `exchange(api)`. Rust 30 tests green (4 new config tests); live-verified: login-with-api,
+      refresh keeps `aud`, unknown-API 400, key multi-API selection (400/403 guards), api-key `kind`.
+- [ ] *Deferred:* `perm:`/`feat:` DSL namespacing; per-API rate limits; audience-scoped key-creation
+      restrictions; a config with a real second product API for a full non-`umami` live projection
+      test (unit tests cover the logic).
+
 ## Phase 8 — Hardening
 
 - [ ] Rate limiting (`/auth/login`, MFA verify — per-IP + per-account backoff)

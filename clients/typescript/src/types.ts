@@ -30,6 +30,9 @@ export interface LoginRequest {
   email: string;
   password: string;
   totpCode?: string;
+  /** Optional target API to mint the access token for directly (default: `umami`). The session
+   * remembers it, so refreshes keep the same audience. See `docs/AUDIENCES.md`. */
+  api?: string;
 }
 
 /** Either an MFA challenge (`mfaRequired: true`, no token) or success (an access token). */
@@ -221,6 +224,21 @@ export interface SecuritySettings {
   accessTtlSecs: number;
   refreshTtlSecs: number;
 }
+/** A target API in the config catalog: its `aud`, eligibility gate, permission projection, and
+ * claim mapping. See `docs/AUDIENCES.md`. */
+export interface ApiDef {
+  code: string;
+  audience: string;
+  /** If true, the token carries the requester's own role permissions verbatim. */
+  passthrough?: boolean;
+  /** Boolean expression (`,`=OR, `+`=AND over permissions∪features) gating the exchange. */
+  eligibility?: string | null;
+  /** Rule map: expression → injected permissions (union of all matching rules). */
+  permissions?: Record<string, string[]>;
+  /** Claim mapping: claimName → source (`features`, `customUser:<k>`, `customTenant:<k>`, literal). */
+  claims?: Record<string, string>;
+}
+
 export interface Config {
   version: number;
   roles: RoleDef[];
@@ -230,6 +248,9 @@ export interface Config {
   customTenantFields: CustomFieldDef[];
   customUserFields: CustomFieldDef[];
   security: SecuritySettings;
+  /** The catalog of target APIs umami can mint tokens for. */
+  apis: ApiDef[];
+  /** @deprecated superseded by per-API `claims`; kept for back-compat. */
   tokenClaims: string[];
 }
 
@@ -242,6 +263,8 @@ export interface ApiKeyView {
   tenantId: string;
   name: string;
   roles: string[];
+  /** Target API codes this key may mint tokens for. */
+  apis: string[];
   status: ApiKeyStatus;
   allowedOrigins: string[];
   expiresAt?: string | null;
@@ -252,6 +275,8 @@ export interface ApiKeyView {
 export interface CreateApiKeyRequest {
   name: string;
   roles?: string[];
+  /** Target API codes this key may mint for; defaults to `["umami"]`. */
+  apis?: string[];
   allowedOrigins?: string[];
   expiresAt?: string;
 }
@@ -262,6 +287,7 @@ export interface CreateApiKeyResponse {
   apiKey: string;
   name: string;
   roles: string[];
+  apis: string[];
   allowedOrigins: string[];
 }
 

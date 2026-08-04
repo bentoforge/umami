@@ -1,0 +1,20 @@
+# cargo-audit configuration.
+#
+# Ignored advisories must each carry a justification and be revisited when the upstream dependency
+# ships a fix (re-check on every `cargo update`).
+
+[advisories]
+ignore = [
+    # RUSTSEC-2026-0235 — rkyv 0.7.46 out-of-bounds read via Rc/Arc archives.
+    #
+    # rkyv is an *optional* dependency of rust_decimal, gated behind rust_decimal's `rkyv` feature,
+    # which umami does NOT enable (we use only `serde-arbitrary-precision`). `cargo tree -e normal
+    # -i rkyv` prints "nothing to print" — the crate is never compiled into umami, so the
+    # vulnerable archive-deserialization path is unreachable. It only appears in Cargo.lock, which
+    # cargo-audit scans regardless of feature activation.
+    #
+    # It cannot be upgraded in place: rust_decimal 1.42.1 pins `rkyv = "^0.7.46"`, incompatible with
+    # the patched 0.8.17. Drop this ignore once rust_decimal releases a version referencing rkyv
+    # >= 0.8.17.
+    "RUSTSEC-2026-0235",
+]

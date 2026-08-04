@@ -22,6 +22,11 @@ use wasabi::aws::dynamodb::{deserialize_entity, generate_id, str};
 /// Number of random bytes in a refresh secret (256 bits of entropy).
 const REFRESH_SECRET_BYTES: usize = 32;
 
+/// Default target API for sessions created before `api_code` existed: the umami admin API.
+fn default_session_api() -> String {
+    "umami".to_owned()
+}
+
 // ── Table + field names ─────────────────────────────────────────────────────────
 
 /// Table storing one row per active login.
@@ -41,6 +46,10 @@ pub struct Session {
     /// Tenant the session is currently scoped to (drives the token's `tenant` claim). `None`
     /// until the user selects/has a tenant (memberships arrive in Phase 3).
     pub active_tenant_id: Option<String>,
+    /// Target API code this session mints access tokens for (see `docs/AUDIENCES.md`), chosen at
+    /// login. `refresh` re-mints for the same API. Defaults to `"umami"` for older rows.
+    #[serde(default = "default_session_api")]
+    pub api_code: String,
     /// SHA-256 (base64url) of the current refresh secret. The secret itself is never stored.
     pub refresh_hash: String,
     /// Snapshot of `user.tokenVersion` at issue; a global bump invalidates this session at refresh.
@@ -91,6 +100,8 @@ pub struct NewSession {
     pub user_id: String,
     /// Tenant the session is scoped to, if any.
     pub active_tenant_id: Option<String>,
+    /// Target API code this session mints tokens for (`refresh` reuses it).
+    pub api_code: String,
     /// SHA-256 (base64url) of the initial refresh secret.
     pub refresh_hash: String,
     /// Snapshot of `user.tokenVersion` at issue.
@@ -158,6 +169,7 @@ impl SessionRepository for DynamoSessionRepository {
             session_id: generate_id(),
             user_id: new_session.user_id,
             active_tenant_id: new_session.active_tenant_id,
+            api_code: new_session.api_code,
             refresh_hash: new_session.refresh_hash,
             token_version_at_issue: new_session.token_version_at_issue,
             user_agent: new_session.user_agent,

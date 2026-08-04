@@ -7,8 +7,9 @@
 
 pub mod repository;
 
+use crate::auth::broker::{MintParams, mint_for_api};
 use crate::auth::session::{generate_refresh_secret, hash_refresh_secret, verify_refresh_secret};
-use crate::auth::tokens::{AccessTokenClaims, TokenIssuer};
+use crate::auth::tokens::TokenIssuer;
 use crate::config::repository::ConfigRepository;
 use crate::constants::{MAX_TEXT_BODY_SIZE, WRITE_MEMBERS_PERMISSION};
 use crate::tenants::effective_features;
@@ -17,7 +18,7 @@ use anyhow::Context;
 use chrono::{DateTime, Utc};
 use repository::{ApiKey, ApiKeyRepository, ApiKeyStatus, NewApiKey};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::json;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use warp::Filter;
@@ -56,11 +57,13 @@ fn parse_api_key(presented: &str) -> Option<(&str, &str)> {
 
 // ── Request/response types ───────────────────────────────────────────────────
 
-/// Exchange request: the presented API key.
+/// Exchange request: the presented API key and, optionally, which target API to mint for. When the
+/// key allows exactly one API, `api` may be omitted; otherwise it must name one of the key's APIs.
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct ExchangeRequest {
     api_key: String,
+    api: Option<String>,
 }
 
 /// Exchange response: the short-lived access token.
@@ -77,6 +80,8 @@ struct ExchangeResponse {
 struct CreateApiKeyRequest {
     name: String,
     roles: Option<Vec<String>>,
+    /// Target API codes this key may mint for; defaults to `["umami"]`.
+    apis: Option<Vec<String>>,
     allowed_origins: Option<Vec<String>>,
     expires_at: Option<DateTime<Utc>>,
 }
@@ -89,6 +94,7 @@ struct CreateApiKeyResponse {
     api_key: String,
     name: String,
     roles: Vec<String>,
+    apis: Vec<String>,
     allowed_origins: Vec<String>,
 }
 
@@ -100,6 +106,7 @@ struct ApiKeyView {
     tenant_id: String,
     name: String,
     roles: Vec<String>,
+    apis: Vec<String>,
     status: ApiKeyStatus,
     allowed_origins: Vec<String>,
     expires_at: Option<DateTime<Utc>>,
@@ -114,6 +121,7 @@ impl From<ApiKey> for ApiKeyView {
             tenant_id: key.tenant_id,
             name: key.name,
             roles: key.roles,
+            apis: key.apis,
             status: key.status,
             allowed_origins: key.allowed_origins,
             expires_at: key.expires_at,
@@ -298,37 +306,61 @@ async fn exchange(
         }
     }
 
+    // Pick the target API: the request's `api` must be one the key allows; if the key has exactly
+    // one API and none was requested, use it. Anything else is a client error.
+    let api_code = match request.api.as_deref() {
+        Some(requested) => {
+            if !key.apis.iter().any(|code| code == requested) {
+                status_bail!(
+                    StatusCode::FORBIDDEN,
+                    "This key may not mint tokens for API '{requested}'"
+                );
+            }
+            requested.to_owned()
+        }
+        None => match key.apis.as_slice() {
+            [only] => only.clone(),
+            [] => client_bail!("This key has no target API configured"),
+            _ => client_bail!("This key targets multiple APIs; specify 'api'"),
+        },
+    };
+
     let config = config.current().await?;
-    let permissions = config.permissions_for_roles(&key.roles);
     let access_ttl_secs = config.security.access_ttl_secs as i64;
 
-    // Config-driven extra claims: mark the token as machine-issued and, if requested, its tenant's
-    // effective features.
-    let mut extra: BTreeMap<String, Value> = BTreeMap::new();
-    let _ = extra.insert("kind".to_owned(), json!("api_key"));
-    if config.token_claims.iter().any(|claim| claim == "features")
-        && let Some(tenant) = tenants.get_tenant(&key.tenant_id).await?
-    {
-        let features: Vec<String> = effective_features(&config, &tenant).into_iter().collect();
-        let _ = extra.insert("features".to_owned(), json!(features));
-    }
+    // Resolve the tenant's effective features + custom fields for eligibility, projection, claims.
+    let tenant = tenants.get_tenant(&key.tenant_id).await?;
+    let features: Vec<String> = tenant
+        .as_ref()
+        .map(|tenant| effective_features(&config, tenant).into_iter().collect())
+        .unwrap_or_default();
+    let empty_fields = BTreeMap::new();
+    let tenant_custom_fields = tenant
+        .as_ref()
+        .map(|tenant| &tenant.custom_fields)
+        .unwrap_or(&empty_fields);
 
     let synthetic_email = format!("{key_id}@api-key");
-    let (access_token, _exp) = tokens
-        .issue_access_token(
-            &AccessTokenClaims {
-                subject: &key.key_id,
-                name: &key.name,
-                email: &synthetic_email,
-                locale: "en-US",
-                tenant: Some(&key.tenant_id),
-                permissions: &permissions,
-                token_version: 0,
-                extra: &extra,
-            },
+    let (access_token, _exp) = mint_for_api(
+        &tokens,
+        &config,
+        MintParams {
+            api_code: &api_code,
+            subject: &key.key_id,
+            name: &key.name,
+            email: &synthetic_email,
+            locale: "en-US",
+            tenant_id: &key.tenant_id,
+            token_version: 0,
+            roles: &key.roles,
+            features: &features,
+            user_custom_fields: &empty_fields,
+            tenant_custom_fields,
+            kind: Some("api_key"),
             access_ttl_secs,
-        )
-        .await?;
+        },
+    )
+    .await?;
 
     // Best-effort usage marker; failure to record must not fail the exchange.
     if let Err(err) = keys.touch_last_used(key_id).await {
@@ -358,6 +390,11 @@ async fn create_api_key(
     let api_key = format!("{KEY_PREFIX}{key_id}_{secret}");
     let roles = request.roles.unwrap_or_default();
     let allowed_origins = request.allowed_origins.unwrap_or_default();
+    // Default a key with no explicit target to the umami admin API.
+    let apis = match request.apis {
+        Some(apis) if !apis.is_empty() => apis,
+        _ => vec!["umami".to_owned()],
+    };
 
     keys.create(NewApiKey {
         key_id: key_id.clone(),
@@ -365,6 +402,7 @@ async fn create_api_key(
         secret_hash: hash_refresh_secret(&secret),
         name: request.name.clone(),
         roles: roles.clone(),
+        apis: apis.clone(),
         allowed_origins: allowed_origins.clone(),
         expires_at: request.expires_at,
     })
@@ -376,6 +414,7 @@ async fn create_api_key(
         api_key,
         name: request.name,
         roles,
+        apis,
         allowed_origins,
     })
 }

@@ -128,6 +128,8 @@ pub struct AccessTokenClaims<'a> {
     pub locale: &'a str,
     /// Active tenant → `tenant` (omitted when `None`).
     pub tenant: Option<&'a str>,
+    /// Target audience → `aud` (falls back to the issuer's default when `None`).
+    pub audience: Option<&'a str>,
     /// Effective permissions for the active tenant → `permissions`.
     pub permissions: &'a [String],
     /// `user.tokenVersion` snapshot → `ver`.
@@ -175,7 +177,7 @@ impl TokenIssuer {
         let claims = AccessClaims {
             iss: &self.issuer,
             sub: request.subject,
-            aud: self.default_audience.as_deref(),
+            aud: request.audience.or(self.default_audience.as_deref()),
             tenant: request.tenant,
             name: request.name,
             email: request.email,
@@ -264,6 +266,7 @@ mod tests {
                     email: "jane@test",
                     locale: "en-US",
                     tenant: Some("t1"),
+                    audience: None,
                     permissions: &perms,
                     token_version: 3,
                     extra: &extra,

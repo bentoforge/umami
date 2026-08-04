@@ -255,6 +255,9 @@ struct LoginStartResponse {
 struct LoginFinishRequest {
     ceremony_id: String,
     credential: PublicKeyCredential,
+    /// Optional target API (config `apis` catalog) to mint the access token for directly; the
+    /// session remembers it so refresh keeps the audience. Defaults to `umami`.
+    api: Option<String>,
 }
 
 // ── Handlers ─────────────────────────────────────────────────────────────────
@@ -461,7 +464,9 @@ async fn login_finish(
         _ => status_bail!(StatusCode::UNAUTHORIZED, "Account not active"),
     };
 
-    issue_session(context, &user, user_agent, ip).await
+    // Mint for the requested API (default: umami admin API); the session records it for refresh.
+    let api_code = request.api.as_deref().unwrap_or("umami");
+    issue_session(context, &user, api_code, user_agent, ip).await
 }
 
 #[cfg(test)]

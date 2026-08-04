@@ -137,11 +137,18 @@ export class UmamiClient {
   // ── auth ────────────────────────────────────────────────────────────────────
 
   /** Password login. On success the access token is stored; if MFA is enabled and no `totpCode`
-   * is given, the response has `mfaRequired: true` and no token. */
-  async login(email: string, password: string, totpCode?: string): Promise<LoginResponse> {
+   * is given, the response has `mfaRequired: true` and no token. Pass `api` to mint the token for
+   * a product API directly (default: the umami admin API); the session keeps that audience across
+   * refreshes. */
+  async login(
+    email: string,
+    password: string,
+    totpCode?: string,
+    api?: string,
+  ): Promise<LoginResponse> {
     const data = await this.request<LoginResponse>(
       "/auth/login",
-      { method: "POST", body: JSON.stringify({ email, password, totpCode }) },
+      { method: "POST", body: JSON.stringify({ email, password, totpCode, api }) },
       false,
     );
     if (data.accessToken) this.setToken(data.accessToken);
@@ -214,8 +221,10 @@ export class UmamiClient {
     });
   }
 
-  /** Passwordless login with a passkey via `navigator.credentials.get`; stores the token. */
-  async loginWithPasskey(email: string): Promise<void> {
+  /** Passwordless login with a passkey via `navigator.credentials.get`; stores the token. Pass
+   * `api` to mint the token for a product API directly (default: umami); the session keeps that
+   * audience across refreshes. */
+  async loginWithPasskey(email: string, api?: string): Promise<void> {
     const start = await this.request<{ ceremonyId: string; options: any }>(
       "/auth/webauthn/login/start",
       { method: "POST", body: JSON.stringify({ email }) },
@@ -228,7 +237,11 @@ export class UmamiClient {
       "/auth/webauthn/login/finish",
       {
         method: "POST",
-        body: JSON.stringify({ ceremonyId: start.ceremonyId, credential: assertionToJSON(credential) }),
+        body: JSON.stringify({
+          ceremonyId: start.ceremonyId,
+          credential: assertionToJSON(credential),
+          api,
+        }),
       },
       false,
     );
@@ -237,15 +250,26 @@ export class UmamiClient {
 
   // ── API-key exchange (M2M / BFF) ──────────────────────────────────────────────
 
-  /** Exchanges an `umk_…` API key for a short-lived token (stores it). Server-side/BFF use. */
-  async exchangeApiKey(apiKey: string): Promise<ExchangeResponse> {
+  /** Exchanges an `umk_…` API key for a short-lived token (stores it). Server-side/BFF use.
+   * `api` selects the target API when the key allows more than one (see `docs/AUDIENCES.md`). */
+  async exchangeApiKey(apiKey: string, api?: string): Promise<ExchangeResponse> {
     const data = await this.request<ExchangeResponse>(
       "/auth/token",
-      { method: "POST", body: JSON.stringify({ apiKey }) },
+      { method: "POST", body: JSON.stringify(api ? { apiKey, api } : { apiKey }) },
       false,
     );
     this.setToken(data.accessToken);
     return data;
+  }
+
+  /** Downstream token exchange: mints a token for a product API (`api` from the config catalog)
+   * for the currently-logged-in user, WITHOUT replacing the stored umami token. Returns the
+   * downstream token for the caller to use against that API. */
+  exchange(api: string): Promise<ExchangeResponse> {
+    return this.request<ExchangeResponse>("/auth/exchange", {
+      method: "POST",
+      body: JSON.stringify({ api }),
+    });
   }
 
   // ── tenants ────────────────────────────────────────────────────────────────────
