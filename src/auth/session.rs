@@ -180,12 +180,16 @@ impl SessionRepository for DynamoSessionRepository {
             ttl: expires_at.timestamp(),
         };
 
+        // Defensive: the id is the PK — `attribute_not_exists` makes an id collision fail loudly
+        // instead of clobbering an existing session, for free.
         let _ = self
             .client
             .put_entity(TABLE_SESSIONS, &session)?
+            .condition_expression("attribute_not_exists(#sessionId)")
+            .expression_attribute_names("#sessionId", FIELD_SESSION_ID)
             .send()
             .await
-            .context("Error inserting entity into 'sessions' table")?;
+            .context("Error inserting entity into 'sessions' table (id collision?)")?;
 
         Ok(session)
     }

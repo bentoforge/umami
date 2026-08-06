@@ -84,6 +84,7 @@ use crate::users::service::{
 use std::env;
 use std::sync::Arc;
 use wasabi::aws::dynamodb::client::DynamoClient;
+use wasabi::aws::dynamodb::generate_id;
 use wasabi::aws::s3::S3Client;
 use wasabi::tools::system::install_termination_listener;
 use wasabi::web::auth::authenticator::Authenticator;
@@ -330,10 +331,12 @@ async fn app() -> anyhow::Result<()> {
 
 /// Bootstraps the first tenant + owner on an empty deployment when `UMAMI_AUTO_INIT=true`.
 ///
-/// No-op unless auto-init is enabled and **zero** tenants exist. Creates a tenant (with the
-/// configured `UMAMI_SYSTEM_TENANT_ID` when set, so the owner is immediately a system admin) and an
-/// owner user with the well-known bootstrap credentials `UMAMI` / `UMAMI` — which MUST be changed
-/// immediately. Intended for first-run/dev, not steady-state provisioning.
+/// No-op unless auto-init is enabled and **zero** tenants exist. Creates the system tenant — with a
+/// caller-supplied `UMAMI_SYSTEM_TENANT_ID` when set (so the owner is immediately a system admin),
+/// otherwise a freshly generated id — and an owner user (`UMAMI_ROOT_USERNAME`, default `root`) with
+/// a **randomly generated** one-time password. The tenant id, username and password are logged once,
+/// prominently; no credentials are hard-coded. Intended for first-run/dev, not steady-state
+/// provisioning.
 #[tracing::instrument(skip_all, err(Display))]
 async fn maybe_auto_init(
     tenants: &Arc<dyn TenantRepository>,
@@ -356,27 +359,50 @@ async fn maybe_auto_init(
         None => tenants.create_tenant("System", "system").await?,
     };
 
-    // Bootstrap credentials: username `UMAMI`, password `UMAMI`, no email — CHANGE THE PASSWORD.
-    let password_hash = auth::password::hash("UMAMI")?;
+    // Generated, single-use bootstrap credentials — never hard-coded. Logged once below; the
+    // operator must sign in and change the password immediately.
+    let username = env::var("UMAMI_ROOT_USERNAME")
+        .ok()
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or_else(|| "root".to_owned());
+    let password = generate_id();
+    let password_hash = auth::password::hash(&password)?;
     let owner = users
         .create_user(NewUser {
             tenant_id: tenant.tenant_id.clone(),
             roles: vec![ROLE_OWNER.to_owned()],
-            username: "UMAMI".to_owned(),
+            username: username.clone(),
             email: None,
-            name: "Umami Admin".to_owned(),
+            name: "Root Admin".to_owned(),
             locale: DEFAULT_LOCALE.to_owned(),
             password_hash: Some(password_hash),
             custom_fields: std::collections::BTreeMap::new(),
         })
         .await?;
 
+    // One-time, prominent credential dump. The password is only ever shown here.
+    let system_hint = if system_tenant_id.is_some() {
+        String::new()
+    } else {
+        format!(
+            "\n  ⚠ set UMAMI_SYSTEM_TENANT_ID={} (and restart) to grant cross-tenant/system admin",
+            tenant.tenant_id
+        )
+    };
     tracing::warn!(
-        "AUTO-INIT: created bootstrap tenant '{}' and owner '{}' — login UMAMI / UMAMI. \
-         CHANGE THIS PASSWORD IMMEDIATELY. Set UMAMI_SYSTEM_TENANT_ID={} to grant system-admin.",
+        "\n================= UMAMI AUTO-INIT =================\n\
+         Bootstrapped an empty deployment. These credentials are shown ONCE:\n\
+         \x20 tenant id : {}\n\
+         \x20 username  : {}\n\
+         \x20 password  : {}\n\
+         \x20 user id   : {}\n\
+         ⚠ CHANGE THE PASSWORD IMMEDIATELY.{}\n\
+         ==================================================",
         tenant.tenant_id,
+        username,
+        password,
         owner.user_id,
-        tenant.tenant_id
+        system_hint
     );
 
     Ok(())

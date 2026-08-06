@@ -234,12 +234,16 @@ impl UserRepository for DynamoUserRepository {
             );
         }
 
+        // Defensive: the id is the PK, so `attribute_not_exists` turns a (near-impossible) id
+        // collision into a loud failure rather than a silent overwrite — for free.
         let _ = self
             .client
             .put_entity(TABLE_USERS, &user)?
+            .condition_expression("attribute_not_exists(#userId)")
+            .expression_attribute_names("#userId", FIELD_USER_ID)
             .send()
             .await
-            .context("Error inserting entity into 'users' table")?;
+            .context("Error inserting entity into 'users' table (id collision?)")?;
 
         Ok(user)
     }

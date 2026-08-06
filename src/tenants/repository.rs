@@ -154,13 +154,17 @@ impl TenantRepository for DynamoTenantRepository {
             last_updated: now,
         };
 
+        // Defensive: the id is the PK, so `attribute_not_exists` makes a (near-impossible) id
+        // collision fail loudly instead of silently overwriting an existing tenant — for free.
         let _ = self
             .client
             .put_entity(TABLE_TENANTS, &tenant)?
             .item(FIELD_LIST_SHARD, str(LIST_SHARD_VALUE))
+            .condition_expression("attribute_not_exists(#tenantId)")
+            .expression_attribute_names("#tenantId", FIELD_TENANT_ID)
             .send()
             .await
-            .context("Error inserting entity into 'tenants' table")?;
+            .context("Error inserting entity into 'tenants' table (id collision?)")?;
 
         Ok(tenant)
     }

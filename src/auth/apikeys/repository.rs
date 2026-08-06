@@ -158,12 +158,16 @@ impl ApiKeyRepository for DynamoApiKeyRepository {
             last_used_at: None,
             created: Utc::now(),
         };
+        // Defensive: the id is the PK — `attribute_not_exists` makes an id collision fail loudly
+        // instead of clobbering an existing key, for free.
         let _ = self
             .client
             .put_entity(TABLE_API_KEYS, &key)?
+            .condition_expression("attribute_not_exists(#keyId)")
+            .expression_attribute_names("#keyId", FIELD_KEY_ID)
             .send()
             .await
-            .context("Error inserting into 'api-keys'")?;
+            .context("Error inserting into 'api-keys' (id collision?)")?;
         Ok(())
     }
 
