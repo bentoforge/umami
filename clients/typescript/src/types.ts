@@ -27,7 +27,7 @@ export interface AccessClaims {
 // ── Auth ────────────────────────────────────────────────────────────────────
 
 export interface LoginRequest {
-  email: string;
+  username: string;
   password: string;
   totpCode?: string;
   /** Optional target API to mint the access token for directly (default: `umami`). The session
@@ -71,15 +71,25 @@ export interface UserView {
   userId: string;
   tenantId: string;
   roles: string[];
-  email: string;
+  /** Login identifier — unique. */
+  username: string;
+  /** Optional contact email — not unique, may be null/absent. */
+  email: string | null;
   name: string;
   locale: string;
   status: UserStatus;
   customFields: Record<string, unknown>;
+  /** RFC3339 creation timestamp. */
+  created: string;
+  /** RFC3339 timestamp of the user's last authentication (login/refresh). */
+  lastSeen: string;
 }
 
 export interface CreateUserRequest {
-  email: string;
+  /** Login username (unique). If omitted, `email` is used as the username. */
+  username?: string;
+  /** Optional contact email (not unique). */
+  email?: string;
   password: string;
   name: string;
   locale?: string;
@@ -100,7 +110,8 @@ export interface MeResponse {
     userId: string;
     tenantId: string;
     roles: string[];
-    email: string;
+    username: string;
+    email: string | null;
     name: string;
     locale: string;
     status: UserStatus;
@@ -150,7 +161,10 @@ export interface Tenant {
 export interface CreateTenantRequest {
   name: string;
   owner: {
-    email: string;
+    /** Owner login username (unique). If omitted, `email` is used as the username. */
+    username?: string;
+    /** Optional contact email (not unique). */
+    email?: string;
     password: string;
     name: string;
     locale?: string;

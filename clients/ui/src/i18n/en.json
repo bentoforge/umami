@@ -3,6 +3,7 @@
   "login": {
     "heading": "Sign in",
     "email": "Email",
+    "username": "Username",
     "password": "Password",
     "totp": "Authenticator code",
     "submit": "Sign in",

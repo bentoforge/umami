@@ -136,19 +136,19 @@ export class UmamiClient {
 
   // ── auth ────────────────────────────────────────────────────────────────────
 
-  /** Password login. On success the access token is stored; if MFA is enabled and no `totpCode`
-   * is given, the response has `mfaRequired: true` and no token. Pass `api` to mint the token for
-   * a product API directly (default: the umami admin API); the session keeps that audience across
-   * refreshes. */
+  /** Password login by username. On success the access token is stored; if MFA is enabled and no
+   * `totpCode` is given, the response has `mfaRequired: true` and no token. Pass `api` to mint the
+   * token for a product API directly (default: the umami admin API); the session keeps that
+   * audience across refreshes. */
   async login(
-    email: string,
+    username: string,
     password: string,
     totpCode?: string,
     api?: string,
   ): Promise<LoginResponse> {
     const data = await this.request<LoginResponse>(
       "/auth/login",
-      { method: "POST", body: JSON.stringify({ email, password, totpCode, api }) },
+      { method: "POST", body: JSON.stringify({ username, password, totpCode, api }) },
       false,
     );
     if (data.accessToken) this.setToken(data.accessToken);
@@ -224,10 +224,10 @@ export class UmamiClient {
   /** Passwordless login with a passkey via `navigator.credentials.get`; stores the token. Pass
    * `api` to mint the token for a product API directly (default: umami); the session keeps that
    * audience across refreshes. */
-  async loginWithPasskey(email: string, api?: string): Promise<void> {
+  async loginWithPasskey(username: string, api?: string): Promise<void> {
     const start = await this.request<{ ceremonyId: string; options: any }>(
       "/auth/webauthn/login/start",
-      { method: "POST", body: JSON.stringify({ email }) },
+      { method: "POST", body: JSON.stringify({ username }) },
       false,
     );
     const publicKey = toRequestOptions(start.options.publicKey);
@@ -274,13 +274,21 @@ export class UmamiClient {
 
   // ── tenants ────────────────────────────────────────────────────────────────────
 
-  /** Self-serve signup: create a tenant and its first owner (public; gated server-side). */
-  signup(request: CreateTenantRequest): Promise<CreateTenantResponse> {
-    return this.request<CreateTenantResponse>(
-      "/tenants",
-      { method: "POST", body: JSON.stringify(request) },
-      false,
-    );
+  /** List every tenant (system-admin only; sorted newest-updated first). */
+  async listTenants(): Promise<Tenant[]> {
+    const data = await this.request<{ tenants: Tenant[] }>("/tenants");
+    return data.tenants;
+  }
+  /** Create a tenant and its first owner (system-admin only). */
+  createTenant(request: CreateTenantRequest): Promise<CreateTenantResponse> {
+    return this.request<CreateTenantResponse>("/tenants", {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+  }
+  /** Delete a tenant — only succeeds when it has no users (system-admin only). */
+  deleteTenant(tenantId: string): Promise<{ status: string }> {
+    return this.request<{ status: string }>(`/tenants/${enc(tenantId)}`, { method: "DELETE" });
   }
 
   getTenant(tenantId: string): Promise<Tenant> {
@@ -345,6 +353,10 @@ export class UmamiClient {
   }
   patchUser(userId: string, body: PatchUserRequest): Promise<UserView> {
     return this.request<UserView>(`/users/${enc(userId)}`, { method: "PATCH", body: JSON.stringify(body) });
+  }
+  /** Hard-delete a user in the caller's tenant (cannot delete your own account). */
+  deleteUser(userId: string): Promise<{ status: string }> {
+    return this.request<{ status: string }>(`/users/${enc(userId)}`, { method: "DELETE" });
   }
 
   // ── config ────────────────────────────────────────────────────────────────────

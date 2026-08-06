@@ -10,10 +10,14 @@ from [PLAN.md](../PLAN.md) §3 (the original M:N sketch), **this wins**.
    (lock, reset, delete) — clean ownership, no split-authority ambiguity.
    *Rejected:* the global-user + M:N-membership model (Auth0/B2C heritage), where a floating
    global identity makes "who may lock this user?" unanswerable.
-2. **Global identity.** Email is **globally unique** (one human = one account = one home tenant).
-   Login is `email + password`, no tenant context needed. Enforced by a `user-emails` guard item
-   (a GSI cannot enforce uniqueness or be read consistently in DynamoDB — the guard item is the
-   idiom).
+2. **Username identity.** The login id is the **`username`** — globally unique (case-insensitively).
+   Login is `username + password`, no tenant context needed. Uniqueness is enforced by a
+   `user-usernames` guard item (a GSI cannot enforce uniqueness or be read consistently in DynamoDB
+   — the guard item is the idiom). **`email` is optional and NOT unique** (plain contact info); when
+   a user is created without a username, the email is used as the username. `userId` stays the `users`
+   PK (so all id-keyed reads/writes are strongly consistent) — the guard table is the price of a
+   second unique attribute, chosen over "username as PK + userId GSI" which would push the hot
+   userId path onto an eventually-consistent index.
 3. **Hard tenant/user separation for v1.** No `parentTenantId`, no tenant hierarchy, no
    cross-tenant switching. A user acts only in their own tenant; the access token's `tenant` claim
    is always the user's home tenant.
@@ -27,11 +31,15 @@ from [PLAN.md](../PLAN.md) §3 (the original M:N sketch), **this wins**.
 
 ## Entities
 
-### Tenant — table `tenants`
+### Tenant — table `tenants` (+ GSI `ByLastUpdatedIndex`)
 
 Owns its users; carries the CRM/licensing fields.
 
 - **PK** `tenantId` (hash) — 32-char generated id
+- **GSI `ByLastUpdatedIndex`** — hash = a constant `listShard` value injected at write time
+  (storage-only, not in the API model), range = `lastUpdated`; lets `GET /tenants` list every tenant
+  newest-first in one query (no table scan). Standard constant-partition pattern for a small global
+  list at admin scale.
 - `name`, `slug`
 - `status`: `Lead | Testing | Onboarding | Active | Suspended | Churned`
 - `plan`: package id (`free` | `pro` | `enterprise` | …)
@@ -41,25 +49,27 @@ Owns its users; carries the CRM/licensing fields.
   `aiTokensQuota` (`u64`, optional)
 - `created`, `lastUpdated`: RFC3339
 
-### User — table `users` (+ guard table `user-emails`, + GSI `ByTenantIndex`)
+### User — table `users` (+ guard table `user-usernames`, + GSI `ByTenantIndex`)
 
-Global identity, owned by exactly one tenant.
+Owned by exactly one tenant.
 
 - **PK** `userId` (hash) — 32-char generated id
-- `tenantId` — the owning (home) tenant → **GSI `ByTenantIndex`** (hash `tenantId`) to list a
-  tenant's users
-- `email` — normalized (trim + lowercase); **global uniqueness** via the `user-emails` guard
-- `role`: `owner | admin | member | viewer` (tenant-level; resolves to permissions at token issue)
+- `tenantId` — the owning (home) tenant → **GSI `ByTenantIndex`** (hash `tenantId`, **range
+  `lastSeen`**) to list a tenant's users sorted by recency of activity
+- `username` — login id, stored as entered (trimmed); **global uniqueness** (case-insensitive) via
+  the `user-usernames` guard
+- `email` — optional contact info, normalized (trim + lowercase) when present; **not unique**
+- `roles`: `[owner | admin | member | viewer | …]` (tenant-level; resolve to permissions at token issue)
 - `name`, `locale` (BCP-47, default `en-US`)
 - `passwordHash`: argon2id (nullable — invite/SSO-only users have none)
 - `status`: `Active | Locked | Invited`
 - `tokenVersion`: `u32` — global revocation counter
-- `created`, `lastUpdated`
+- `created`, `lastUpdated`, `lastSeen` (bumped best-effort on login + refresh)
 
-**`user-emails`** — uniqueness guard + email→user lookup. **PK** `email` → `userId`. Written with
-a conditional put (`attribute_not_exists`). *Best-practice note:* the guard + user writes should be
-one `TransactWriteItems` (atomic); today they are sequential (small orphan-email risk) because the
-wasabi `DynamoClient` wrapper doesn't expose transactions yet — tracked as hardening.
+**`user-usernames`** — uniqueness guard + username→user lookup. **PK** `username` (normalized) →
+`userId`. Written with a conditional put (`attribute_not_exists`). *Best-practice note:* the guard +
+user writes should be one `TransactWriteItems` (atomic); today they are sequential (small orphan-guard
+risk) because the wasabi `DynamoClient` wrapper doesn't expose transactions yet — tracked as hardening.
 
 ### Session — table `sessions`
 

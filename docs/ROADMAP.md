@@ -243,6 +243,29 @@ each with its own `aud`, eligibility gate, permission projection and claim mappi
       + service boots. Versioning/retention calls fire but need the two S3 grants on the deploy role
       to take effect (dev SSO role lacks them). wasabi bumped 2.6.0 → **2.7.0**.
 
+## Phase 7d — Management UI + cross-tenant admin + username identity  ✅ DONE
+
+- [x] **Username identity** (see [SCHEMA.md](SCHEMA.md)): login id is now `username` (required,
+      unique case-insensitively, `user-usernames` guard); `email` optional + non-unique; missing
+      username defaults to email. Login/passkey/exchange by username; bootstrap login `UMAMI`/`UMAMI`.
+- [x] **Cross-tenant admin** (system-tenant only via `UMAMI_SYSTEM_TENANT_ID`, guard
+      `enforce_system_tenant`; interim until an `is:system-tenant` feature→permission lands):
+      `GET /tenants` (list all, GSI-sorted newest-first), `POST /tenants` (repurposed from
+      self-serve — `UMAMI_ALLOW_SIGNUP` removed), `DELETE /tenants/{id}` (only if 0 users; system
+      tenant protected). `DELETE /users/{id}` (own-tenant, self-delete blocked).
+- [x] **`UMAMI_AUTO_INIT`**: bootstrap system tenant + owner on an empty deployment.
+- [x] **GSIs**: tenants `ByLastUpdatedIndex` (constant-partition, injected at write); users
+      `ByTenantIndex` now composite (`tenantId` + `lastSeen`, bumped on login+refresh).
+      ⚠️ existing dev tables must be recreated (DynamoDB won't alter GSIs in place).
+- [x] Repos: Tenant `list_all`/`create_tenant_with_id`/`delete_tenant`; User `delete_user`/`touch_last_seen`.
+- [x] **UI** on **react-router-dom**: `AdminLayout` + permission-gated tabs; Tenants
+      (list/create/edit/delete), Users (list/create/edit/suspend/delete), Config (crude whole-JSON
+      editor, version-checked). Login by username. SDK updated to match.
+- [x] 🟢 Verified live (dbx-dev): backend E2E (auto-init, username login, fallback, uniqueness,
+      cross-tenant 403 guard, delete guards) + **browser click-through of all four screens**.
+- [ ] *Deferred (Schritt 2):* replace the env-based cross-tenant guard with an `is:system-tenant`
+      feature → permission projected into the token; cross-tenant user management.
+
 ## Phase 8 — Hardening
 
 - [ ] Rate limiting (`/auth/login`, MFA verify — per-IP + per-account backoff)

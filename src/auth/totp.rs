@@ -168,7 +168,7 @@ async fn totp_setup(
         .to_bytes()
         .map_err(|err| anyhow!("Failed to generate TOTP secret: {err}"))?;
     let base32 = secret.to_encoded().to_string();
-    let otpauth_url = make_totp(raw.clone(), &user.email)?.get_url();
+    let otpauth_url = make_totp(raw.clone(), &user.username)?.get_url();
 
     user.totp_pending = Some(secret_box.encrypt(&raw)?);
     let _ = users.put_user(user).await?;
@@ -193,7 +193,7 @@ async fn totp_verify(
     };
 
     let raw = secret_box.decrypt(pending)?;
-    let totp = make_totp(raw, &user.email)?;
+    let totp = make_totp(raw, &user.username)?;
     if !totp
         .check_current(&request.code)
         .map_err(|err| anyhow!("Failed to check TOTP code: {err}"))?
@@ -221,7 +221,7 @@ async fn totp_disable(
     };
 
     let raw = secret_box.decrypt(active)?;
-    let totp = make_totp(raw, &user.email)?;
+    let totp = make_totp(raw, &user.username)?;
     if !totp
         .check_current(&request.code)
         .map_err(|err| anyhow!("Failed to check TOTP code: {err}"))?

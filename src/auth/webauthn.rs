@@ -238,7 +238,7 @@ struct RegisterFinishResponse {
 /// Login-start request.
 #[derive(Deserialize, Debug)]
 struct LoginStartRequest {
-    email: String,
+    username: String,
 }
 
 /// Login-start response: the ceremony id + the request options for the browser.
@@ -344,7 +344,7 @@ async fn register_start(
         .collect();
 
     let (options, state) =
-        service.start_registration(&user.user_id, &user.email, &user.name, exclude)?;
+        service.start_registration(&user.user_id, &user.username, &user.name, exclude)?;
 
     let ceremony_id = generate_id();
     webauthn
@@ -398,7 +398,7 @@ async fn login_start(
     service: Arc<WebauthnService>,
     webauthn: Arc<dyn WebauthnRepository>,
 ) -> anyhow::Result<LoginStartResponse> {
-    let user = match context.users.find_by_email(&request.email).await? {
+    let user = match context.users.find_by_username(&request.username).await? {
         Some(user) if user.status == UserStatus::Active => user,
         _ => status_bail!(StatusCode::UNAUTHORIZED, "No passkey login available"),
     };

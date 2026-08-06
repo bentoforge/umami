@@ -6,7 +6,7 @@ import { useUmami } from "../auth/UmamiProvider";
 export function LoginPage() {
   const { t } = useTranslation();
   const { client, refreshMe } = useUmami();
-  const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [totpCode, setTotpCode] = useState("");
   const [mfaRequired, setMfaRequired] = useState(false);
@@ -18,7 +18,7 @@ export function LoginPage() {
     setBusy(true);
     setError(null);
     try {
-      const res = await client.login(email, password, mfaRequired ? totpCode : undefined);
+      const res = await client.login(username, password, mfaRequired ? totpCode : undefined);
       if (res.mfaRequired) {
         setMfaRequired(true);
         return;
@@ -35,7 +35,7 @@ export function LoginPage() {
     setBusy(true);
     setError(null);
     try {
-      await client.loginWithPasskey(email);
+      await client.loginWithPasskey(username);
       await refreshMe();
     } catch (err) {
       setError(err instanceof UmamiError ? err.message : t("login.failed"));
@@ -51,13 +51,13 @@ export function LoginPage() {
           {t("login.heading")}
         </h1>
         <form onSubmit={onSubmit} className="space-y-4">
-          <Field label={t("login.email")}>
+          <Field label={t("login.username")}>
             <input
-              type="email"
+              type="text"
               required
               autoComplete="username"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
               className={inputClass}
             />
           </Field>
@@ -88,7 +88,7 @@ export function LoginPage() {
             {t("login.submit")}
           </button>
         </form>
-        <button type="button" onClick={onPasskey} disabled={busy || !email} className={secondaryButtonClass}>
+        <button type="button" onClick={onPasskey} disabled={busy || !username} className={secondaryButtonClass}>
           {t("login.passkey")}
         </button>
       </div>

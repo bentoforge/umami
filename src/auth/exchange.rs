@@ -108,7 +108,7 @@ async fn exchange(
             api_code: &request.api,
             subject: &user.user_id,
             name: &user.name,
-            email: &user.email,
+            email: user.email.as_deref().unwrap_or_default(),
             locale: &user.locale,
             tenant_id: &user.tenant_id,
             token_version: user.token_version,

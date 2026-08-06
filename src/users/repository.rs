@@ -1,10 +1,11 @@
 //! DynamoDB persistence for user identities.
 //!
 //! Uses `users` (keyed by `userId`, with a `ByTenantIndex` GSI to list a tenant's users) and a
-//! `user-emails` guard table (keyed by the normalized `email`) that enforces global email
-//! uniqueness via a conditional put and serves the strongly-consistent email→user login lookup.
+//! `user-usernames` guard table (keyed by the normalized `username`) that enforces global username
+//! uniqueness via a conditional put and serves the strongly-consistent username→user login lookup.
+//! Email is optional contact info and is not indexed.
 
-use crate::users::{User, UserStatus, normalize_email};
+use crate::users::{User, UserStatus, normalize_email, normalize_username};
 use anyhow::Context;
 use async_trait::async_trait;
 use aws_sdk_dynamodb::types::{
@@ -23,8 +24,8 @@ use wasabi::client_bail;
 /// Primary table storing user identities, keyed by `userId`.
 const TABLE_USERS: &str = "users";
 
-/// Uniqueness + lookup table mapping a normalized `email` to its `userId`.
-const TABLE_USER_EMAILS: &str = "user-emails";
+/// Uniqueness + lookup table mapping a normalized `username` to its `userId`.
+const TABLE_USER_USERNAMES: &str = "user-usernames";
 
 // ── Field / index names ──────────────────────────────────────────────────────
 
@@ -40,19 +41,22 @@ const FIELD_TOKEN_VERSION: &str = "tokenVersion";
 /// RFC 3339 last-update attribute.
 const FIELD_LAST_UPDATED: &str = "lastUpdated";
 
-/// Hash key of the `user-emails` table (also an attribute on `users`).
-const FIELD_EMAIL: &str = "email";
+/// RFC 3339 last-authentication attribute — range key of `ByTenantIndex` (sort users by recency).
+const FIELD_LAST_SEEN: &str = "lastSeen";
+
+/// Hash key of the `user-usernames` guard table (holds the normalized username).
+const FIELD_USERNAME: &str = "username";
 
 /// GSI listing a tenant's users (hash on `tenantId`).
 const INDEX_BY_TENANT: &str = "ByTenantIndex";
 
-/// A `user-emails` row: the uniqueness guard + email→user pointer.
+/// A `user-usernames` row: the uniqueness guard + username→user pointer.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-struct UserEmail {
-    /// Normalized email — hash key.
-    email: String,
-    /// The user this email belongs to.
+struct UserName {
+    /// Normalized username — hash key.
+    username: String,
+    /// The user this username belongs to.
     user_id: String,
     /// RFC 3339 creation timestamp.
     created: chrono::DateTime<chrono::Utc>,
@@ -64,8 +68,10 @@ pub struct NewUser {
     pub tenant_id: String,
     /// Role codes within the tenant (defined in the config catalog).
     pub roles: Vec<String>,
-    /// Login email (will be normalized).
-    pub email: String,
+    /// Login username — required, globally unique (normalized). Stored as given (trimmed).
+    pub username: String,
+    /// Optional contact email (normalized when present).
+    pub email: Option<String>,
     /// Display name.
     pub name: String,
     /// BCP-47 locale.
@@ -83,8 +89,8 @@ pub trait UserRepository: Send + Sync {
     /// (normalized) email is already registered.
     async fn create_user(&self, new_user: NewUser) -> anyhow::Result<User>;
 
-    /// Looks up a user by (normalized) email via the `user-emails` table. `None` if unknown.
-    async fn find_by_email(&self, email: &str) -> anyhow::Result<Option<User>>;
+    /// Looks up a user by (normalized) username via the `user-usernames` table. `None` if unknown.
+    async fn find_by_username(&self, username: &str) -> anyhow::Result<Option<User>>;
 
     /// Fetches a user by id. `None` if unknown.
     async fn get_user(&self, user_id: &str) -> anyhow::Result<Option<User>>;
@@ -97,6 +103,14 @@ pub trait UserRepository: Send + Sync {
 
     /// Atomically increments `tokenVersion` — the global "log out everywhere" lever.
     async fn bump_token_version(&self, user_id: &str) -> anyhow::Result<()>;
+
+    /// Best-effort bump of `lastSeen` to now (called on authentication). Keeps the per-tenant
+    /// listing GSI ordered by activity.
+    async fn touch_last_seen(&self, user_id: &str) -> anyhow::Result<()>;
+
+    /// Hard-deletes a user and releases its username-uniqueness guard so the name can be reused.
+    /// `username` is the user's stored login username.
+    async fn delete_user(&self, user_id: &str, username: &str) -> anyhow::Result<()>;
 }
 
 /// DynamoDB-backed implementation of [`UserRepository`].
@@ -118,6 +132,12 @@ impl DynamoUserRepository {
                             .key_type(KeyType::Hash)
                             .build()?,
                     )
+                    .key_schema(
+                        KeySchemaElement::builder()
+                            .attribute_name(FIELD_LAST_SEEN)
+                            .key_type(KeyType::Range)
+                            .build()?,
+                    )
                     .projection(
                         Projection::builder()
                             .projection_type(ProjectionType::All)
@@ -127,7 +147,8 @@ impl DynamoUserRepository {
 
                 let table = table
                     .attribute_definitions(str_attribute(FIELD_USER_ID)?)
-                    .attribute_definitions(str_attribute(FIELD_TENANT_ID)?);
+                    .attribute_definitions(str_attribute(FIELD_TENANT_ID)?)
+                    .attribute_definitions(str_attribute(FIELD_LAST_SEEN)?);
                 let table = with_hash_index(table, FIELD_USER_ID)?;
 
                 Ok(table
@@ -137,9 +158,9 @@ impl DynamoUserRepository {
             .await?;
 
         client
-            .create_table(TABLE_USER_EMAILS, |table| {
-                let table = table.attribute_definitions(str_attribute(FIELD_EMAIL)?);
-                let table = with_hash_index(table, FIELD_EMAIL)?;
+            .create_table(TABLE_USER_USERNAMES, |table| {
+                let table = table.attribute_definitions(str_attribute(FIELD_USERNAME)?);
+                let table = with_hash_index(table, FIELD_USERNAME)?;
                 Ok(table.billing_mode(BillingMode::PayPerRequest))
             })
             .await?;
@@ -154,14 +175,23 @@ impl DynamoUserRepository {
 impl UserRepository for DynamoUserRepository {
     #[tracing::instrument(level = "debug", skip(self, new_user), err(Display))]
     async fn create_user(&self, new_user: NewUser) -> anyhow::Result<User> {
-        let normalized = normalize_email(&new_user.email);
+        let username = new_user.username.trim().to_owned();
+        if username.is_empty() {
+            client_bail!("A username is required");
+        }
+        let normalized = normalize_username(&username);
+        let email = new_user
+            .email
+            .map(|email| normalize_email(&email))
+            .filter(|email| !email.is_empty());
         let now = Utc::now();
 
         let user = User {
             user_id: generate_id(),
             tenant_id: new_user.tenant_id,
             roles: new_user.roles,
-            email: normalized.clone(),
+            username,
+            email,
             name: new_user.name,
             locale: new_user.locale,
             password_hash: new_user.password_hash,
@@ -172,33 +202,36 @@ impl UserRepository for DynamoUserRepository {
             custom_fields: new_user.custom_fields,
             created: now,
             last_updated: now,
+            last_seen: now,
         };
 
-        // Claim the email first: a conditional put fails if the email is already registered,
-        // giving strict uniqueness before we write the user record.
-        let email_guard = UserEmail {
-            email: normalized,
+        // Claim the username first: a conditional put fails if it's already taken, giving strict
+        // uniqueness before we write the user record.
+        let guard = UserName {
+            username: normalized,
             user_id: user.user_id.clone(),
             created: now,
         };
 
-        let put_email = self
+        let put_guard = self
             .client
-            .put_entity(TABLE_USER_EMAILS, &email_guard)?
-            .condition_expression("attribute_not_exists(#email)")
-            .expression_attribute_names("#email", FIELD_EMAIL)
+            .put_entity(TABLE_USER_USERNAMES, &guard)?
+            .condition_expression("attribute_not_exists(#username)")
+            .expression_attribute_names("#username", FIELD_USERNAME)
             .send()
             .await;
 
-        if let Err(err) = put_email {
+        if let Err(err) = put_guard {
             if err
                 .as_service_error()
                 .map(|service_err| service_err.is_conditional_check_failed_exception())
                 .unwrap_or(false)
             {
-                client_bail!("A user with this email address already exists");
+                client_bail!("A user with this username already exists");
             }
-            return Err(anyhow::Error::new(err).context("Error reserving email in 'user-emails'"));
+            return Err(
+                anyhow::Error::new(err).context("Error reserving username in 'user-usernames'")
+            );
         }
 
         let _ = self
@@ -212,20 +245,20 @@ impl UserRepository for DynamoUserRepository {
     }
 
     #[tracing::instrument(level = "debug", skip(self), err(Display))]
-    async fn find_by_email(&self, email: &str) -> anyhow::Result<Option<User>> {
-        let normalized = normalize_email(email);
+    async fn find_by_username(&self, username: &str) -> anyhow::Result<Option<User>> {
+        let normalized = normalize_username(username);
 
         let result = self
             .client
-            .get_item(TABLE_USER_EMAILS)
-            .key(FIELD_EMAIL, str(normalized))
+            .get_item(TABLE_USER_USERNAMES)
+            .key(FIELD_USERNAME, str(normalized))
             .send()
             .await
-            .context("Error searching table 'user-emails'")?;
+            .context("Error searching table 'user-usernames'")?;
 
-        let email_row: Option<UserEmail> = deserialize_entity(result.item)?;
+        let guard_row: Option<UserName> = deserialize_entity(result.item)?;
 
-        match email_row {
+        match guard_row {
             Some(row) => self.get_user(&row.user_id).await,
             None => Ok(None),
         }
@@ -253,6 +286,7 @@ impl UserRepository for DynamoUserRepository {
             .key_condition_expression("#tenantId = :tenantId")
             .expression_attribute_names("#tenantId", FIELD_TENANT_ID)
             .expression_attribute_values(":tenantId", str(tenant_id))
+            .scan_index_forward(false)
             .limit(100);
 
         find_all(query)
@@ -293,6 +327,49 @@ impl UserRepository for DynamoUserRepository {
             .send()
             .await
             .context("Error bumping tokenVersion in 'users' table")?;
+
+        Ok(())
+    }
+
+    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    async fn touch_last_seen(&self, user_id: &str) -> anyhow::Result<()> {
+        let _ = self
+            .client
+            .update_item(TABLE_USERS)
+            .key(FIELD_USER_ID, str(user_id))
+            .update_expression("SET #lastSeen = :now")
+            .condition_expression("attribute_exists(#userId)")
+            .expression_attribute_names("#userId", FIELD_USER_ID)
+            .expression_attribute_names("#lastSeen", FIELD_LAST_SEEN)
+            .expression_attribute_values(
+                ":now",
+                str(Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)),
+            )
+            .send()
+            .await
+            .context("Error updating lastSeen in 'users' table")?;
+
+        Ok(())
+    }
+
+    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    async fn delete_user(&self, user_id: &str, username: &str) -> anyhow::Result<()> {
+        // Remove the user row, then release the username guard so the name can be reused.
+        let _ = self
+            .client
+            .delete_item(TABLE_USERS)
+            .key(FIELD_USER_ID, str(user_id))
+            .send()
+            .await
+            .context("Error deleting from 'users' table")?;
+
+        let _ = self
+            .client
+            .delete_item(TABLE_USER_USERNAMES)
+            .key(FIELD_USERNAME, str(normalize_username(username)))
+            .send()
+            .await
+            .context("Error deleting from 'user-usernames' table")?;
 
         Ok(())
     }

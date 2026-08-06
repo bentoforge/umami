@@ -22,9 +22,10 @@ pub enum UserStatus {
 
 /// A global user identity as stored in DynamoDB.
 ///
-/// Credentials (`password_hash`) and the revocation counter (`token_version`) live here; the
-/// `email` is normalized (trimmed + lowercased) and additionally guarded for uniqueness by the
-/// `user-emails` lookup table (see [`repository`]).
+/// Credentials (`password_hash`) and the revocation counter (`token_version`) live here. The login
+/// identifier is the **`username`** — required and globally unique (case-insensitively), guarded by
+/// the `user-usernames` lookup table (see [`repository`]). The `email` is optional contact info and
+/// is **not** unique.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct User {
@@ -36,8 +37,13 @@ pub struct User {
     /// permissions. `#[serde(default)]` tolerates older records written before roles were a list.
     #[serde(default)]
     pub roles: Vec<String>,
-    /// Normalized login identifier (trimmed + lowercased).
-    pub email: String,
+    /// Login identifier — required, globally unique (case-insensitively via the `user-usernames`
+    /// guard). Stored as entered (trimmed); uniqueness/lookup use the normalized form.
+    pub username: String,
+    /// Optional contact email — **not** unique, may be absent. Normalized (trimmed + lowercased)
+    /// when present.
+    #[serde(default)]
+    pub email: Option<String>,
     /// Display name.
     pub name: String,
     /// BCP-47 locale tag (e.g. `en-US`), baked into the `locale` token claim.
@@ -62,9 +68,25 @@ pub struct User {
     pub created: chrono::DateTime<chrono::Utc>,
     /// RFC 3339 timestamp of the last update to this record.
     pub last_updated: chrono::DateTime<chrono::Utc>,
+    /// RFC 3339 timestamp of the user's last authentication (login or refresh); range key of the
+    /// per-tenant listing GSI so a tenant's users sort by recency of activity. Defaults to the
+    /// epoch for records written before this field existed.
+    #[serde(default = "epoch")]
+    pub last_seen: chrono::DateTime<chrono::Utc>,
 }
 
-/// Normalizes an email for lookup and uniqueness: trims surrounding whitespace and lowercases.
+/// The Unix epoch — the `last_seen` fallback for user records predating the field.
+fn epoch() -> chrono::DateTime<chrono::Utc> {
+    chrono::DateTime::UNIX_EPOCH
+}
+
+/// Normalizes a username for lookup and uniqueness: trims surrounding whitespace and lowercases,
+/// so `UMAMI`, `umami`, and ` Umami ` all collide.
+pub fn normalize_username(username: &str) -> String {
+    username.trim().to_lowercase()
+}
+
+/// Normalizes an email for storage: trims surrounding whitespace and lowercases.
 pub fn normalize_email(email: &str) -> String {
     email.trim().to_lowercase()
 }

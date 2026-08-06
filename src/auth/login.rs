@@ -34,7 +34,7 @@ use wasabi::web::warp::{into_rejection, with_body_as_json, with_cloneable};
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct LoginRequest {
-    email: String,
+    username: String,
     password: String,
     totp_code: Option<String>,
     /// Optional target API (from the config `apis` catalog) to mint the access token for directly,
@@ -206,7 +206,7 @@ async fn mint_access_token(
             api_code,
             subject: &user.user_id,
             name: &user.name,
-            email: &user.email,
+            email: user.email.as_deref().unwrap_or_default(),
             locale: &user.locale,
             tenant_id,
             token_version: user.token_version,
@@ -229,20 +229,20 @@ async fn login(
     user_agent: Option<String>,
     ip: Option<String>,
 ) -> anyhow::Result<(LoginResponse, Option<String>)> {
-    // Uniform "invalid credentials" for unknown email / wrong password / inactive account, so we
+    // Uniform "invalid credentials" for unknown username / wrong password / inactive account, so we
     // don't reveal which users exist.
-    let user = match context.users.find_by_email(&request.email).await? {
+    let user = match context.users.find_by_username(&request.username).await? {
         Some(user) if user.status == UserStatus::Active => user,
-        _ => status_bail!(StatusCode::UNAUTHORIZED, "Invalid email or password"),
+        _ => status_bail!(StatusCode::UNAUTHORIZED, "Invalid username or password"),
     };
 
     let password_hash = match user.password_hash.as_deref() {
         Some(hash) => hash,
-        None => status_bail!(StatusCode::UNAUTHORIZED, "Invalid email or password"),
+        None => status_bail!(StatusCode::UNAUTHORIZED, "Invalid username or password"),
     };
 
     if !password::verify(&request.password, password_hash)? {
-        status_bail!(StatusCode::UNAUTHORIZED, "Invalid email or password");
+        status_bail!(StatusCode::UNAUTHORIZED, "Invalid username or password");
     }
 
     // Second factor: if TOTP MFA is enabled, a valid code is required. Without one, return a
@@ -264,7 +264,7 @@ async fn login(
         if !crate::auth::totp::verify_encrypted_totp(
             &context.mfa,
             encrypted_secret,
-            &user.email,
+            &user.username,
             code,
         )? {
             status_bail!(StatusCode::UNAUTHORIZED, "Invalid TOTP code");
@@ -319,6 +319,11 @@ pub(crate) async fn issue_session(
             ip,
         })
         .await?;
+
+    // Best-effort activity marker for the per-tenant user listing (never fail login on this).
+    if let Err(err) = context.users.touch_last_seen(&user.user_id).await {
+        tracing::warn!("failed to update lastSeen for {}: {err:#}", user.user_id);
+    }
 
     let set_cookie = build_refresh_cookie(
         &session.session_id,
@@ -388,6 +393,11 @@ async fn refresh(
     // Re-mint for the API this session was opened against, so the audience stays stable.
     let access_token =
         mint_access_token(context, &config, &user, tenant_id, &session.api_code).await?;
+
+    // Best-effort activity marker (a refresh counts as "seen"); never fail refresh on this.
+    if let Err(err) = context.users.touch_last_seen(&user.user_id).await {
+        tracing::warn!("failed to update lastSeen for {}: {err:#}", user.user_id);
+    }
 
     let set_cookie = build_refresh_cookie(
         &session_id,

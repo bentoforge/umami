@@ -9,13 +9,15 @@ use crate::config::repository::ConfigRepository;
 use crate::constants::{DEFAULT_LOCALE, MAX_TEXT_BODY_SIZE, ROLE_MEMBER, WRITE_MEMBERS_PERMISSION};
 use crate::users::repository::{NewUser, UserRepository};
 use crate::users::{User, UserStatus};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use warp::Filter;
 use warp::filters::BoxedFilter;
-use wasabi::client_bail;
+use warp::http::StatusCode;
+use wasabi::{client_bail, status_bail};
 use wasabi::web::auth::authenticator::Authenticator;
 use wasabi::web::auth::user::User as AuthUser;
 use wasabi::web::auth::with_user_with_any_permission;
@@ -28,7 +30,10 @@ const REQUIRE_WRITE_MEMBERS: &[&str] = &[WRITE_MEMBERS_PERMISSION];
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct CreateUserRequest {
-    email: String,
+    /// Login username (required, unique). If omitted, the `email` is used as the username.
+    username: Option<String>,
+    /// Optional contact email (not unique, may be absent).
+    email: Option<String>,
     password: String,
     name: String,
     locale: Option<String>,
@@ -52,11 +57,14 @@ struct UserView {
     user_id: String,
     tenant_id: String,
     roles: Vec<String>,
-    email: String,
+    username: String,
+    email: Option<String>,
     name: String,
     locale: String,
     status: UserStatus,
     custom_fields: BTreeMap<String, Value>,
+    created: DateTime<Utc>,
+    last_seen: DateTime<Utc>,
 }
 
 impl From<User> for UserView {
@@ -65,11 +73,14 @@ impl From<User> for UserView {
             user_id: user.user_id,
             tenant_id: user.tenant_id,
             roles: user.roles,
+            username: user.username,
             email: user.email,
             name: user.name,
             locale: user.locale,
             status: user.status,
             custom_fields: user.custom_fields,
+            created: user.created,
+            last_seen: user.last_seen,
         }
     }
 }
@@ -136,6 +147,22 @@ pub fn patch_user_route(
         .boxed()
 }
 
+/// `DELETE /users/{id}` — hard-delete a user within the caller's tenant (requires `write:members`).
+pub fn delete_user_route(
+    users: Arc<dyn UserRepository>,
+    authenticator: Arc<Authenticator>,
+) -> BoxedFilter<(impl warp::Reply,)> {
+    warp::path!("users" / String)
+        .and(warp::delete())
+        .and(with_cloneable(users))
+        .and(with_user_with_any_permission(
+            authenticator,
+            REQUIRE_WRITE_MEMBERS,
+        ))
+        .and_then(handle_delete_user_route)
+        .boxed()
+}
+
 // ── Handlers ─────────────────────────────────────────────────────────────────
 
 #[tracing::instrument(level = "debug", name = "POST /users", skip_all)]
@@ -167,6 +194,15 @@ async fn handle_patch_user_route(
     into_response(patch_user(user_id, request, users, config, caller).await)
 }
 
+#[tracing::instrument(level = "debug", name = "DELETE /users/{id}", skip_all)]
+async fn handle_delete_user_route(
+    user_id: String,
+    users: Arc<dyn UserRepository>,
+    caller: AuthUser,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    into_response(delete_user(user_id, users, caller).await)
+}
+
 // ── Business logic ──────────────────────────────────────────────────────────────
 
 async fn create_user(
@@ -177,9 +213,21 @@ async fn create_user(
 ) -> anyhow::Result<UserView> {
     let tenant_id = caller.tenant_id()?.to_owned();
 
-    if request.email.trim().is_empty() {
-        client_bail!("'email' is required");
-    }
+    // Username is the login identifier; fall back to the email when the caller omits it. At least
+    // one of the two must be present.
+    let email = request
+        .email
+        .map(|email| email.trim().to_owned())
+        .filter(|email| !email.is_empty());
+    let username = request
+        .username
+        .map(|username| username.trim().to_owned())
+        .filter(|username| !username.is_empty())
+        .or_else(|| email.clone());
+    let username = match username {
+        Some(username) => username,
+        None => client_bail!("A 'username' (or 'email' to use as the username) is required"),
+    };
 
     let config = config.current().await?;
     config.validate_password(&request.password)?;
@@ -195,7 +243,8 @@ async fn create_user(
         .create_user(NewUser {
             tenant_id,
             roles,
-            email: request.email,
+            username,
+            email,
             name: request.name,
             locale: request.locale.unwrap_or_else(|| DEFAULT_LOCALE.to_owned()),
             password_hash: Some(password_hash),
@@ -248,4 +297,30 @@ async fn patch_user(
 
     let updated = users.put_user(user).await?;
     Ok(updated.into())
+}
+
+async fn delete_user(
+    user_id: String,
+    users: Arc<dyn UserRepository>,
+    caller: AuthUser,
+) -> anyhow::Result<Value> {
+    let tenant_id = caller.tenant_id()?;
+
+    let user = match users.get_user(&user_id).await? {
+        // Scope strictly to the caller's tenant — a foreign user reads as "not found".
+        Some(user) if user.tenant_id == tenant_id => user,
+        _ => client_bail!("No such user in this tenant"),
+    };
+
+    // An admin must not delete their own account (would strand their session and risk locking the
+    // tenant out of member administration).
+    if user.user_id == caller.user_id()? {
+        status_bail!(
+            StatusCode::FORBIDDEN,
+            "You cannot delete your own account"
+        );
+    }
+
+    users.delete_user(&user.user_id, &user.username).await?;
+    Ok(json!({ "status": "deleted" }))
 }

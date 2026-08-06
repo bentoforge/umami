@@ -69,14 +69,17 @@ use crate::tenants::packages::{
 };
 use crate::tenants::repository::{DynamoTenantRepository, TenantRepository};
 use crate::tenants::service::{
-    create_tenant_route, get_tenant_route, patch_license_route, patch_status_route,
-    patch_tenant_route,
+    create_tenant_route, delete_tenant_route, get_tenant_route, list_tenants_route,
+    patch_license_route, patch_status_route, patch_tenant_route,
 };
 use crate::tenants::usage::{
     DynamoUsageRepository, UsageRepository, get_usage_route, increment_usage_route,
 };
-use crate::users::repository::{DynamoUserRepository, UserRepository};
-use crate::users::service::{create_user_route, list_users_route, patch_user_route};
+use crate::users::repository::{DynamoUserRepository, NewUser, UserRepository};
+use crate::users::service::{
+    create_user_route, delete_user_route, list_users_route, patch_user_route,
+};
+use crate::constants::{DEFAULT_LOCALE, ROLE_OWNER};
 use std::env;
 use std::sync::Arc;
 use wasabi::aws::dynamodb::client::DynamoClient;
@@ -178,6 +181,13 @@ async fn app() -> anyhow::Result<()> {
         mfa.clone(),
     )?;
 
+    // The system tenant whose members may administer all tenants (interim cross-tenant guard).
+    let system_tenant_id: Option<String> =
+        env::var("UMAMI_SYSTEM_TENANT_ID").ok().filter(|id| !id.is_empty());
+
+    // Optionally bootstrap the very first tenant + owner on an empty deployment.
+    maybe_auto_init(&tenant_repository, &user_repository, system_tenant_id.as_deref()).await?;
+
     run_webserver(routes![
         get_info_route(),
         get_user_info_route(authenticator.clone()),
@@ -234,11 +244,24 @@ async fn app() -> anyhow::Result<()> {
             },
             authenticator.clone()
         ),
-        // tenants
+        // tenants (cross-tenant admin: create/list/delete restricted to the system tenant)
         create_tenant_route(
             tenant_repository.clone(),
             user_repository.clone(),
-            config_repository.clone()
+            config_repository.clone(),
+            authenticator.clone(),
+            system_tenant_id.clone()
+        ),
+        list_tenants_route(
+            tenant_repository.clone(),
+            authenticator.clone(),
+            system_tenant_id.clone()
+        ),
+        delete_tenant_route(
+            tenant_repository.clone(),
+            user_repository.clone(),
+            authenticator.clone(),
+            system_tenant_id.clone()
         ),
         get_tenant_route(tenant_repository.clone(), authenticator.clone()),
         patch_tenant_route(
@@ -286,13 +309,64 @@ async fn app() -> anyhow::Result<()> {
         ),
         list_users_route(user_repository.clone(), authenticator.clone()),
         patch_user_route(
-            user_repository,
+            user_repository.clone(),
             config_repository.clone(),
             authenticator.clone()
         ),
+        delete_user_route(user_repository, authenticator.clone()),
         // config (global catalog + settings)
         get_config_route(config_repository.clone(), authenticator.clone()),
         put_config_route(config_repository, authenticator)
     ])
     .await
+}
+
+/// Bootstraps the first tenant + owner on an empty deployment when `UMAMI_AUTO_INIT=true`.
+///
+/// No-op unless auto-init is enabled and **zero** tenants exist. Creates a tenant (with the
+/// configured `UMAMI_SYSTEM_TENANT_ID` when set, so the owner is immediately a system admin) and an
+/// owner user with the well-known bootstrap credentials `UMAMI` / `UMAMI` — which MUST be changed
+/// immediately. Intended for first-run/dev, not steady-state provisioning.
+#[tracing::instrument(skip_all, err(Display))]
+async fn maybe_auto_init(
+    tenants: &Arc<dyn TenantRepository>,
+    users: &Arc<dyn UserRepository>,
+    system_tenant_id: Option<&str>,
+) -> anyhow::Result<()> {
+    if env::var("UMAMI_AUTO_INIT").as_deref() != Ok("true") {
+        return Ok(());
+    }
+    if !tenants.list_all().await?.is_empty() {
+        return Ok(());
+    }
+
+    let tenant = match system_tenant_id {
+        Some(id) => tenants.create_tenant_with_id(id, "System", "system").await?,
+        None => tenants.create_tenant("System", "system").await?,
+    };
+
+    // Bootstrap credentials: username `UMAMI`, password `UMAMI`, no email — CHANGE THE PASSWORD.
+    let password_hash = auth::password::hash("UMAMI")?;
+    let owner = users
+        .create_user(NewUser {
+            tenant_id: tenant.tenant_id.clone(),
+            roles: vec![ROLE_OWNER.to_owned()],
+            username: "UMAMI".to_owned(),
+            email: None,
+            name: "Umami Admin".to_owned(),
+            locale: DEFAULT_LOCALE.to_owned(),
+            password_hash: Some(password_hash),
+            custom_fields: std::collections::BTreeMap::new(),
+        })
+        .await?;
+
+    tracing::warn!(
+        "AUTO-INIT: created bootstrap tenant '{}' and owner '{}' — login UMAMI / UMAMI. \
+         CHANGE THIS PASSWORD IMMEDIATELY. Set UMAMI_SYSTEM_TENANT_ID={} to grant system-admin.",
+        tenant.tenant_id,
+        owner.user_id,
+        tenant.tenant_id
+    );
+
+    Ok(())
 }
