@@ -8,6 +8,11 @@
 /// Default BCP-47 locale for users created without an explicit one.
 pub const DEFAULT_LOCALE: &str = "en-US";
 
+/// Hard cap on entries returned by the admin list endpoints (`GET /tenants`, `GET /users`). At the
+/// target scale (< ~10k tenants, 1–10 users/tenant) results are read wholesale and filtered in
+/// memory, so a cap replaces cursor pagination; the caller narrows results with the `q` search.
+pub const MAX_LIST_RESULTS: usize = 250;
+
 // ── Permission strings (umami's own admin surface) ────────────────────────────
 //
 // Provisional role→permission map (see `users::role_permissions`). Product-service permission

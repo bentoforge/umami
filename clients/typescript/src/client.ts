@@ -274,10 +274,12 @@ export class UmamiClient {
 
   // ── tenants ────────────────────────────────────────────────────────────────────
 
-  /** List every tenant (system-admin only; sorted newest-updated first). */
-  async listTenants(): Promise<Tenant[]> {
-    const data = await this.request<{ tenants: Tenant[] }>("/tenants");
-    return data.tenants;
+  /** List every tenant (system-admin only; sorted newest-updated first, capped at 250). `q` is an
+   * optional case-insensitive search: whitespace-separated terms must all match (over name / slug /
+   * custom fields). `truncated` is true when more than 250 matched. */
+  listTenants(q?: string): Promise<{ tenants: Tenant[]; truncated: boolean }> {
+    const qs = q ? `?q=${encodeURIComponent(q)}` : "";
+    return this.request<{ tenants: Tenant[]; truncated: boolean }>(`/tenants${qs}`);
   }
   /** Create a tenant and its first owner (system-admin only). */
   createTenant(request: CreateTenantRequest): Promise<CreateTenantResponse> {
@@ -347,9 +349,11 @@ export class UmamiClient {
   createUser(request: CreateUserRequest): Promise<UserView> {
     return this.request<UserView>("/users", { method: "POST", body: JSON.stringify(request) });
   }
-  async listUsers(): Promise<UserView[]> {
-    const data = await this.request<{ users: UserView[] }>("/users");
-    return data.users;
+  /** List the caller's tenant's users (sorted by recent activity, capped at 250). `q` is an
+   * optional case-insensitive search over username / email / name / custom fields. */
+  listUsers(q?: string): Promise<{ users: UserView[]; truncated: boolean }> {
+    const qs = q ? `?q=${encodeURIComponent(q)}` : "";
+    return this.request<{ users: UserView[]; truncated: boolean }>(`/users${qs}`);
   }
   patchUser(userId: string, body: PatchUserRequest): Promise<UserView> {
     return this.request<UserView>(`/users/${enc(userId)}`, { method: "PATCH", body: JSON.stringify(body) });

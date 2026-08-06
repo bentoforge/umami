@@ -9,7 +9,10 @@
 
 use crate::config::Config;
 use crate::config::repository::ConfigRepository;
-use crate::constants::{ADMIN_TENANT_PERMISSION, DEFAULT_LOCALE, MAX_TEXT_BODY_SIZE, ROLE_OWNER};
+use crate::constants::{
+    ADMIN_TENANT_PERMISSION, DEFAULT_LOCALE, MAX_LIST_RESULTS, MAX_TEXT_BODY_SIZE, ROLE_OWNER,
+};
+use crate::search::{query_matches, value_search_text};
 use crate::tenants::repository::TenantRepository;
 use crate::tenants::{Tenant, TenantStatus, slugify};
 use crate::users::repository::{NewUser, UserRepository};
@@ -61,10 +64,18 @@ struct CreateTenantResponse {
     owner_user_id: String,
 }
 
-/// `GET /tenants` response.
+/// Optional search for the list endpoint (`?q=`).
+#[derive(Deserialize, Debug)]
+struct ListQuery {
+    q: Option<String>,
+}
+
+/// `GET /tenants` response. `truncated` is true when more than [`MAX_LIST_RESULTS`] matched and the
+/// list was capped (refine the search).
 #[derive(Serialize, Debug)]
 struct TenantListResponse {
     tenants: Vec<Tenant>,
+    truncated: bool,
 }
 
 /// Request body for patching a tenant's name/plan/custom fields.
@@ -117,7 +128,8 @@ pub fn create_tenant_route(
         .boxed()
 }
 
-/// `GET /tenants` — list every tenant (system-admin only; sorted newest-updated first).
+/// `GET /tenants[?q=…]` — list every tenant (system-admin only; sorted newest-updated first,
+/// capped, optional case-insensitive multi-term search over name/slug/custom fields).
 pub fn list_tenants_route(
     tenants: Arc<dyn TenantRepository>,
     authenticator: Arc<Authenticator>,
@@ -125,6 +137,7 @@ pub fn list_tenants_route(
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("tenants")
         .and(warp::get())
+        .and(warp::query::<ListQuery>())
         .and(with_cloneable(tenants))
         .and(with_cloneable(system_tenant_id))
         .and(with_user_with_any_permission(
@@ -240,11 +253,12 @@ async fn handle_create_tenant_route(
 
 #[tracing::instrument(level = "debug", name = "GET /tenants", skip_all)]
 async fn handle_list_tenants_route(
+    query: ListQuery,
     tenants: Arc<dyn TenantRepository>,
     system_tenant_id: SystemTenantId,
     caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(list_tenants(tenants, system_tenant_id, caller).await)
+    into_response(list_tenants(query, tenants, system_tenant_id, caller).await)
 }
 
 #[tracing::instrument(level = "debug", name = "DELETE /tenants/{id}", skip_all)]
@@ -362,14 +376,38 @@ async fn create_tenant(
 }
 
 async fn list_tenants(
+    query: ListQuery,
     tenants: Arc<dyn TenantRepository>,
     system_tenant_id: SystemTenantId,
     caller: AuthUser,
 ) -> anyhow::Result<TenantListResponse> {
     enforce_system_tenant(&caller, &system_tenant_id)?;
+
+    let search = query.q.unwrap_or_default();
+    let mut matched: Vec<Tenant> = tenants
+        .list_all()
+        .await?
+        .into_iter()
+        .filter(|tenant| query_matches(&tenant_haystack(tenant), &search))
+        .collect();
+
+    let truncated = matched.len() > MAX_LIST_RESULTS;
+    matched.truncate(MAX_LIST_RESULTS);
     Ok(TenantListResponse {
-        tenants: tenants.list_all().await?,
+        tenants: matched,
+        truncated,
     })
+}
+
+/// Concatenates a tenant's searchable text: name, slug, and every custom-field value (which is
+/// where a customer number / address would live).
+fn tenant_haystack(tenant: &Tenant) -> String {
+    let mut haystack = format!("{} {}", tenant.name, tenant.slug);
+    for value in tenant.custom_fields.values() {
+        haystack.push(' ');
+        haystack.push_str(&value_search_text(value));
+    }
+    haystack
 }
 
 async fn delete_tenant(
@@ -500,7 +538,10 @@ fn enforce_own_tenant(tenant_id: &str, caller: &AuthUser) -> anyhow::Result<()> 
 /// Interim cross-tenant admin guard (Schritt 1): the caller must belong to the configured system
 /// tenant. `None` (`UMAMI_SYSTEM_TENANT_ID` unset) locks these routes down entirely. Superseded by
 /// the `is:system-tenant` feature → permission projection in Schritt 2.
-fn enforce_system_tenant(caller: &AuthUser, system_tenant_id: &SystemTenantId) -> anyhow::Result<()> {
+fn enforce_system_tenant(
+    caller: &AuthUser,
+    system_tenant_id: &SystemTenantId,
+) -> anyhow::Result<()> {
     let system = match system_tenant_id.as_deref() {
         Some(id) if !id.is_empty() => id,
         _ => status_bail!(

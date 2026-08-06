@@ -17,6 +17,8 @@ const STATUSES: TenantStatus[] = [
 export function TenantsPage() {
   const { client, me } = useUmami();
   const [tenants, setTenants] = useState<Tenant[] | null>(null);
+  const [truncated, setTruncated] = useState(false);
+  const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -25,15 +27,19 @@ export function TenantsPage() {
   const load = useCallback(async () => {
     setError(null);
     try {
-      setTenants(await client.listTenants());
+      const res = await client.listTenants(query.trim() || undefined);
+      setTenants(res.tenants);
+      setTruncated(res.truncated);
     } catch (err) {
       setError(errMsg(err));
       setTenants([]);
     }
-  }, [client]);
+  }, [client, query]);
 
+  // Debounced: reload as the search box changes.
   useEffect(() => {
-    void load();
+    const handle = setTimeout(() => void load(), 250);
+    return () => clearTimeout(handle);
   }, [load]);
 
   const onDelete = async (tenant: Tenant) => {
@@ -53,8 +59,14 @@ export function TenantsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-4">
         <h1 className="text-xl font-semibold text-slate-900 dark:text-white">Tenants</h1>
+        <input
+          className={input + " max-w-xs"}
+          placeholder="Search name, customer no., address…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
         <button className={primaryButton} onClick={() => setCreating((v) => !v)}>
           {creating ? "Cancel" : "New tenant"}
         </button>
@@ -62,6 +74,11 @@ export function TenantsPage() {
 
       {error && <Banner tone="error">{error}</Banner>}
       {notice && <Banner tone="ok">{notice}</Banner>}
+      {truncated && (
+        <p className="text-xs text-amber-600 dark:text-amber-400">
+          Showing the first 250 matches — refine your search to narrow the list.
+        </p>
+      )}
 
       {creating && (
         <CreateTenant

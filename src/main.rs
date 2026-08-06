@@ -41,6 +41,7 @@
 mod auth;
 mod config;
 mod constants;
+mod search;
 mod tenants;
 mod users;
 
@@ -64,6 +65,7 @@ use crate::auth::webauthn::{
 use crate::auth::{AuthContext, session::SessionRepository};
 use crate::config::repository::{ConfigRepository, S3ConfigRepository, StaticConfigRepository};
 use crate::config::service::{get_config_route, put_config_route};
+use crate::constants::{DEFAULT_LOCALE, ROLE_OWNER};
 use crate::tenants::packages::{
     assign_package_route, entitlements_route, remove_package_route, set_feature_route,
 };
@@ -79,7 +81,6 @@ use crate::users::repository::{DynamoUserRepository, NewUser, UserRepository};
 use crate::users::service::{
     create_user_route, delete_user_route, list_users_route, patch_user_route,
 };
-use crate::constants::{DEFAULT_LOCALE, ROLE_OWNER};
 use std::env;
 use std::sync::Arc;
 use wasabi::aws::dynamodb::client::DynamoClient;
@@ -182,11 +183,17 @@ async fn app() -> anyhow::Result<()> {
     )?;
 
     // The system tenant whose members may administer all tenants (interim cross-tenant guard).
-    let system_tenant_id: Option<String> =
-        env::var("UMAMI_SYSTEM_TENANT_ID").ok().filter(|id| !id.is_empty());
+    let system_tenant_id: Option<String> = env::var("UMAMI_SYSTEM_TENANT_ID")
+        .ok()
+        .filter(|id| !id.is_empty());
 
     // Optionally bootstrap the very first tenant + owner on an empty deployment.
-    maybe_auto_init(&tenant_repository, &user_repository, system_tenant_id.as_deref()).await?;
+    maybe_auto_init(
+        &tenant_repository,
+        &user_repository,
+        system_tenant_id.as_deref(),
+    )
+    .await?;
 
     run_webserver(routes![
         get_info_route(),
@@ -341,7 +348,11 @@ async fn maybe_auto_init(
     }
 
     let tenant = match system_tenant_id {
-        Some(id) => tenants.create_tenant_with_id(id, "System", "system").await?,
+        Some(id) => {
+            tenants
+                .create_tenant_with_id(id, "System", "system")
+                .await?
+        }
         None => tenants.create_tenant("System", "system").await?,
     };
 

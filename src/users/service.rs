@@ -6,7 +6,10 @@
 
 use crate::config::Config;
 use crate::config::repository::ConfigRepository;
-use crate::constants::{DEFAULT_LOCALE, MAX_TEXT_BODY_SIZE, ROLE_MEMBER, WRITE_MEMBERS_PERMISSION};
+use crate::constants::{
+    DEFAULT_LOCALE, MAX_LIST_RESULTS, MAX_TEXT_BODY_SIZE, ROLE_MEMBER, WRITE_MEMBERS_PERMISSION,
+};
+use crate::search::{query_matches, value_search_text};
 use crate::users::repository::{NewUser, UserRepository};
 use crate::users::{User, UserStatus};
 use chrono::{DateTime, Utc};
@@ -17,11 +20,11 @@ use std::sync::Arc;
 use warp::Filter;
 use warp::filters::BoxedFilter;
 use warp::http::StatusCode;
-use wasabi::{client_bail, status_bail};
 use wasabi::web::auth::authenticator::Authenticator;
 use wasabi::web::auth::user::User as AuthUser;
 use wasabi::web::auth::with_user_with_any_permission;
 use wasabi::web::warp::{into_response, with_body_as_json, with_cloneable};
+use wasabi::{client_bail, status_bail};
 
 /// Permission required to administer a tenant's users.
 const REQUIRE_WRITE_MEMBERS: &[&str] = &[WRITE_MEMBERS_PERMISSION];
@@ -85,10 +88,18 @@ impl From<User> for UserView {
     }
 }
 
-/// List response.
+/// Optional search for the list endpoint (`?q=`).
+#[derive(Deserialize, Debug)]
+struct ListQuery {
+    q: Option<String>,
+}
+
+/// List response. `truncated` is true when more than [`MAX_LIST_RESULTS`] matched and the list was
+/// capped (refine the search).
 #[derive(Serialize, Debug)]
 struct UserListResponse {
     users: Vec<UserView>,
+    truncated: bool,
 }
 
 // ── Routes ──────────────────────────────────────────────────────────────────────
@@ -112,13 +123,16 @@ pub fn create_user_route(
         .boxed()
 }
 
-/// `GET /users` — list the caller's tenant's users (requires `write:members`).
+/// `GET /users[?q=…]` — list the caller's tenant's users (requires `write:members`). Sorted by
+/// recent activity, capped, with optional case-insensitive multi-term search over
+/// username/email/name/custom fields.
 pub fn list_users_route(
     users: Arc<dyn UserRepository>,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("users")
         .and(warp::get())
+        .and(warp::query::<ListQuery>())
         .and(with_cloneable(users))
         .and(with_user_with_any_permission(
             authenticator,
@@ -177,10 +191,11 @@ async fn handle_create_user_route(
 
 #[tracing::instrument(level = "debug", name = "GET /users", skip_all)]
 async fn handle_list_users_route(
+    query: ListQuery,
     users: Arc<dyn UserRepository>,
     caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(list_users(users, caller).await)
+    into_response(list_users(query, users, caller).await)
 }
 
 #[tracing::instrument(level = "debug", name = "PATCH /users/{id}", skip_all)]
@@ -256,14 +271,43 @@ async fn create_user(
 }
 
 async fn list_users(
+    query: ListQuery,
     users: Arc<dyn UserRepository>,
     caller: AuthUser,
 ) -> anyhow::Result<UserListResponse> {
     let tenant_id = caller.tenant_id()?;
-    let list = users.list_by_tenant(tenant_id).await?;
+    let search = query.q.unwrap_or_default();
+
+    let mut matched: Vec<UserView> = users
+        .list_by_tenant(tenant_id)
+        .await?
+        .into_iter()
+        .filter(|user| query_matches(&user_haystack(user), &search))
+        .map(UserView::from)
+        .collect();
+
+    let truncated = matched.len() > MAX_LIST_RESULTS;
+    matched.truncate(MAX_LIST_RESULTS);
     Ok(UserListResponse {
-        users: list.into_iter().map(UserView::from).collect(),
+        users: matched,
+        truncated,
     })
+}
+
+/// Concatenates a user's searchable text: username, email, display name, and every custom-field
+/// value (which is where first/last name would live).
+fn user_haystack(user: &User) -> String {
+    let mut haystack = format!(
+        "{} {} {}",
+        user.username,
+        user.email.as_deref().unwrap_or(""),
+        user.name
+    );
+    for value in user.custom_fields.values() {
+        haystack.push(' ');
+        haystack.push_str(&value_search_text(value));
+    }
+    haystack
 }
 
 async fn patch_user(
@@ -315,10 +359,7 @@ async fn delete_user(
     // An admin must not delete their own account (would strand their session and risk locking the
     // tenant out of member administration).
     if user.user_id == caller.user_id()? {
-        status_bail!(
-            StatusCode::FORBIDDEN,
-            "You cannot delete your own account"
-        );
+        status_bail!(StatusCode::FORBIDDEN, "You cannot delete your own account");
     }
 
     users.delete_user(&user.user_id, &user.username).await?;

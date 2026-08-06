@@ -25,11 +25,11 @@ const DEFAULT_CONFIG_KEY: &str = "umami/config.json";
 fn version_retention_from_env() -> anyhow::Result<VersionRetention> {
     fn parse_i32(name: &str) -> anyhow::Result<Option<i32>> {
         match env::var(name) {
-            Ok(raw) => Ok(Some(
-                raw.trim()
-                    .parse::<i32>()
-                    .with_context(|| format!("{name} must be a positive integer"))?,
-            )),
+            Ok(raw) => {
+                Ok(Some(raw.trim().parse::<i32>().with_context(|| {
+                    format!("{name} must be a positive integer")
+                })?))
+            }
             Err(_) => Ok(None),
         }
     }

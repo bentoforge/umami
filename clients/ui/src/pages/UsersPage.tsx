@@ -10,6 +10,8 @@ const STATUSES: UserStatus[] = ["Active", "Locked", "Invited"];
 export function UsersPage() {
   const { client, me } = useUmami();
   const [users, setUsers] = useState<UserView[] | null>(null);
+  const [truncated, setTruncated] = useState(false);
+  const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -20,15 +22,19 @@ export function UsersPage() {
   const load = useCallback(async () => {
     setError(null);
     try {
-      setUsers(await client.listUsers());
+      const res = await client.listUsers(query.trim() || undefined);
+      setUsers(res.users);
+      setTruncated(res.truncated);
     } catch (err) {
       setError(errMsg(err));
       setUsers([]);
     }
-  }, [client]);
+  }, [client, query]);
 
+  // Debounced: reload as the search box changes.
   useEffect(() => {
-    void load();
+    const handle = setTimeout(() => void load(), 250);
+    return () => clearTimeout(handle);
   }, [load]);
 
   const setStatus = async (user: UserView, status: UserStatus) => {
@@ -56,8 +62,14 @@ export function UsersPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-4">
         <h1 className="text-xl font-semibold text-slate-900 dark:text-white">Users</h1>
+        <input
+          className={input + " max-w-xs"}
+          placeholder="Search username, email, name…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
         <button className={primaryButton} onClick={() => setCreating((v) => !v)}>
           {creating ? "Cancel" : "New user"}
         </button>
@@ -65,6 +77,11 @@ export function UsersPage() {
 
       <Banner tone="error">{error}</Banner>
       <Banner tone="ok">{notice}</Banner>
+      {truncated && (
+        <p className="text-xs text-amber-600 dark:text-amber-400">
+          Showing the first 250 matches — refine your search to narrow the list.
+        </p>
+      )}
 
       {creating && (
         <CreateUser
