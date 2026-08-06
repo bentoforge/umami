@@ -5,6 +5,7 @@ import type {
   Config,
   CreateApiKeyRequest,
   CreateApiKeyResponse,
+  CreatePatRequest,
   CreateTenantRequest,
   CreateTenantResponse,
   CreateUserRequest,
@@ -372,7 +373,7 @@ export class UmamiClient {
     return this.request<Config>("/config", { method: "PUT", body: JSON.stringify(config) });
   }
 
-  // ── API keys ──────────────────────────────────────────────────────────────────
+  // ── API keys: tenant service keys (write:members) ──────────────────────────────
 
   createApiKey(tenantId: string, request: CreateApiKeyRequest): Promise<CreateApiKeyResponse> {
     return this.request<CreateApiKeyResponse>(`/tenants/${enc(tenantId)}/api-keys`, {
@@ -386,6 +387,24 @@ export class UmamiClient {
   }
   async deleteApiKey(tenantId: string, keyId: string): Promise<void> {
     await this.request(`/tenants/${enc(tenantId)}/api-keys/${enc(keyId)}`, { method: "DELETE" });
+  }
+
+  // ── Personal access tokens: your own (self-service) ────────────────────────────
+
+  /** Create a personal access token that acts as the current user (optionally down-scoped).
+   * The `apiKey` secret in the response is shown only once. */
+  createMyPat(request: CreatePatRequest): Promise<CreateApiKeyResponse> {
+    return this.request<CreateApiKeyResponse>("/auth/me/api-keys", {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+  }
+  async listMyPats(): Promise<ApiKeyView[]> {
+    const data = await this.request<{ keys: ApiKeyView[] }>("/auth/me/api-keys");
+    return data.keys;
+  }
+  async deleteMyPat(keyId: string): Promise<void> {
+    await this.request(`/auth/me/api-keys/${enc(keyId)}`, { method: "DELETE" });
   }
 }
 

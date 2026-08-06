@@ -42,9 +42,19 @@ pub struct ApiKey {
     pub secret_hash: String,
     /// Human-readable label.
     pub name: String,
-    /// Role codes → permissions at exchange.
+    /// **Subject discriminator.** `None` → a *service key* that acts as itself (permissions from
+    /// `roles`). `Some(userId)` → a *personal access token* that acts as that user (permissions from
+    /// the user, optionally down-scoped by `scopes`). See `docs/API-KEYS.md`.
+    #[serde(default)]
+    pub user_id: Option<String>,
+    /// Service-key permissions: role codes → permissions at exchange. Ignored for PATs.
     #[serde(default)]
     pub roles: Vec<String>,
+    /// PAT down-scoping: when non-empty, the token's permissions are the user's resolved
+    /// permissions **intersected** with this set (never an escalation). Empty = full user
+    /// permissions. Ignored for service keys.
+    #[serde(default)]
+    pub scopes: Vec<String>,
     /// Target API codes this key may mint tokens for (see `docs/AUDIENCES.md`); one is chosen per
     /// exchange. Defaults to `["umami"]` for keys created before this field existed.
     #[serde(default = "default_apis")]
@@ -73,7 +83,11 @@ pub struct NewApiKey {
     pub tenant_id: String,
     pub secret_hash: String,
     pub name: String,
+    /// `Some(userId)` → personal access token; `None` → tenant service key.
+    pub user_id: Option<String>,
     pub roles: Vec<String>,
+    /// PAT down-scoping (ignored for service keys).
+    pub scopes: Vec<String>,
     pub apis: Vec<String>,
     pub allowed_origins: Vec<String>,
     pub expires_at: Option<DateTime<Utc>>,
@@ -150,7 +164,9 @@ impl ApiKeyRepository for DynamoApiKeyRepository {
             tenant_id: new_key.tenant_id,
             secret_hash: new_key.secret_hash,
             name: new_key.name,
+            user_id: new_key.user_id,
             roles: new_key.roles,
+            scopes: new_key.scopes,
             apis: new_key.apis,
             status: ApiKeyStatus::Active,
             allowed_origins: new_key.allowed_origins,

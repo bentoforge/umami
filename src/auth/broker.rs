@@ -22,6 +22,9 @@ pub struct MintParams<'a> {
     pub token_version: u32,
     /// The principal's role codes (→ base permissions via config).
     pub roles: &'a [String],
+    /// Optional down-scoping: when non-empty, the resolved base permissions are **intersected** with
+    /// this set before eligibility/projection (used by personal access tokens; never an escalation).
+    pub scopes: &'a [String],
     /// The tenant's effective features.
     pub features: &'a [String],
     pub user_custom_fields: &'a BTreeMap<String, Value>,
@@ -43,7 +46,11 @@ pub async fn mint_for_api(
         None => client_bail!("Unknown API '{}'", params.api_code),
     };
 
-    let base_permissions = config.permissions_for_roles(params.roles);
+    let mut base_permissions = config.permissions_for_roles(params.roles);
+    // Down-scope (PATs): keep only permissions also present in `scopes`. Never adds permissions.
+    if !params.scopes.is_empty() {
+        base_permissions.retain(|permission| params.scopes.contains(permission));
+    }
     if !api.is_eligible(&base_permissions, params.features) {
         status_bail!(
             StatusCode::FORBIDDEN,

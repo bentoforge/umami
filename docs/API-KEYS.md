@@ -19,15 +19,39 @@ The three modes trade off *where the secret lives* against *client complexity*:
 **Rule of thumb:** backend available → **Mode 3**. No backend but a real (non-browser) client that
 can HMAC → **Mode 2**. Plain static frontend with quota-bounded cost → **Mode 1** (+ hard quota).
 
+## Two subject kinds (who the token acts as)
+
+Orthogonal to the modes above (which are about *where the secret lives*), a key has a **subject** —
+whose identity/permissions the exchanged token carries. The `user_id` field on the key discriminates:
+
+| Kind | `user_id` | Token `sub` | Permissions from | Managed at | Revocation |
+|------|-----------|-------------|------------------|-----------|------------|
+| **Service key** | `None` | `keyId` | the key's `roles` | `/tenants/{id}/api-keys` (`write:members`) | delete the key |
+| **Personal access token (PAT)** | `Some(userId)` | `userId` | the **user** (∩ the key's optional `scopes`, never an escalation), carries `user.tokenVersion` | `/auth/me/api-keys` (self-service) | delete the key **or** deactivate / `tokenVersion`-bump the user |
+
+Mapping the real use-cases:
+
+1. **Per-tenant service in the browser** → *service key*, Mode 1 (origins + quota). The key is a
+   tenant machine principal with minimal `roles`.
+2. **CLI where a user drops in a key** → *PAT*. Acts as that user, optionally down-scoped; dies when
+   the user is deactivated. The CLI exchanges it for a short-lived JWT like everything else.
+3. **A real service authenticating as an app to umami itself** → *service key owned by the system
+   tenant*, Mode 3 (server-side secret, no origins), with the elevated `roles` it needs. That is the
+   client-credentials / service-account case — no separate entity type.
+
+Both kinds share the key format, the `api-keys` table, and the single exchange endpoint below; only
+`sub` + permission resolution differ.
+
 ## Common core (all modes)
 
 - Key format `umk_<keyId>_<secret>`: `umk_` prefix (secret-scanner detection), `keyId` (O(1)
   lookup / table PK), high-entropy `secret` (≥32 bytes), shown **once** at creation.
 - Stored: only `sha256(secret)` (base64), constant-time compared.
-- A successful exchange issues a **short-lived access token** (JWT): `sub = keyId`,
-  `kind: "api_key"`, `tenant` + `permissions` resolved from the key's `roles` via the config
-  catalog — same claims as a user token. **No session / no cookie**; the client re-exchanges when
-  the JWT expires.
+- A successful exchange issues a **short-lived access token** (JWT), `kind: "api_key"`, `tenant` +
+  `permissions` via the config catalog — same claims as a user token. `sub` and the permission
+  source depend on the subject kind (see above): service key → `sub = keyId`, perms from the key's
+  `roles`; PAT → `sub = userId`, perms from the user (∩ `scopes`). **No session / no cookie**; the
+  client re-exchanges when the JWT expires.
 - Table `api-keys` (PK `keyId`, GSI `ByTenantIndex`), CRUD returns the secret once.
 - **Revocation** = delete the key row → bites at the next exchange (already-issued JWTs live until
   `exp`, by design). **Rate-limit** the exchange; track `lastUsedAt`.

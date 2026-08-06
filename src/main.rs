@@ -47,7 +47,8 @@ mod users;
 
 use crate::auth::apikeys::repository::{ApiKeyRepository, DynamoApiKeyRepository};
 use crate::auth::apikeys::{
-    create_api_key_route, delete_api_key_route, exchange_route, list_api_keys_route,
+    create_api_key_route, create_my_pat_route, delete_api_key_route, delete_my_pat_route,
+    exchange_route, list_api_keys_route, list_my_pats_route,
 };
 use crate::auth::exchange::{ExchangeDeps, exchange_route as user_exchange_route};
 use crate::auth::login::{login_route, logout_route, refresh_route};
@@ -232,16 +233,22 @@ async fn app() -> anyhow::Result<()> {
             webauthn_repository.clone()
         ),
         webauthn_login_finish_route(auth_context.clone(), webauthn_service, webauthn_repository),
-        // API keys (machine-to-machine)
+        // API keys — exchange (service keys + personal access tokens)
         exchange_route(
             api_key_repository.clone(),
+            user_repository.clone(),
             tenant_repository.clone(),
             config_repository.clone(),
             token_issuer.clone()
         ),
+        // tenant service keys (write:members)
         create_api_key_route(api_key_repository.clone(), authenticator.clone()),
         list_api_keys_route(api_key_repository.clone(), authenticator.clone()),
-        delete_api_key_route(api_key_repository, authenticator.clone()),
+        delete_api_key_route(api_key_repository.clone(), authenticator.clone()),
+        // personal access tokens (self-service)
+        create_my_pat_route(api_key_repository.clone(), authenticator.clone()),
+        list_my_pats_route(api_key_repository.clone(), authenticator.clone()),
+        delete_my_pat_route(api_key_repository, authenticator.clone()),
         // downstream token exchange (authenticated user → product API)
         user_exchange_route(
             ExchangeDeps {

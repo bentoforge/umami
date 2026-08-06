@@ -275,8 +275,13 @@ export type ApiKeyStatus = "Active" | "Revoked";
 export interface ApiKeyView {
   keyId: string;
   tenantId: string;
+  /** Present for personal access tokens (the user the token acts as); null for service keys. */
+  userId: string | null;
   name: string;
+  /** Service-key role codes (empty for PATs). */
   roles: string[];
+  /** PAT down-scoping — subset of the user's permissions (empty for service keys / full user perms). */
+  scopes: string[];
   /** Target API codes this key may mint tokens for. */
   apis: string[];
   status: ApiKeyStatus;
@@ -286,6 +291,7 @@ export interface ApiKeyView {
   created: string;
 }
 
+/** Create a tenant **service** key (machine principal, permissions from `roles`). */
 export interface CreateApiKeyRequest {
   name: string;
   roles?: string[];
@@ -295,14 +301,21 @@ export interface CreateApiKeyRequest {
   expiresAt?: string;
 }
 
+/** Create a **personal access token** (acts as the current user; optionally down-scoped). */
+export interface CreatePatRequest {
+  name: string;
+  /** Restrict the token to this subset of your own permissions (empty = all your permissions). */
+  scopes?: string[];
+  /** Target API codes this PAT may mint for; defaults to `["umami"]`. */
+  apis?: string[];
+  expiresAt?: string;
+}
+
 export interface CreateApiKeyResponse {
   keyId: string;
   /** The full `umk_…` secret — returned only once. */
   apiKey: string;
   name: string;
-  roles: string[];
-  apis: string[];
-  allowedOrigins: string[];
 }
 
 /** Error shape returned by the server (wasabi `ApiError`). */

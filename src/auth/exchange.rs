@@ -113,6 +113,7 @@ async fn exchange(
             tenant_id: &user.tenant_id,
             token_version: user.token_version,
             roles: &user.roles,
+            scopes: &[],
             features: &features,
             user_custom_fields: &user.custom_fields,
             tenant_custom_fields,
