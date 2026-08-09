@@ -285,6 +285,27 @@ services · **M:N user↔tenant memberships · parent-tenant hierarchy · cross-
 teams** (see [SCHEMA.md](SCHEMA.md) — tenant owns user; multi-tenant is a later invite-based
 feature).
 
+## Phase 7e — Audit log + self-service password change / admin reset  ✅ DONE
+
+- [x] **Audit log** (`mod audit`, repository pattern): `audit-log` table (PK `id`, GSIs
+      `ByUserIndex` + `ByTenantIndex`, both range `timestamp`), fields `id/timestamp/tenant/user/
+      severity(good|neutral|bad)/message` + numeric `ttl` (DynamoDB TTL enabled out-of-band via
+      Terraform, `UMAMI_AUDIT_RETENTION_DAYS`, default 365). `record_best_effort` never fails the
+      request it describes.
+- [x] Recorded events: login **good**/**bad**, refresh reuse-detection **bad**, API-key/PAT
+      exchange **good**, downstream `/auth/exchange` → no row on success (just `lastSeen` bump; a
+      routine "fresher token" would flood the log), **bad** on denial. Read: `GET /auth/me/audit`,
+      `GET /tenants/{id}/audit` (admin, own tenant), newest-first, `?limit` capped at 250.
+- [x] **Password change/reset** (there was previously no way to change a password): self-service
+      `POST /auth/me/password {currentPassword,newPassword}` (verifies current, bumps `tokenVersion`
+      → logs out other sessions); admin `POST /users/{id}/password {newPassword?}` (own tenant,
+      `write:members`; generates a one-time temp password when omitted, also bumps `tokenVersion`).
+- [x] SDK: `changePassword`, `resetPassword`, `myAudit`, `tenantAudit` + `AuditEntry`/`AuditSeverity`.
+      UI: change-password panel on Profile, "Reset pw" on Users (temp shown once), an **Audit** tab
+      (admin, coloured severity badges).
+- [x] 🟢 Verified live (dbx-dev) + browser: wrong password now rejected, self-change invalidates the
+      old password, admin reset temp works, audit trail populated & readable per tenant/user.
+
 ## Working agreement
 
 - One step at a time; do not start the next step before the current green gate passes.

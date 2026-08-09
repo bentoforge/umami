@@ -4,11 +4,16 @@
 //! all of their own sessions. `logout-all` bumps `tokenVersion`, invalidating every session at its
 //! next refresh.
 
+use crate::audit::repository::{AuditRepository, record_best_effort};
+use crate::audit::{AuditSeverity, NewAuditEntry};
+use crate::auth::password;
+use crate::config::repository::ConfigRepository;
+use crate::constants::MAX_TEXT_BODY_SIZE;
 use crate::tenants::Tenant;
 use crate::tenants::repository::TenantRepository;
 use crate::users::repository::UserRepository;
 use crate::users::{User, UserStatus};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
 use warp::Filter;
@@ -18,7 +23,7 @@ use wasabi::status_bail;
 use wasabi::web::auth::authenticator::Authenticator;
 use wasabi::web::auth::user::User as AuthUser;
 use wasabi::web::auth::with_user;
-use wasabi::web::warp::{into_response, with_cloneable};
+use wasabi::web::warp::{into_response, with_body_as_json, with_cloneable};
 
 /// Current user, without the password hash.
 #[derive(Serialize, Debug)]
@@ -84,6 +89,35 @@ pub fn logout_all_route(
         .boxed()
 }
 
+/// Request body for a self-service password change.
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct ChangePasswordRequest {
+    current_password: String,
+    new_password: String,
+}
+
+/// `POST /auth/me/password` — change the caller's own password (verifies the current one, then
+/// bumps `tokenVersion` so other sessions are logged out).
+pub fn change_password_route(
+    users: Arc<dyn UserRepository>,
+    config: Arc<dyn ConfigRepository>,
+    audit: Arc<dyn AuditRepository>,
+    authenticator: Arc<Authenticator>,
+) -> BoxedFilter<(impl warp::Reply,)> {
+    warp::path!("auth" / "me" / "password")
+        .and(warp::post())
+        .and(with_body_as_json::<ChangePasswordRequest>(
+            MAX_TEXT_BODY_SIZE,
+        ))
+        .and(with_cloneable(users))
+        .and(with_cloneable(config))
+        .and(with_cloneable(audit))
+        .and(with_user(authenticator))
+        .and_then(handle_change_password_route)
+        .boxed()
+}
+
 #[tracing::instrument(level = "debug", name = "GET /auth/me", skip_all)]
 async fn handle_me_route(
     users: Arc<dyn UserRepository>,
@@ -126,5 +160,74 @@ async fn logout_all(
     caller: AuthUser,
 ) -> anyhow::Result<serde_json::Value> {
     users.bump_token_version(caller.user_id()?).await?;
+    Ok(json!({ "status": "ok" }))
+}
+
+#[tracing::instrument(level = "debug", name = "POST /auth/me/password", skip_all)]
+async fn handle_change_password_route(
+    request: ChangePasswordRequest,
+    users: Arc<dyn UserRepository>,
+    config: Arc<dyn ConfigRepository>,
+    audit: Arc<dyn AuditRepository>,
+    caller: AuthUser,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    into_response(change_password(request, users, config, audit, caller).await)
+}
+
+async fn change_password(
+    request: ChangePasswordRequest,
+    users: Arc<dyn UserRepository>,
+    config: Arc<dyn ConfigRepository>,
+    audit: Arc<dyn AuditRepository>,
+    caller: AuthUser,
+) -> anyhow::Result<serde_json::Value> {
+    let mut user = match users.get_user(caller.user_id()?).await? {
+        Some(user) => user,
+        None => status_bail!(StatusCode::UNAUTHORIZED, "User no longer exists"),
+    };
+
+    let current_hash = match user.password_hash.as_deref() {
+        Some(hash) => hash,
+        None => status_bail!(
+            StatusCode::BAD_REQUEST,
+            "This account has no password set — ask an admin to set one"
+        ),
+    };
+
+    if !password::verify(&request.current_password, current_hash)? {
+        record_best_effort(
+            &audit,
+            NewAuditEntry::new(
+                AuditSeverity::Bad,
+                Some(user.tenant_id.clone()),
+                Some(user.user_id.clone()),
+                "Password change failed: wrong current password".to_owned(),
+            ),
+        )
+        .await;
+        status_bail!(StatusCode::UNAUTHORIZED, "Current password is incorrect");
+    }
+
+    config
+        .current()
+        .await?
+        .validate_password(&request.new_password)?;
+
+    // Set the new hash and bump the revocation counter so every other session is invalidated.
+    user.password_hash = Some(password::hash(&request.new_password)?);
+    user.token_version = user.token_version.saturating_add(1);
+    let _ = users.put_user(user.clone()).await?;
+
+    record_best_effort(
+        &audit,
+        NewAuditEntry::new(
+            AuditSeverity::Good,
+            Some(user.tenant_id.clone()),
+            Some(user.user_id.clone()),
+            "Password changed".to_owned(),
+        ),
+    )
+    .await;
+
     Ok(json!({ "status": "ok" }))
 }

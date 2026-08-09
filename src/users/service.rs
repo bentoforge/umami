@@ -4,6 +4,8 @@
 //! from the caller's token), so an admin can never see or touch another tenant's users. The first
 //! user of a tenant is created by `POST /tenants` (see `tenants::service`), not here.
 
+use crate::audit::repository::{AuditRepository, record_best_effort};
+use crate::audit::{AuditSeverity, NewAuditEntry};
 use crate::config::Config;
 use crate::config::repository::ConfigRepository;
 use crate::constants::{
@@ -20,6 +22,7 @@ use std::sync::Arc;
 use warp::Filter;
 use warp::filters::BoxedFilter;
 use warp::http::StatusCode;
+use wasabi::aws::dynamodb::generate_id;
 use wasabi::web::auth::authenticator::Authenticator;
 use wasabi::web::auth::user::User as AuthUser;
 use wasabi::web::auth::with_user_with_any_permission;
@@ -51,6 +54,22 @@ struct PatchUserRequest {
     roles: Option<Vec<String>>,
     status: Option<UserStatus>,
     custom_fields: Option<BTreeMap<String, Value>>,
+}
+
+/// Request body for an admin password reset. Omit `newPassword` to have one generated.
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct ResetPasswordRequest {
+    new_password: Option<String>,
+}
+
+/// Response for an admin password reset. `temporaryPassword` is set (once) only when generated.
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct ResetPasswordResponse {
+    status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temporary_password: Option<String>,
 }
 
 /// Public view of a user — **never** includes the password hash.
@@ -177,6 +196,31 @@ pub fn delete_user_route(
         .boxed()
 }
 
+/// `POST /users/{id}/password` — admin password reset within the caller's tenant. Sets the given
+/// `newPassword`, or generates a temporary one (returned once) when omitted. Bumps `tokenVersion`
+/// so the target user's existing sessions/PATs stop working. Requires `write:members`.
+pub fn reset_password_route(
+    users: Arc<dyn UserRepository>,
+    config: Arc<dyn ConfigRepository>,
+    audit: Arc<dyn AuditRepository>,
+    authenticator: Arc<Authenticator>,
+) -> BoxedFilter<(impl warp::Reply,)> {
+    warp::path!("users" / String / "password")
+        .and(warp::post())
+        .and(with_body_as_json::<ResetPasswordRequest>(
+            MAX_TEXT_BODY_SIZE,
+        ))
+        .and(with_cloneable(users))
+        .and(with_cloneable(config))
+        .and(with_cloneable(audit))
+        .and(with_user_with_any_permission(
+            authenticator,
+            REQUIRE_WRITE_MEMBERS,
+        ))
+        .and_then(handle_reset_password_route)
+        .boxed()
+}
+
 // ── Handlers ─────────────────────────────────────────────────────────────────
 
 #[tracing::instrument(level = "debug", name = "POST /users", skip_all)]
@@ -216,6 +260,18 @@ async fn handle_delete_user_route(
     caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
     into_response(delete_user(user_id, users, caller).await)
+}
+
+#[tracing::instrument(level = "debug", name = "POST /users/{id}/password", skip_all)]
+async fn handle_reset_password_route(
+    user_id: String,
+    request: ResetPasswordRequest,
+    users: Arc<dyn UserRepository>,
+    config: Arc<dyn ConfigRepository>,
+    audit: Arc<dyn AuditRepository>,
+    caller: AuthUser,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    into_response(reset_password(user_id, request, users, config, audit, caller).await)
 }
 
 // ── Business logic ──────────────────────────────────────────────────────────────
@@ -364,4 +420,48 @@ async fn delete_user(
 
     users.delete_user(&user.user_id, &user.username).await?;
     Ok(json!({ "status": "deleted" }))
+}
+
+async fn reset_password(
+    user_id: String,
+    request: ResetPasswordRequest,
+    users: Arc<dyn UserRepository>,
+    config: Arc<dyn ConfigRepository>,
+    audit: Arc<dyn AuditRepository>,
+    caller: AuthUser,
+) -> anyhow::Result<ResetPasswordResponse> {
+    let tenant_id = caller.tenant_id()?;
+
+    let mut user = match users.get_user(&user_id).await? {
+        // Scope strictly to the caller's tenant — a foreign user reads as "not found".
+        Some(user) if user.tenant_id == tenant_id => user,
+        _ => client_bail!("No such user in this tenant"),
+    };
+
+    // Use the supplied password, or generate a temporary one to hand back once.
+    let (password, generated) = match request.new_password {
+        Some(pw) if !pw.trim().is_empty() => (pw, false),
+        _ => (generate_id(), true),
+    };
+    config.current().await?.validate_password(&password)?;
+
+    user.password_hash = Some(crate::auth::password::hash(&password)?);
+    user.token_version = user.token_version.saturating_add(1);
+    let _ = users.put_user(user.clone()).await?;
+
+    record_best_effort(
+        &audit,
+        NewAuditEntry::new(
+            AuditSeverity::Good,
+            Some(user.tenant_id.clone()),
+            Some(user.user_id.clone()),
+            format!("Password reset by admin {}", caller.user_id()?),
+        ),
+    )
+    .await;
+
+    Ok(ResetPasswordResponse {
+        status: "ok".to_owned(),
+        temporary_password: generated.then_some(password),
+    })
 }

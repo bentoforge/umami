@@ -4,6 +4,8 @@
 //! access token. `POST /auth/refresh` rotates the cookie and issues a fresh access token;
 //! `POST /auth/logout` deletes the session and clears the cookie.
 
+use crate::audit::repository::record_best_effort;
+use crate::audit::{AuditSeverity, NewAuditEntry};
 use crate::auth::AuthContext;
 use crate::auth::broker::{MintParams, mint_for_api};
 use crate::auth::cookies::{build_refresh_cookie, clear_refresh_cookie, parse_refresh_cookie};
@@ -234,15 +236,47 @@ async fn login(
     // don't reveal which users exist.
     let user = match context.users.find_by_username(&request.username).await? {
         Some(user) if user.status == UserStatus::Active => user,
-        _ => status_bail!(StatusCode::UNAUTHORIZED, "Invalid username or password"),
+        _ => {
+            record_best_effort(
+                &context.audit,
+                NewAuditEntry::new(
+                    AuditSeverity::Bad,
+                    None,
+                    None,
+                    format!(
+                        "Login failed for '{}': unknown or inactive account",
+                        request.username
+                    ),
+                ),
+            )
+            .await;
+            status_bail!(StatusCode::UNAUTHORIZED, "Invalid username or password");
+        }
+    };
+
+    let bad = |message: String| {
+        NewAuditEntry::new(
+            AuditSeverity::Bad,
+            Some(user.tenant_id.clone()),
+            Some(user.user_id.clone()),
+            message,
+        )
     };
 
     let password_hash = match user.password_hash.as_deref() {
         Some(hash) => hash,
-        None => status_bail!(StatusCode::UNAUTHORIZED, "Invalid username or password"),
+        None => {
+            record_best_effort(
+                &context.audit,
+                bad("Login failed: account has no password".into()),
+            )
+            .await;
+            status_bail!(StatusCode::UNAUTHORIZED, "Invalid username or password");
+        }
     };
 
     if !password::verify(&request.password, password_hash)? {
+        record_best_effort(&context.audit, bad("Login failed: wrong password".into())).await;
         status_bail!(StatusCode::UNAUTHORIZED, "Invalid username or password");
     }
 
@@ -268,6 +302,11 @@ async fn login(
             &user.username,
             code,
         )? {
+            record_best_effort(
+                &context.audit,
+                bad("Login failed: invalid TOTP code".into()),
+            )
+            .await;
             status_bail!(StatusCode::UNAUTHORIZED, "Invalid TOTP code");
         }
     }
@@ -276,6 +315,17 @@ async fn login(
     let api_code = request.api.as_deref().unwrap_or("umami");
     let (access_token, set_cookie) =
         issue_session(context, &user, api_code, user_agent, ip).await?;
+
+    record_best_effort(
+        &context.audit,
+        NewAuditEntry::new(
+            AuditSeverity::Good,
+            Some(user.tenant_id.clone()),
+            Some(user.user_id.clone()),
+            "Password login".to_owned(),
+        ),
+    )
+    .await;
 
     Ok((
         LoginResponse {
@@ -354,6 +404,16 @@ async fn refresh(
     // token was replayed — revoke the session and reject.
     if !verify_refresh_secret(&secret, &session.refresh_hash) {
         context.sessions.delete_session(&session_id).await?;
+        record_best_effort(
+            &context.audit,
+            NewAuditEntry::new(
+                AuditSeverity::Bad,
+                session.active_tenant_id.clone(),
+                Some(session.user_id.clone()),
+                "Refresh token reuse detected — session revoked".to_owned(),
+            ),
+        )
+        .await;
         status_bail!(StatusCode::UNAUTHORIZED, "Refresh token rejected");
     }
 

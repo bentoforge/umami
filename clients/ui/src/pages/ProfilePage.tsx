@@ -73,8 +73,82 @@ export function ProfilePage() {
         {notice && <p className="mt-3 text-sm text-slate-600 dark:text-slate-300">{notice}</p>}
       </section>
 
+      <ChangePasswordPanel />
       <PatsPanel />
     </div>
+  );
+}
+
+/** Self-service password change (verifies the current password; logs out other sessions). */
+function ChangePasswordPanel() {
+  const { client } = useUmami();
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [ok, setOk] = useState(false);
+
+  const submit = async () => {
+    setError(null);
+    setOk(false);
+    if (next !== confirm) {
+      setError("New password and confirmation do not match.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await client.changePassword(current, next);
+      setOk(true);
+      setCurrent("");
+      setNext("");
+      setConfirm("");
+    } catch (err) {
+      setError(errMsg(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className={card + " space-y-3"}>
+      <h2 className="font-medium text-slate-800 dark:text-slate-200">Change password</h2>
+      {error && <Banner tone="error">{error}</Banner>}
+      {ok && <Banner tone="ok">Password changed. Other sessions have been logged out.</Banner>}
+      <div className="grid grid-cols-3 gap-3">
+        <Field label="Current password">
+          <input
+            className={input}
+            type="password"
+            value={current}
+            onChange={(e) => setCurrent(e.target.value)}
+          />
+        </Field>
+        <Field label="New password">
+          <input
+            className={input}
+            type="password"
+            value={next}
+            onChange={(e) => setNext(e.target.value)}
+          />
+        </Field>
+        <Field label="Confirm new password">
+          <input
+            className={input}
+            type="password"
+            value={confirm}
+            onChange={(e) => setConfirm(e.target.value)}
+          />
+        </Field>
+      </div>
+      <button
+        className={primaryButton}
+        disabled={busy || !current || !next}
+        onClick={() => void submit()}
+      >
+        Change password
+      </button>
+    </section>
   );
 }
 

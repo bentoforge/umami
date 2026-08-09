@@ -14,10 +14,24 @@ export function UsersPage() {
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [resetPw, setResetPw] = useState<{ user: string; pw: string } | null>(null);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
 
   const myId = me?.user.userId;
+
+  const resetPassword = async (user: UserView) => {
+    if (!window.confirm(`Reset password for "${user.username}"? A temporary one will be generated.`))
+      return;
+    setError(null);
+    setResetPw(null);
+    try {
+      const res = await client.resetPassword(user.userId);
+      if (res.temporaryPassword) setResetPw({ user: user.username, pw: res.temporaryPassword });
+    } catch (err) {
+      setError(errMsg(err));
+    }
+  };
 
   const load = useCallback(async () => {
     setError(null);
@@ -77,6 +91,16 @@ export function UsersPage() {
 
       <Banner tone="error">{error}</Banner>
       <Banner tone="ok">{notice}</Banner>
+      {resetPw && (
+        <div className="rounded-lg border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950 p-3">
+          <p className="text-xs text-emerald-700 dark:text-emerald-300 mb-1">
+            Temporary password for <strong>{resetPw.user}</strong> — shown only once:
+          </p>
+          <code className="block break-all text-sm text-slate-900 dark:text-slate-100">
+            {resetPw.pw}
+          </code>
+        </div>
+      )}
       {truncated && (
         <p className="text-xs text-amber-600 dark:text-amber-400">
           Showing the first 250 matches — refine your search to narrow the list.
@@ -149,6 +173,9 @@ export function UsersPage() {
                     <td className={td + " text-right whitespace-nowrap"}>
                       <button className={ghostButton} onClick={() => setEditing(user.userId)}>
                         Edit
+                      </button>{" "}
+                      <button className={ghostButton} onClick={() => void resetPassword(user)}>
+                        Reset pw
                       </button>{" "}
                       {user.status === "Locked" ? (
                         <button className={ghostButton} onClick={() => void setStatus(user, "Active")}>

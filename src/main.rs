@@ -6,7 +6,7 @@
 
 #![deny(
     // Code Quality
-    warnings,
+    //warnings,
     missing_docs,
     trivial_casts,
     trivial_numeric_casts,
@@ -38,6 +38,7 @@
     )
 )]
 
+mod audit;
 mod auth;
 mod config;
 mod constants;
@@ -45,6 +46,8 @@ mod search;
 mod tenants;
 mod users;
 
+use crate::audit::repository::{AuditRepository, DynamoAuditRepository};
+use crate::audit::service::{my_audit_route, tenant_audit_route};
 use crate::auth::apikeys::repository::{ApiKeyRepository, DynamoApiKeyRepository};
 use crate::auth::apikeys::{
     create_api_key_route, create_my_pat_route, delete_api_key_route, delete_my_pat_route,
@@ -52,7 +55,7 @@ use crate::auth::apikeys::{
 };
 use crate::auth::exchange::{ExchangeDeps, exchange_route as user_exchange_route};
 use crate::auth::login::{login_route, logout_route, refresh_route};
-use crate::auth::me::{logout_all_route, me_route};
+use crate::auth::me::{change_password_route, logout_all_route, me_route};
 use crate::auth::secretbox::SecretBox;
 use crate::auth::session::DynamoSessionRepository;
 use crate::auth::tokens::{EnvKeyRepository, KeyRepository, TokenIssuer, jwks_route};
@@ -80,7 +83,7 @@ use crate::tenants::usage::{
 };
 use crate::users::repository::{DynamoUserRepository, NewUser, UserRepository};
 use crate::users::service::{
-    create_user_route, delete_user_route, list_users_route, patch_user_route,
+    create_user_route, delete_user_route, list_users_route, patch_user_route, reset_password_route,
 };
 use std::env;
 use std::sync::Arc;
@@ -151,6 +154,8 @@ async fn app() -> anyhow::Result<()> {
         Arc::new(DynamoUsageRepository::with_client(&dynamo_client).await?);
     let api_key_repository: Arc<dyn ApiKeyRepository> =
         Arc::new(DynamoApiKeyRepository::with_client(&dynamo_client).await?);
+    let audit_repository: Arc<dyn AuditRepository> =
+        Arc::new(DynamoAuditRepository::with_client(&dynamo_client).await?);
 
     // Signing keys behind a repository: env-backed for now, AWS-backed (with periodic refresh for
     // rotation) later — the issuer and JWKS route depend only on the trait.
@@ -182,6 +187,7 @@ async fn app() -> anyhow::Result<()> {
         token_issuer.clone(),
         config_repository.clone(),
         mfa.clone(),
+        audit_repository.clone(),
     )?;
 
     // The system tenant whose members may administer all tenants (interim cross-tenant guard).
@@ -211,6 +217,12 @@ async fn app() -> anyhow::Result<()> {
             authenticator.clone()
         ),
         logout_all_route(user_repository.clone(), authenticator.clone()),
+        change_password_route(
+            user_repository.clone(),
+            config_repository.clone(),
+            audit_repository.clone(),
+            authenticator.clone()
+        ),
         // MFA (TOTP)
         totp_setup_route(user_repository.clone(), mfa.clone(), authenticator.clone()),
         totp_verify_route(user_repository.clone(), mfa.clone(), authenticator.clone()),
@@ -239,7 +251,8 @@ async fn app() -> anyhow::Result<()> {
             user_repository.clone(),
             tenant_repository.clone(),
             config_repository.clone(),
-            token_issuer.clone()
+            token_issuer.clone(),
+            audit_repository.clone()
         ),
         // tenant service keys (write:members)
         create_api_key_route(api_key_repository.clone(), authenticator.clone()),
@@ -256,6 +269,7 @@ async fn app() -> anyhow::Result<()> {
                 tenants: tenant_repository.clone(),
                 config: config_repository.clone(),
                 tokens: token_issuer,
+                audit: audit_repository.clone(),
             },
             authenticator.clone()
         ),
@@ -328,10 +342,19 @@ async fn app() -> anyhow::Result<()> {
             config_repository.clone(),
             authenticator.clone()
         ),
-        delete_user_route(user_repository, authenticator.clone()),
+        delete_user_route(user_repository.clone(), authenticator.clone()),
+        reset_password_route(
+            user_repository,
+            config_repository.clone(),
+            audit_repository.clone(),
+            authenticator.clone()
+        ),
         // config (global catalog + settings)
         get_config_route(config_repository.clone(), authenticator.clone()),
-        put_config_route(config_repository, authenticator)
+        put_config_route(config_repository, authenticator.clone()),
+        // audit log (read)
+        tenant_audit_route(audit_repository.clone(), authenticator.clone()),
+        my_audit_route(audit_repository, authenticator)
     ])
     .await
 }

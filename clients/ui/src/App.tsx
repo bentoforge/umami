@@ -5,6 +5,7 @@ import { LoginPage } from "./pages/LoginPage";
 import { ProfilePage } from "./pages/ProfilePage";
 import { TenantsPage } from "./pages/TenantsPage";
 import { UsersPage } from "./pages/UsersPage";
+import { AuditPage } from "./pages/AuditPage";
 import { ConfigPage } from "./pages/ConfigPage";
 
 export function App() {
@@ -33,6 +34,10 @@ export function App() {
         <Route
           path="users"
           element={can("write:members") ? <UsersPage /> : <Navigate to="/" replace />}
+        />
+        <Route
+          path="audit"
+          element={can("admin:tenant") ? <AuditPage /> : <Navigate to="/" replace />}
         />
         <Route
           path="config"

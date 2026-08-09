@@ -14,6 +14,8 @@
 
 pub mod repository;
 
+use crate::audit::repository::{AuditRepository, record_best_effort};
+use crate::audit::{AuditSeverity, NewAuditEntry};
 use crate::auth::broker::{MintParams, mint_for_api};
 use crate::auth::session::{generate_refresh_secret, hash_refresh_secret, verify_refresh_secret};
 use crate::auth::tokens::TokenIssuer;
@@ -164,12 +166,14 @@ struct ApiKeyListResponse {
 
 /// `POST /auth/token` — exchange an API key for a short-lived access token (unauthenticated; the
 /// key is the credential).
+#[allow(clippy::too_many_arguments)]
 pub fn exchange_route(
     keys: Arc<dyn ApiKeyRepository>,
     users: Arc<dyn UserRepository>,
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
     tokens: Arc<TokenIssuer>,
+    audit: Arc<dyn AuditRepository>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("auth" / "token")
         .and(warp::post())
@@ -179,6 +183,7 @@ pub fn exchange_route(
         .and(with_cloneable(tenants))
         .and(with_cloneable(config))
         .and(with_cloneable(tokens))
+        .and(with_cloneable(audit))
         .and(warp::header::optional::<String>("origin"))
         .and_then(handle_exchange_route)
         .boxed()
@@ -276,6 +281,7 @@ pub fn delete_my_pat_route(
 // ── Handlers ─────────────────────────────────────────────────────────────────
 
 #[tracing::instrument(level = "debug", name = "POST /auth/token", skip_all)]
+#[allow(clippy::too_many_arguments)]
 async fn handle_exchange_route(
     request: ExchangeRequest,
     keys: Arc<dyn ApiKeyRepository>,
@@ -283,9 +289,10 @@ async fn handle_exchange_route(
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
     tokens: Arc<TokenIssuer>,
+    audit: Arc<dyn AuditRepository>,
     origin: Option<String>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(exchange(request, keys, users, tenants, config, tokens, origin).await)
+    into_response(exchange(request, keys, users, tenants, config, tokens, audit, origin).await)
 }
 
 #[tracing::instrument(level = "debug", name = "POST /auth/me/api-keys", skip_all)]
@@ -359,6 +366,7 @@ fn enforce_own(tenant_id: &str, caller: &AuthUser) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn exchange(
     request: ExchangeRequest,
     keys: Arc<dyn ApiKeyRepository>,
@@ -366,6 +374,7 @@ async fn exchange(
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
     tokens: Arc<TokenIssuer>,
+    audit: Arc<dyn AuditRepository>,
     origin: Option<String>,
 ) -> anyhow::Result<ExchangeResponse> {
     // Uniform "invalid key" for every failure so we don't reveal which keys exist.
@@ -495,6 +504,19 @@ async fn exchange(
     if let Err(err) = keys.touch_last_used(key_id).await {
         tracing::warn!("failed to update api key lastUsedAt: {err:#}");
     }
+
+    // A successful credential exchange is a "good" security event. `key.user_id` is the PAT's user
+    // (None for a service key); the key and any PAT user share the tenant.
+    record_best_effort(
+        &audit,
+        NewAuditEntry::new(
+            AuditSeverity::Good,
+            Some(key.tenant_id.clone()),
+            key.user_id.clone(),
+            format!("API key exchanged for API '{api_code}'"),
+        ),
+    )
+    .await;
 
     Ok(ExchangeResponse {
         access_token,

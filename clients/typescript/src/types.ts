@@ -318,6 +318,27 @@ export interface CreateApiKeyResponse {
   name: string;
 }
 
+// ── Audit log ───────────────────────────────────────────────────────────────
+
+/** Outcome flavour of an audited event. */
+export type AuditSeverity = "good" | "neutral" | "bad";
+
+export interface AuditEntry {
+  id: string;
+  /** RFC3339 event time. */
+  timestamp: string;
+  tenant?: string | null;
+  user?: string | null;
+  severity: AuditSeverity;
+  message: string;
+}
+
+/** Result of an admin password reset — `temporaryPassword` is set (once) only when generated. */
+export interface ResetPasswordResponse {
+  status: string;
+  temporaryPassword?: string;
+}
+
 /** Error shape returned by the server (wasabi `ApiError`). */
 export interface ApiErrorBody {
   message?: string;

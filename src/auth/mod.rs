@@ -16,6 +16,7 @@ pub mod tokens;
 pub mod totp;
 pub mod webauthn;
 
+use crate::audit::repository::AuditRepository;
 use crate::auth::secretbox::SecretBox;
 use crate::auth::session::SessionRepository;
 use crate::auth::tokens::TokenIssuer;
@@ -40,6 +41,8 @@ pub struct AuthContext {
     pub config: Arc<dyn ConfigRepository>,
     /// Decrypts the TOTP secret to verify the MFA code during login.
     pub mfa: Arc<SecretBox>,
+    /// Append-only security audit trail (login success/failure, refresh reuse, …).
+    pub audit: Arc<dyn AuditRepository>,
     /// Optional `Domain` attribute for the refresh cookie (`UMAMI_COOKIE_DOMAIN`).
     pub cookie_domain: Option<String>,
 }
@@ -54,6 +57,7 @@ impl AuthContext {
         tokens: Arc<TokenIssuer>,
         config: Arc<dyn ConfigRepository>,
         mfa: Arc<SecretBox>,
+        audit: Arc<dyn AuditRepository>,
     ) -> anyhow::Result<Self> {
         let cookie_domain = env::var("UMAMI_COOKIE_DOMAIN")
             .ok()
@@ -66,6 +70,7 @@ impl AuthContext {
             tokens,
             config,
             mfa,
+            audit,
             cookie_domain,
         })
     }

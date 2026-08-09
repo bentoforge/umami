@@ -2,6 +2,7 @@ import type {
   AccessClaims,
   ApiErrorBody,
   ApiKeyView,
+  AuditEntry,
   Config,
   CreateApiKeyRequest,
   CreateApiKeyResponse,
@@ -17,6 +18,7 @@ import type {
   MetricUsage,
   MfaStatus,
   PatchUserRequest,
+  ResetPasswordResponse,
   Tenant,
   TenantStatus,
   TokenResponse,
@@ -362,6 +364,38 @@ export class UmamiClient {
   /** Hard-delete a user in the caller's tenant (cannot delete your own account). */
   deleteUser(userId: string): Promise<{ status: string }> {
     return this.request<{ status: string }>(`/users/${enc(userId)}`, { method: "DELETE" });
+  }
+  /** Admin reset of a user's password. Omit `newPassword` to have a temporary one generated and
+   * returned once. Invalidates the user's existing sessions/tokens. */
+  resetPassword(userId: string, newPassword?: string): Promise<ResetPasswordResponse> {
+    return this.request<ResetPasswordResponse>(`/users/${enc(userId)}/password`, {
+      method: "POST",
+      body: JSON.stringify(newPassword ? { newPassword } : {}),
+    });
+  }
+
+  // ── Self-service password + audit ──────────────────────────────────────────────
+
+  /** Change the current user's own password (verifies the current one; logs out other sessions). */
+  async changePassword(currentPassword: string, newPassword: string): Promise<void> {
+    await this.request("/auth/me/password", {
+      method: "POST",
+      body: JSON.stringify({ currentPassword, newPassword }),
+    });
+  }
+  /** The current user's own audit trail (newest first). */
+  async myAudit(limit?: number): Promise<AuditEntry[]> {
+    const qs = limit ? `?limit=${limit}` : "";
+    const data = await this.request<{ entries: AuditEntry[] }>(`/auth/me/audit${qs}`);
+    return data.entries;
+  }
+  /** A tenant's audit trail (requires `admin:tenant`; own tenant). */
+  async tenantAudit(tenantId: string, limit?: number): Promise<AuditEntry[]> {
+    const qs = limit ? `?limit=${limit}` : "";
+    const data = await this.request<{ entries: AuditEntry[] }>(
+      `/tenants/${enc(tenantId)}/audit${qs}`,
+    );
+    return data.entries;
   }
 
   // ── config ────────────────────────────────────────────────────────────────────

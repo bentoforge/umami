@@ -6,6 +6,8 @@
 //! the target API's eligibility, permission projection, and claim mapping apply. See
 //! `docs/AUDIENCES.md`. RFC-8693-style; no session/cookie is created.
 
+use crate::audit::repository::{AuditRepository, record_best_effort};
+use crate::audit::{AuditSeverity, NewAuditEntry};
 use crate::auth::broker::{MintParams, mint_for_api};
 use crate::auth::tokens::TokenIssuer;
 use crate::config::repository::ConfigRepository;
@@ -52,6 +54,8 @@ pub struct ExchangeDeps {
     pub config: Arc<dyn ConfigRepository>,
     /// Token signer.
     pub tokens: Arc<TokenIssuer>,
+    /// Security audit trail.
+    pub audit: Arc<dyn AuditRepository>,
 }
 
 /// `POST /auth/exchange` — mint a downstream product-API token for the authenticated user.
@@ -101,7 +105,7 @@ async fn exchange(
         .map(|tenant| &tenant.custom_fields)
         .unwrap_or(&empty_fields);
 
-    let (access_token, _exp) = mint_for_api(
+    let minted = mint_for_api(
         &deps.tokens,
         &config,
         MintParams {
@@ -121,7 +125,30 @@ async fn exchange(
             access_ttl_secs,
         },
     )
-    .await?;
+    .await;
+
+    // A routine "give me a fresher token for API X" is not worth an audit row (it would flood the
+    // log) — we only bump the user's `lastSeen` on success. A *denial* (e.g. the user isn't
+    // eligible for the API) is a "bad" event worth recording.
+    if minted.is_err() {
+        record_best_effort(
+            &deps.audit,
+            NewAuditEntry::new(
+                AuditSeverity::Bad,
+                Some(user.tenant_id.clone()),
+                Some(user.user_id.clone()),
+                format!("Denied downstream token for API '{}'", request.api),
+            ),
+        )
+        .await;
+    }
+
+    let (access_token, _exp) = minted?;
+
+    // Success: mark the user active (best-effort), no audit row.
+    if let Err(err) = deps.users.touch_last_seen(&user.user_id).await {
+        tracing::warn!("failed to update lastSeen for {}: {err:#}", user.user_id);
+    }
 
     Ok(ExchangeResponse {
         access_token,
