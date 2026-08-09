@@ -43,6 +43,9 @@ pub struct AuthContext {
     pub mfa: Arc<SecretBox>,
     /// Append-only security audit trail (login success/failure, refresh reuse, …).
     pub audit: Arc<dyn AuditRepository>,
+    /// The configured system tenant (`UMAMI_SYSTEM_TENANT_ID`); a token minted for this tenant gets
+    /// the `is:system-tenant` synthetic marker.
+    pub system_tenant_id: Option<String>,
     /// Optional `Domain` attribute for the refresh cookie (`UMAMI_COOKIE_DOMAIN`).
     pub cookie_domain: Option<String>,
 }
@@ -62,6 +65,9 @@ impl AuthContext {
         let cookie_domain = env::var("UMAMI_COOKIE_DOMAIN")
             .ok()
             .filter(|d| !d.is_empty());
+        let system_tenant_id = env::var("UMAMI_SYSTEM_TENANT_ID")
+            .ok()
+            .filter(|id| !id.is_empty());
 
         Ok(Self {
             users,
@@ -71,6 +77,7 @@ impl AuthContext {
             config,
             mfa,
             audit,
+            system_tenant_id,
             cookie_domain,
         })
     }

@@ -3,11 +3,12 @@
 //! See `docs/API-KEYS.md`. A key is `umk_<keyId>_<secret>`; only `sha256(secret)` is stored. Two
 //! **subject** kinds share this machinery (`user_id` on the key discriminates):
 //! - **Service key** (`user_id = None`): a tenant machine principal. The exchange mints
-//!   `sub = keyId`, permissions from the key's `roles`. Origin-bound (Mode 1) for browser use, or a
-//!   plain server-side secret. Managed at `/tenants/{id}/api-keys` (`write:members`).
+//!   `sub = keyId` with the key's `scope:*` subjects (M2M granularity, independent of user roles).
+//!   Origin-bound (Mode 1) for browser use, or a plain server-side secret. Managed at
+//!   `/tenants/{id}/api-keys` (`write:members`).
 //! - **Personal access token** (`user_id = Some`): acts as that user — the exchange mints
-//!   `sub = userId`, permissions from the *user* (optionally down-scoped by the key's `scopes`), and
-//!   respects the user's `tokenVersion` (deactivating the user kills the PAT). Self-managed at
+//!   `sub = userId` with the user's `role:*` subjects (optionally restricted to the key's `roles`),
+//!   and respects the user's `tokenVersion` (deactivating the user kills the PAT). Self-managed at
 //!   `/auth/me/api-keys`.
 //!
 //! Both exchange via `POST /auth/token` and carry `kind = "api_key"`; no session/cookie is created.
@@ -21,7 +22,6 @@ use crate::auth::session::{generate_refresh_secret, hash_refresh_secret, verify_
 use crate::auth::tokens::TokenIssuer;
 use crate::config::repository::ConfigRepository;
 use crate::constants::{MAX_TEXT_BODY_SIZE, WRITE_MEMBERS_PERMISSION};
-use crate::tenants::effective_features;
 use crate::tenants::repository::TenantRepository;
 use crate::users::UserStatus;
 use crate::users::repository::UserRepository;
@@ -85,12 +85,13 @@ struct ExchangeResponse {
     expires_in: i64,
 }
 
-/// Request body for creating a tenant **service** key.
+/// Request body for creating a tenant **service** key (a machine principal).
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct CreateApiKeyRequest {
     name: String,
-    roles: Option<Vec<String>>,
+    /// The `scope:*` subjects this M2M key carries (must be assignable given the tenant's features).
+    scopes: Option<Vec<String>>,
     /// Target API codes this key may mint for; defaults to `["umami"]`.
     apis: Option<Vec<String>>,
     allowed_origins: Option<Vec<String>>,
@@ -102,8 +103,8 @@ struct CreateApiKeyRequest {
 #[serde(rename_all = "camelCase")]
 struct CreatePatRequest {
     name: String,
-    /// Optional down-scoping: restrict the token to this subset of the user's own permissions.
-    scopes: Option<Vec<String>>,
+    /// Optional restriction: limit the token to this subset of the user's own `role:*` (empty = all).
+    roles: Option<Vec<String>>,
     /// Target API codes this PAT may mint for; defaults to `["umami"]`.
     apis: Option<Vec<String>>,
     expires_at: Option<DateTime<Utc>>,
@@ -174,6 +175,7 @@ pub fn exchange_route(
     config: Arc<dyn ConfigRepository>,
     tokens: Arc<TokenIssuer>,
     audit: Arc<dyn AuditRepository>,
+    system_tenant_id: Option<String>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("auth" / "token")
         .and(warp::post())
@@ -184,6 +186,7 @@ pub fn exchange_route(
         .and(with_cloneable(config))
         .and(with_cloneable(tokens))
         .and(with_cloneable(audit))
+        .and(with_cloneable(system_tenant_id))
         .and(warp::header::optional::<String>("origin"))
         .and_then(handle_exchange_route)
         .boxed()
@@ -192,12 +195,16 @@ pub fn exchange_route(
 /// `POST /tenants/{id}/api-keys` — create a key (requires `write:members`).
 pub fn create_api_key_route(
     keys: Arc<dyn ApiKeyRepository>,
+    tenants: Arc<dyn TenantRepository>,
+    config: Arc<dyn ConfigRepository>,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("tenants" / String / "api-keys")
         .and(warp::post())
         .and(with_body_as_json::<CreateApiKeyRequest>(MAX_TEXT_BODY_SIZE))
         .and(with_cloneable(keys))
+        .and(with_cloneable(tenants))
+        .and(with_cloneable(config))
         .and(with_user_with_any_permission(
             authenticator,
             REQUIRE_WRITE_MEMBERS,
@@ -290,9 +297,23 @@ async fn handle_exchange_route(
     config: Arc<dyn ConfigRepository>,
     tokens: Arc<TokenIssuer>,
     audit: Arc<dyn AuditRepository>,
+    system_tenant_id: Option<String>,
     origin: Option<String>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(exchange(request, keys, users, tenants, config, tokens, audit, origin).await)
+    into_response(
+        exchange(
+            request,
+            keys,
+            users,
+            tenants,
+            config,
+            tokens,
+            audit,
+            system_tenant_id,
+            origin,
+        )
+        .await,
+    )
 }
 
 #[tracing::instrument(level = "debug", name = "POST /auth/me/api-keys", skip_all)]
@@ -326,9 +347,11 @@ async fn handle_create_api_key_route(
     tenant_id: String,
     request: CreateApiKeyRequest,
     keys: Arc<dyn ApiKeyRepository>,
+    tenants: Arc<dyn TenantRepository>,
+    config: Arc<dyn ConfigRepository>,
     caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(create_api_key(tenant_id, request, keys, caller).await)
+    into_response(create_api_key(tenant_id, request, keys, tenants, config, caller).await)
 }
 
 #[tracing::instrument(level = "debug", name = "GET /tenants/{id}/api-keys", skip_all)]
@@ -375,6 +398,7 @@ async fn exchange(
     config: Arc<dyn ConfigRepository>,
     tokens: Arc<TokenIssuer>,
     audit: Arc<dyn AuditRepository>,
+    system_tenant_id: Option<String>,
     origin: Option<String>,
 ) -> anyhow::Result<ExchangeResponse> {
     // Uniform "invalid key" for every failure so we don't reveal which keys exist.
@@ -431,8 +455,10 @@ async fn exchange(
     let access_ttl_secs = config.security.access_ttl_secs as i64;
     let empty_fields = BTreeMap::new();
 
-    // The token's subject depends on the key kind: a PAT acts as its user (permissions from the
-    // user, down-scoped by the key); a service key acts as itself (permissions from the key's roles).
+    let is_system = |tenant: &str| system_tenant_id.as_deref() == Some(tenant);
+
+    // The token's subject set depends on the key kind: a PAT acts as its user (its `role:*`,
+    // intersected with the key's optional restriction); a service key acts as itself (its `scope:*`).
     let (access_token, _exp) = match &key.user_id {
         Some(user_id) => {
             // Personal access token — load the user fresh so deactivation/lock stops new tokens.
@@ -440,7 +466,17 @@ async fn exchange(
                 Some(user) if user.status == UserStatus::Active => user,
                 _ => status_bail!(StatusCode::UNAUTHORIZED, "Invalid API key"),
             };
-            let features = tenant_features(&tenants, &config, &user.tenant_id).await?;
+            // Effective roles = user roles ∩ the key's restriction (empty restriction = all roles).
+            let subjects: Vec<String> = if key.roles.is_empty() {
+                user.roles.clone()
+            } else {
+                user.roles
+                    .iter()
+                    .filter(|role| key.roles.contains(role))
+                    .cloned()
+                    .collect()
+            };
+            let features = tenant_features(&tenants, &user.tenant_id).await?;
             let synthetic = user.email.clone().unwrap_or_default();
             mint_for_api(
                 &tokens,
@@ -453,9 +489,9 @@ async fn exchange(
                     locale: &user.locale,
                     tenant_id: &user.tenant_id,
                     token_version: user.token_version,
-                    roles: &user.roles,
-                    scopes: &key.scopes,
+                    subjects: &subjects,
                     features: &features,
+                    system_tenant: is_system(&user.tenant_id),
                     user_custom_fields: &user.custom_fields,
                     tenant_custom_fields: &empty_fields,
                     kind: Some("api_key"),
@@ -465,16 +501,8 @@ async fn exchange(
             .await?
         }
         None => {
-            // Service key — acts as itself, permissions from the key's roles.
-            let tenant = tenants.get_tenant(&key.tenant_id).await?;
-            let features: Vec<String> = tenant
-                .as_ref()
-                .map(|tenant| effective_features(&config, tenant).into_iter().collect())
-                .unwrap_or_default();
-            let tenant_custom_fields = tenant
-                .as_ref()
-                .map(|tenant| &tenant.custom_fields)
-                .unwrap_or(&empty_fields);
+            // Service key — acts as itself; subjects are the key's `scope:*`.
+            let features = tenant_features(&tenants, &key.tenant_id).await?;
             let synthetic_email = format!("{key_id}@api-key");
             mint_for_api(
                 &tokens,
@@ -487,11 +515,11 @@ async fn exchange(
                     locale: "en-US",
                     tenant_id: &key.tenant_id,
                     token_version: 0,
-                    roles: &key.roles,
-                    scopes: &[],
+                    subjects: &key.scopes,
                     features: &features,
+                    system_tenant: is_system(&key.tenant_id),
                     user_custom_fields: &empty_fields,
-                    tenant_custom_fields,
+                    tenant_custom_fields: &empty_fields,
                     kind: Some("api_key"),
                     access_ttl_secs,
                 },
@@ -524,16 +552,15 @@ async fn exchange(
     })
 }
 
-/// Resolves a tenant's effective feature codes for the broker (empty when the tenant is gone).
+/// Resolves a tenant's authorization feature set for the broker (empty when the tenant is gone).
 async fn tenant_features(
     tenants: &Arc<dyn TenantRepository>,
-    config: &crate::config::Config,
     tenant_id: &str,
 ) -> anyhow::Result<Vec<String>> {
     Ok(tenants
         .get_tenant(tenant_id)
         .await?
-        .map(|tenant| effective_features(config, &tenant).into_iter().collect())
+        .map(|tenant| tenant.features)
         .unwrap_or_default())
 }
 
@@ -541,12 +568,26 @@ async fn create_api_key(
     tenant_id: String,
     request: CreateApiKeyRequest,
     keys: Arc<dyn ApiKeyRepository>,
+    tenants: Arc<dyn TenantRepository>,
+    config: Arc<dyn ConfigRepository>,
     caller: AuthUser,
 ) -> anyhow::Result<CreateApiKeyResponse> {
     enforce_own(&tenant_id, &caller)?;
 
     if request.name.trim().is_empty() {
         client_bail!("API key 'name' is required");
+    }
+
+    // Validate any requested scopes against what the tenant's features license.
+    let scopes = request.scopes.unwrap_or_default();
+    if !scopes.is_empty() {
+        let features = tenant_features(&tenants, &tenant_id).await?;
+        let config = config.current().await?;
+        for scope in &scopes {
+            if !config.can_assign_scope(scope, &features) {
+                client_bail!("Scope '{scope}' is not assignable in this tenant");
+            }
+        }
     }
 
     let secret = generate_refresh_secret();
@@ -564,8 +605,8 @@ async fn create_api_key(
         secret_hash: hash_refresh_secret(&secret),
         name: request.name.clone(),
         user_id: None, // service key
-        roles: request.roles.unwrap_or_default(),
-        scopes: Vec::new(),
+        roles: Vec::new(),
+        scopes,
         apis,
         allowed_origins: request.allowed_origins.unwrap_or_default(),
         expires_at: request.expires_at,
@@ -641,9 +682,9 @@ async fn create_my_pat(
         tenant_id,
         secret_hash: hash_refresh_secret(&secret),
         name: request.name.clone(),
-        user_id: Some(user_id), // personal access token
-        roles: Vec::new(),      // PAT permissions come from the user, not the key
-        scopes: request.scopes.unwrap_or_default(),
+        user_id: Some(user_id),                   // personal access token
+        roles: request.roles.unwrap_or_default(), // restriction ∩ the user's own roles at mint time
+        scopes: Vec::new(),
         apis,
         allowed_origins: Vec::new(),
         expires_at: request.expires_at,

@@ -85,8 +85,13 @@ pub struct Tenant {
     #[serde(default)]
     pub limit_overrides: BTreeMap<String, Decimal>,
     /// Per-tenant feature toggles (`featureCode` → on/off); absent means inherit from packages.
+    /// **Billing/entitlements only** — the authorization feature set is `features` below.
     #[serde(default)]
     pub feature_overrides: BTreeMap<String, FeatureToggle>,
+    /// Granted **authorization** features (namespaced `feature:*`) — the flat set the permission
+    /// game reads (see `docs/PERMISSIONS.md`). Decoupled from packages/entitlements.
+    #[serde(default)]
+    pub features: Vec<String>,
     /// Values for the config-defined custom tenant fields.
     #[serde(default)]
     pub custom_fields: BTreeMap<String, Value>,
@@ -290,6 +295,7 @@ mod tests {
             packages,
             limit_overrides: BTreeMap::new(),
             feature_overrides: BTreeMap::new(),
+            features: Vec::new(),
             custom_fields: BTreeMap::new(),
             name: "T".to_owned(),
             slug: "t".to_owned(),
@@ -373,6 +379,7 @@ mod tests {
             features: vec![crate::config::FeatureDef {
                 code: "ai".to_owned(),
                 name: "AI".to_owned(),
+                assignable_if: None,
             }],
             packages: vec![PackageDef {
                 code: "plus".to_owned(),

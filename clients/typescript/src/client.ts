@@ -337,6 +337,33 @@ export class UmamiClient {
       body: JSON.stringify({ value }),
     });
   }
+
+  // ── authorization: assignable roles/scopes/features + feature grant/revoke ─────
+
+  /** Role codes assignable to a user given their tenant's features (feeds the UI role picker). */
+  assignableRoles(userId: string): Promise<{ codes: string[] }> {
+    return this.request<{ codes: string[] }>(`/users/${enc(userId)}/assignable-roles`);
+  }
+  /** Scope codes assignable to a service key in the given tenant. */
+  assignableScopes(tenantId: string): Promise<{ codes: string[] }> {
+    return this.request<{ codes: string[] }>(`/tenants/${enc(tenantId)}/assignable-scopes`);
+  }
+  /** Authorization features grantable to the given tenant right now (system admin). */
+  assignableFeatures(tenantId: string): Promise<{ codes: string[] }> {
+    return this.request<{ codes: string[] }>(`/tenants/${enc(tenantId)}/assignable-features`);
+  }
+  /** Grant an authorization feature to a tenant (system admin). */
+  grantFeature(tenantId: string, code: string): Promise<{ status: string }> {
+    return this.request<{ status: string }>(`/tenants/${enc(tenantId)}/features/${enc(code)}`, {
+      method: "POST",
+    });
+  }
+  /** Revoke an authorization feature from a tenant (system admin). */
+  revokeFeature(tenantId: string, code: string): Promise<{ status: string }> {
+    return this.request<{ status: string }>(`/tenants/${enc(tenantId)}/features/${enc(code)}`, {
+      method: "DELETE",
+    });
+  }
   getUsage(tenantId: string): Promise<UsageResponse> {
     return this.request<UsageResponse>(`/tenants/${enc(tenantId)}/usage`);
   }

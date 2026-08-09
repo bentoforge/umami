@@ -4,12 +4,13 @@
 
 use crate::auth::tokens::{AccessTokenClaims, TokenIssuer};
 use crate::config::Config;
+use crate::constants::SYSTEM_TENANT_MARKER;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use warp::http::StatusCode;
 use wasabi::{client_bail, status_bail};
 
-/// Everything needed to mint a token for a principal (user or API key) against a target API.
+/// Everything needed to mint a token for a principal (user, PAT, or M2M key) against a target API.
 pub struct MintParams<'a> {
     /// Target API code in the config `apis` catalog.
     pub api_code: &'a str,
@@ -20,13 +21,14 @@ pub struct MintParams<'a> {
     pub locale: &'a str,
     pub tenant_id: &'a str,
     pub token_version: u32,
-    /// The principal's role codes (→ base permissions via config).
-    pub roles: &'a [String],
-    /// Optional down-scoping: when non-empty, the resolved base permissions are **intersected** with
-    /// this set before eligibility/projection (used by personal access tokens; never an escalation).
-    pub scopes: &'a [String],
-    /// The tenant's effective features.
+    /// The principal's **namespaced subject labels** — a user/PAT's `role:*` (already intersected
+    /// for a restricted PAT) or an M2M key's `scope:*`.
+    pub subjects: &'a [String],
+    /// The tenant's granted features (namespaced `feature:*`).
     pub features: &'a [String],
+    /// Whether the token's tenant is the configured system tenant (adds the `is:system-tenant`
+    /// synthetic marker to the subject set).
+    pub system_tenant: bool,
     pub user_custom_fields: &'a BTreeMap<String, Value>,
     pub tenant_custom_fields: &'a BTreeMap<String, Value>,
     /// Extra `kind` claim (e.g. `"api_key"`), if any.
@@ -34,8 +36,9 @@ pub struct MintParams<'a> {
     pub access_ttl_secs: i64,
 }
 
-/// Mints an access token for the target API: eligibility → permission projection → claim mapping.
-/// Returns `(access_token, exp)`. Unknown API → client error; ineligibility → 403.
+/// Mints an access token for the target API: build the subject set → ordered permission
+/// accumulate + eligibility → claim mapping. Returns `(access_token, exp)`. Unknown API → client
+/// error; ineligibility → 403.
 pub async fn mint_for_api(
     tokens: &TokenIssuer,
     config: &Config,
@@ -46,20 +49,22 @@ pub async fn mint_for_api(
         None => client_bail!("Unknown API '{}'", params.api_code),
     };
 
-    let mut base_permissions = config.permissions_for_roles(params.roles);
-    // Down-scope (PATs): keep only permissions also present in `scopes`. Never adds permissions.
-    if !params.scopes.is_empty() {
-        base_permissions.retain(|permission| params.scopes.contains(permission));
+    // Subject set S = principal's role:*/scope:* ∪ tenant feature:* ∪ synthetic is:*.
+    let mut subject_set: Vec<String> = params.subjects.to_vec();
+    subject_set.extend(params.features.iter().cloned());
+    if params.system_tenant {
+        subject_set.push(SYSTEM_TENANT_MARKER.to_owned());
     }
-    if !api.is_eligible(&base_permissions, params.features) {
-        status_bail!(
+
+    let permissions = match api.resolve(&subject_set) {
+        Some(permissions) => permissions,
+        None => status_bail!(
             StatusCode::FORBIDDEN,
             "Not eligible for API '{}'",
             params.api_code
-        );
-    }
+        ),
+    };
 
-    let permissions = api.project_permissions(&base_permissions, params.features);
     let mut extra = api.build_claims(
         params.features,
         params.user_custom_fields,

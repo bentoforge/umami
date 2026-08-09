@@ -158,7 +158,7 @@ function PatsPanel() {
   const [pats, setPats] = useState<ApiKeyView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState("");
-  const [scopes, setScopes] = useState("");
+  const [roles, setRoles] = useState("");
   const [busy, setBusy] = useState(false);
   const [freshSecret, setFreshSecret] = useState<string | null>(null);
 
@@ -183,14 +183,14 @@ function PatsPanel() {
     try {
       const res = await client.createMyPat({
         name,
-        scopes: scopes
+        roles: roles
           .split(",")
           .map((s) => s.trim())
           .filter(Boolean),
       });
       setFreshSecret(res.apiKey);
       setName("");
-      setScopes("");
+      setRoles("");
       await load();
     } catch (err) {
       setError(errMsg(err));
@@ -216,8 +216,8 @@ function PatsPanel() {
         <h2 className="font-medium text-slate-800 dark:text-slate-200">Personal access tokens</h2>
         <p className="text-sm text-slate-500">
           Long-lived credentials for CLIs/scripts that act as you. Exchange one at{" "}
-          <code>POST /auth/token</code> for a short-lived token. Leave scopes empty for your full
-          permissions, or list a subset to narrow it.
+          <code>POST /auth/token</code> for a short-lived token. Leave roles empty for all your
+          roles, or list a subset to restrict the token.
         </p>
       </div>
 
@@ -238,12 +238,12 @@ function PatsPanel() {
         <Field label="Name">
           <input className={input} value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
-        <Field label="Scopes (comma-separated, optional)">
+        <Field label="Roles (comma-separated, optional)">
           <input
             className={input}
-            placeholder="write:usage, …"
-            value={scopes}
-            onChange={(e) => setScopes(e.target.value)}
+            placeholder="role:admin, …"
+            value={roles}
+            onChange={(e) => setRoles(e.target.value)}
           />
         </Field>
         <button className={primaryButton} disabled={busy || !name.trim()} onClick={() => void create()}>
@@ -258,7 +258,7 @@ function PatsPanel() {
               <div>
                 <div className="text-sm font-medium text-slate-900 dark:text-white">{pat.name}</div>
                 <div className="text-xs text-slate-400">
-                  {pat.scopes.length ? `scopes: ${pat.scopes.join(", ")}` : "full permissions"} ·
+                  {pat.roles.length ? `roles: ${pat.roles.join(", ")}` : "all your roles"} ·
                   created {new Date(pat.created).toLocaleDateString()}
                   {pat.lastUsedAt ? ` · last used ${new Date(pat.lastUsedAt).toLocaleDateString()}` : ""}
                 </div>

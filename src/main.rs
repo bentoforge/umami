@@ -6,7 +6,7 @@
 
 #![deny(
     // Code Quality
-    //warnings,
+    warnings,
     missing_docs,
     trivial_casts,
     trivial_numeric_casts,
@@ -40,6 +40,7 @@
 
 mod audit;
 mod auth;
+mod authz;
 mod config;
 mod constants;
 mod search;
@@ -67,6 +68,10 @@ use crate::auth::webauthn::{
     webauthn_register_start_route,
 };
 use crate::auth::{AuthContext, session::SessionRepository};
+use crate::authz::{
+    assignable_features_route, assignable_roles_route, assignable_scopes_route,
+    grant_feature_route, revoke_feature_route,
+};
 use crate::config::repository::{ConfigRepository, S3ConfigRepository, StaticConfigRepository};
 use crate::config::service::{get_config_route, put_config_route};
 use crate::constants::{DEFAULT_LOCALE, ROLE_OWNER};
@@ -252,10 +257,16 @@ async fn app() -> anyhow::Result<()> {
             tenant_repository.clone(),
             config_repository.clone(),
             token_issuer.clone(),
-            audit_repository.clone()
+            audit_repository.clone(),
+            system_tenant_id.clone()
         ),
         // tenant service keys (write:members)
-        create_api_key_route(api_key_repository.clone(), authenticator.clone()),
+        create_api_key_route(
+            api_key_repository.clone(),
+            tenant_repository.clone(),
+            config_repository.clone(),
+            authenticator.clone()
+        ),
         list_api_keys_route(api_key_repository.clone(), authenticator.clone()),
         delete_api_key_route(api_key_repository.clone(), authenticator.clone()),
         // personal access tokens (self-service)
@@ -270,6 +281,7 @@ async fn app() -> anyhow::Result<()> {
                 config: config_repository.clone(),
                 tokens: token_issuer,
                 audit: audit_repository.clone(),
+                system_tenant_id: system_tenant_id.clone(),
             },
             authenticator.clone()
         ),
@@ -326,27 +338,56 @@ async fn app() -> anyhow::Result<()> {
             authenticator.clone()
         ),
         entitlements_route(
-            tenant_repository,
+            tenant_repository.clone(),
             config_repository.clone(),
             authenticator.clone()
         ),
         // users (admin, within own tenant)
         create_user_route(
             user_repository.clone(),
+            tenant_repository.clone(),
             config_repository.clone(),
             authenticator.clone()
         ),
         list_users_route(user_repository.clone(), authenticator.clone()),
         patch_user_route(
             user_repository.clone(),
+            tenant_repository.clone(),
             config_repository.clone(),
             authenticator.clone()
         ),
         delete_user_route(user_repository.clone(), authenticator.clone()),
         reset_password_route(
-            user_repository,
+            user_repository.clone(),
             config_repository.clone(),
             audit_repository.clone(),
+            authenticator.clone()
+        ),
+        // authorization management (assignable roles/scopes/features + feature grant/revoke)
+        assignable_roles_route(
+            user_repository,
+            tenant_repository.clone(),
+            config_repository.clone(),
+            authenticator.clone()
+        ),
+        assignable_scopes_route(
+            tenant_repository.clone(),
+            config_repository.clone(),
+            authenticator.clone()
+        ),
+        assignable_features_route(
+            tenant_repository.clone(),
+            config_repository.clone(),
+            authenticator.clone()
+        ),
+        grant_feature_route(
+            tenant_repository.clone(),
+            config_repository.clone(),
+            authenticator.clone()
+        ),
+        revoke_feature_route(
+            tenant_repository,
+            config_repository.clone(),
             authenticator.clone()
         ),
         // config (global catalog + settings)

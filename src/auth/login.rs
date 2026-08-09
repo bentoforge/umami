@@ -15,7 +15,6 @@ use crate::auth::session::{
 };
 use crate::config::Config;
 use crate::constants::MAX_TEXT_BODY_SIZE;
-use crate::tenants::effective_features;
 use crate::users::{User, UserStatus};
 use anyhow::Context;
 use chrono::Utc;
@@ -193,7 +192,7 @@ async fn mint_access_token(
     let tenant = context.tenants.get_tenant(tenant_id).await?;
     let features: Vec<String> = tenant
         .as_ref()
-        .map(|tenant| effective_features(config, tenant).into_iter().collect())
+        .map(|tenant| tenant.features.clone())
         .unwrap_or_default();
     let empty_fields = BTreeMap::new();
     let tenant_custom_fields = tenant
@@ -212,9 +211,9 @@ async fn mint_access_token(
             locale: &user.locale,
             tenant_id,
             token_version: user.token_version,
-            roles: &user.roles,
-            scopes: &[],
+            subjects: &user.roles,
             features: &features,
+            system_tenant: context.system_tenant_id.as_deref() == Some(tenant_id),
             user_custom_fields: &user.custom_fields,
             tenant_custom_fields,
             kind: None,

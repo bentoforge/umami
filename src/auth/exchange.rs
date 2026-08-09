@@ -12,7 +12,6 @@ use crate::auth::broker::{MintParams, mint_for_api};
 use crate::auth::tokens::TokenIssuer;
 use crate::config::repository::ConfigRepository;
 use crate::constants::MAX_TEXT_BODY_SIZE;
-use crate::tenants::effective_features;
 use crate::tenants::repository::TenantRepository;
 use crate::users::UserStatus;
 use crate::users::repository::UserRepository;
@@ -56,6 +55,8 @@ pub struct ExchangeDeps {
     pub tokens: Arc<TokenIssuer>,
     /// Security audit trail.
     pub audit: Arc<dyn AuditRepository>,
+    /// The configured system tenant (adds `is:system-tenant` when the caller's tenant matches).
+    pub system_tenant_id: Option<String>,
 }
 
 /// `POST /auth/exchange` — mint a downstream product-API token for the authenticated user.
@@ -97,7 +98,7 @@ async fn exchange(
     let tenant = deps.tenants.get_tenant(&user.tenant_id).await?;
     let features: Vec<String> = tenant
         .as_ref()
-        .map(|tenant| effective_features(&config, tenant).into_iter().collect())
+        .map(|tenant| tenant.features.clone())
         .unwrap_or_default();
     let empty_fields = BTreeMap::new();
     let tenant_custom_fields = tenant
@@ -116,9 +117,9 @@ async fn exchange(
             locale: &user.locale,
             tenant_id: &user.tenant_id,
             token_version: user.token_version,
-            roles: &user.roles,
-            scopes: &[],
+            subjects: &user.roles,
             features: &features,
+            system_tenant: deps.system_tenant_id.as_deref() == Some(user.tenant_id.as_str()),
             user_custom_fields: &user.custom_fields,
             tenant_custom_fields,
             kind: None,

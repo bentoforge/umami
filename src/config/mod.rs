@@ -8,17 +8,29 @@ pub mod repository;
 pub mod service;
 
 use crate::constants::{
-    ADMIN_TENANT_PERMISSION, DEFAULT_ACCESS_TTL_SECS, DEFAULT_REFRESH_TTL_SECS,
-    MANAGE_CONFIG_PERMISSION, WRITE_MEMBERS_PERMISSION, WRITE_USAGE_PERMISSION,
+    ADMIN_SYSTEM_PERMISSION, ADMIN_TENANT_PERMISSION, DEFAULT_ACCESS_TTL_SECS,
+    DEFAULT_REFRESH_TTL_SECS, MANAGE_CONFIG_PERMISSION, ROLE_MEMBER, ROLE_OWNER,
+    SYSTEM_TENANT_MARKER, WRITE_MEMBERS_PERMISSION, WRITE_USAGE_PERMISSION,
 };
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 use wasabi::client_bail;
 
-/// A target API (audience) umami can mint tokens for — see `docs/AUDIENCES.md`.
+/// One rule in an API's ordered permission mapping: when `when` holds against the current set
+/// (subjects ∪ permissions granted by earlier rules), the permissions in `grant` are added.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionRule {
+    /// Condition (permission-string DSL) over subjects ∪ already-granted permissions.
+    pub when: String,
+    /// Permissions granted when the condition holds.
+    pub grant: Vec<String>,
+}
+
+/// A target API (audience) umami can mint tokens for — see `docs/AUDIENCES.md` + `docs/PERMISSIONS.md`.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ApiDef {
@@ -26,77 +38,78 @@ pub struct ApiDef {
     pub code: String,
     /// The `aud` claim written into tokens minted for this API.
     pub audience: String,
-    /// When true, the token carries the requester's own role-derived permissions verbatim
-    /// (the `permissions` rule map is ignored). Used for the `umami` admin API.
-    #[serde(default)]
-    pub passthrough: bool,
-    /// Boolean expression (`,`=OR, `+`=AND over permissions ∪ features) that must hold to obtain a
+    /// Permission-string DSL that must hold (against subjects ∪ granted permissions) to obtain a
     /// token for this API; `None` = no gate.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub eligibility: Option<String>,
-    /// Rule map `expression → [permission,…]`; the token's permissions are the union of the outputs
-    /// of all rules whose expression matches.
+    /// Ordered permission mapping: rules fire top-to-bottom, later rules seeing earlier grants.
     #[serde(default)]
-    pub permissions: BTreeMap<String, Vec<String>>,
+    pub permissions: Vec<PermissionRule>,
     /// Claim mapping `claimName → source` (`"features"`, `"customUser:<k>"`, `"customTenant:<k>"`,
     /// or a literal).
     #[serde(default)]
     pub claims: BTreeMap<String, String>,
 }
 
-/// Evaluates a `,`=OR / `+`=AND expression against a token set (permissions ∪ features). An empty
-/// clause never matches.
-fn eval_expression(expression: &str, set: &BTreeSet<&str>) -> bool {
-    expression.split(',').any(|clause| {
+/// Evaluates a permission-string expression against a token set (subjects ∪ granted permissions).
+/// `,` = OR (lowest precedence), `+` = AND, `!term` = NOT. An empty expression holds (no gate); an
+/// empty clause is skipped.
+pub fn eval_expression(expression: &str, set: &BTreeSet<&str>) -> bool {
+    let clauses: Vec<&str> = expression
+        .split(',')
+        .map(str::trim)
+        .filter(|clause| !clause.is_empty())
+        .collect();
+    if clauses.is_empty() {
+        return true;
+    }
+    clauses.iter().any(|clause| {
         let terms: Vec<&str> = clause
             .split('+')
             .map(str::trim)
-            .filter(|t| !t.is_empty())
+            .filter(|term| !term.is_empty())
             .collect();
-        !terms.is_empty() && terms.iter().all(|term| set.contains(term))
+        !terms.is_empty()
+            && terms.iter().all(|term| match term.strip_prefix('!') {
+                Some(negated) => !set.contains(negated.trim()),
+                None => set.contains(term),
+            })
     })
 }
 
 impl ApiDef {
-    fn set<'a>(base_permissions: &'a [String], features: &'a [String]) -> BTreeSet<&'a str> {
-        base_permissions
-            .iter()
-            .chain(features.iter())
-            .map(String::as_str)
-            .collect()
-    }
-
-    /// Whether the requester (by permissions + features) may obtain a token for this API.
-    pub fn is_eligible(&self, base_permissions: &[String], features: &[String]) -> bool {
-        match &self.eligibility {
-            Some(expr) => eval_expression(expr, &Self::set(base_permissions, features)),
-            None => true,
-        }
-    }
-
-    /// Projects the token's permissions: passthrough of the role permissions, or the union of the
-    /// matching rules' outputs.
-    pub fn project_permissions(
-        &self,
-        base_permissions: &[String],
-        features: &[String],
-    ) -> Vec<String> {
-        if self.passthrough {
-            let mut permissions = base_permissions.to_vec();
-            permissions.sort();
-            permissions.dedup();
-            return permissions;
-        }
-        let set = Self::set(base_permissions, features);
+    /// Resolves the token's permissions for a subject set, then checks eligibility.
+    ///
+    /// Ordered accumulate: start from `subjects` (namespaced `role:*`/`scope:*`/`feature:*`/`is:*`),
+    /// fire each `permissions` rule whose `when` holds against the current set (subjects ∪ granted
+    /// so far), adding its grant. Then evaluate `eligibility` against the final set. Returns the
+    /// sorted permissions when eligible, or `None` when not (⇒ the caller returns 403).
+    pub fn resolve(&self, subjects: &[String]) -> Option<Vec<String>> {
+        let mut working: BTreeSet<String> = subjects.iter().cloned().collect();
         let mut granted: BTreeSet<String> = BTreeSet::new();
-        for (rule, permissions) in &self.permissions {
-            if eval_expression(rule, &set) {
-                for permission in permissions {
-                    let _ = granted.insert(permission.clone());
+
+        for rule in &self.permissions {
+            let view: BTreeSet<&str> = working.iter().map(String::as_str).collect();
+            if eval_expression(&rule.when, &view) {
+                for permission in &rule.grant {
+                    if granted.insert(permission.clone()) {
+                        let _ = working.insert(permission.clone());
+                    }
                 }
             }
         }
-        granted.into_iter().collect()
+
+        let eligible = match &self.eligibility {
+            Some(expr) => {
+                let view: BTreeSet<&str> = working.iter().map(String::as_str).collect();
+                eval_expression(expr, &view)
+            }
+            None => true,
+        };
+        if !eligible {
+            return None;
+        }
+        Some(granted.into_iter().collect())
     }
 
     /// Builds the configured extra claims for a token minted for this API.
@@ -133,15 +146,30 @@ impl ApiDef {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct RoleDef {
-    /// Stable code referenced by `user.roles`.
+    /// Stable code referenced by `user.roles` (namespaced `role:*`).
     pub code: String,
     /// Human-readable name.
     pub name: String,
-    /// Permission strings baked into the token for users holding this role.
-    pub permissions: Vec<String>,
+    /// DSL over the tenant's features (`feature:*`/`is:*`) — the role is assignable to a user in a
+    /// tenant only when this holds. `None` = always assignable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assignable_if: Option<String>,
 }
 
-/// A feature flag definition (togglable per tenant).
+/// A scope: the M2M analogue of a role, assigned to an API service key (namespaced `scope:*`).
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ScopeDef {
+    /// Stable code referenced by `apiKey.scopes` (namespaced `scope:*`).
+    pub code: String,
+    /// Human-readable name.
+    pub name: String,
+    /// DSL over the tenant's features (`feature:*`/`is:*`) gating assignability to a key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assignable_if: Option<String>,
+}
+
+/// A feature: granted to a tenant (namespaced `feature:*`), checked in the permission game.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct FeatureDef {
@@ -149,6 +177,10 @@ pub struct FeatureDef {
     pub code: String,
     /// Human-readable name.
     pub name: String,
+    /// DSL over the tenant's **current** features — the feature is grantable only when this holds
+    /// (encodes prerequisites). `None` = always grantable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assignable_if: Option<String>,
 }
 
 /// A quantitative limit definition (e.g. "AI Tokens", "Max Items").
@@ -240,9 +272,12 @@ pub struct SecuritySettings {
 pub struct Config {
     /// Optimistic-concurrency counter, bumped on every save.
     pub version: u64,
-    /// Role catalog.
+    /// Role catalog (assigned to users).
     pub roles: Vec<RoleDef>,
-    /// Feature catalog.
+    /// Scope catalog (assigned to M2M service keys).
+    #[serde(default)]
+    pub scopes: Vec<ScopeDef>,
+    /// Feature catalog (granted to tenants).
     #[serde(default)]
     pub features: Vec<FeatureDef>,
     /// Limit catalog.
@@ -262,9 +297,6 @@ pub struct Config {
     /// Target APIs (audiences) umami can mint tokens for — see [`ApiDef`] and `docs/AUDIENCES.md`.
     #[serde(default)]
     pub apis: Vec<ApiDef>,
-    /// Superseded by per-API `claims`; kept for backward compatibility.
-    #[serde(default)]
-    pub token_claims: Vec<String>,
 }
 
 impl Config {
@@ -315,56 +347,113 @@ impl Config {
         Ok(())
     }
 
-    /// Resolves the union of permissions granted by the given role codes (sorted, deduped).
-    pub fn permissions_for_roles(&self, role_codes: &[String]) -> Vec<String> {
-        let mut granted: HashSet<&str> = HashSet::new();
-        for role in &self.roles {
-            if role_codes.iter().any(|code| code == &role.code) {
-                for permission in &role.permissions {
-                    let _ = granted.insert(permission.as_str());
-                }
-            }
+    /// The role codes assignable to a user in a tenant with the given (namespaced) feature set —
+    /// i.e. those whose `assignableIf` holds against `feature:*`/`is:*`.
+    pub fn assignable_roles(&self, tenant_features: &[String]) -> Vec<String> {
+        let set: BTreeSet<&str> = tenant_features.iter().map(String::as_str).collect();
+        self.roles
+            .iter()
+            .filter(|role| assignable(&role.assignable_if, &set))
+            .map(|role| role.code.clone())
+            .collect()
+    }
+
+    /// Whether a specific role is assignable in a tenant with the given feature set (and is defined).
+    pub fn can_assign_role(&self, code: &str, tenant_features: &[String]) -> bool {
+        let set: BTreeSet<&str> = tenant_features.iter().map(String::as_str).collect();
+        self.roles
+            .iter()
+            .find(|role| role.code == code)
+            .is_some_and(|role| assignable(&role.assignable_if, &set))
+    }
+
+    /// The scope codes assignable to a key in a tenant with the given feature set.
+    pub fn assignable_scopes(&self, tenant_features: &[String]) -> Vec<String> {
+        let set: BTreeSet<&str> = tenant_features.iter().map(String::as_str).collect();
+        self.scopes
+            .iter()
+            .filter(|scope| assignable(&scope.assignable_if, &set))
+            .map(|scope| scope.code.clone())
+            .collect()
+    }
+
+    /// Whether a specific scope is assignable in a tenant with the given feature set (and is defined).
+    pub fn can_assign_scope(&self, code: &str, tenant_features: &[String]) -> bool {
+        let set: BTreeSet<&str> = tenant_features.iter().map(String::as_str).collect();
+        self.scopes
+            .iter()
+            .find(|scope| scope.code == code)
+            .is_some_and(|scope| assignable(&scope.assignable_if, &set))
+    }
+
+    /// Whether a feature is grantable given the tenant's **current** features (its `assignableIf`
+    /// holds and it is defined and not synthetic).
+    pub fn can_grant_feature(&self, code: &str, current_features: &[String]) -> bool {
+        if is_synthetic(code) {
+            return false;
         }
-        let mut permissions: Vec<String> = granted.into_iter().map(str::to_owned).collect();
-        permissions.sort();
-        permissions
+        let set: BTreeSet<&str> = current_features.iter().map(String::as_str).collect();
+        self.features
+            .iter()
+            .find(|feature| feature.code == code)
+            .is_some_and(|feature| assignable(&feature.assignable_if, &set))
+    }
+
+    /// Feature codes grantable to a tenant right now: defined, non-synthetic, not already granted,
+    /// and whose `assignableIf` holds against the current feature set.
+    pub fn assignable_features(&self, current_features: &[String]) -> Vec<String> {
+        let set: BTreeSet<&str> = current_features.iter().map(String::as_str).collect();
+        self.features
+            .iter()
+            .filter(|feature| !is_synthetic(&feature.code))
+            .filter(|feature| !current_features.iter().any(|f| f == &feature.code))
+            .filter(|feature| assignable(&feature.assignable_if, &set))
+            .map(|feature| feature.code.clone())
+            .collect()
+    }
+
+    /// Looks up a feature's `assignableIf` (for the revoke dependency check). `None` if unknown.
+    pub fn feature_assignable_if(&self, code: &str) -> Option<&str> {
+        self.features
+            .iter()
+            .find(|feature| feature.code == code)
+            .and_then(|feature| feature.assignable_if.as_deref())
+    }
+}
+
+/// Whether a synthetic marker (`is:*`, computed and never stored, so never grantable/revocable).
+pub fn is_synthetic(code: &str) -> bool {
+    code.starts_with("is:")
+}
+
+/// Evaluates an optional `assignableIf` against a feature set — `None` means always assignable.
+fn assignable(assignable_if: &Option<String>, set: &BTreeSet<&str>) -> bool {
+    match assignable_if {
+        Some(expr) => eval_expression(expr, set),
+        None => true,
     }
 }
 
 impl Default for Config {
     fn default() -> Self {
+        let role = |code: &str, name: &str| RoleDef {
+            code: code.to_owned(),
+            name: name.to_owned(),
+            assignable_if: None,
+        };
+        let rule = |when: &str, grant: &[&str]| PermissionRule {
+            when: when.to_owned(),
+            grant: grant.iter().map(|p| (*p).to_owned()).collect(),
+        };
         Config {
             version: 1,
             roles: vec![
-                RoleDef {
-                    code: "owner".to_owned(),
-                    name: "Owner".to_owned(),
-                    permissions: vec![
-                        ADMIN_TENANT_PERMISSION.to_owned(),
-                        WRITE_MEMBERS_PERMISSION.to_owned(),
-                        MANAGE_CONFIG_PERMISSION.to_owned(),
-                        WRITE_USAGE_PERMISSION.to_owned(),
-                    ],
-                },
-                RoleDef {
-                    code: "admin".to_owned(),
-                    name: "Administrator".to_owned(),
-                    permissions: vec![
-                        WRITE_MEMBERS_PERMISSION.to_owned(),
-                        WRITE_USAGE_PERMISSION.to_owned(),
-                    ],
-                },
-                RoleDef {
-                    code: "member".to_owned(),
-                    name: "Member".to_owned(),
-                    permissions: vec![WRITE_USAGE_PERMISSION.to_owned()],
-                },
-                RoleDef {
-                    code: "viewer".to_owned(),
-                    name: "Viewer".to_owned(),
-                    permissions: Vec::new(),
-                },
+                role(ROLE_OWNER, "Owner"),
+                role("role:admin", "Administrator"),
+                role(ROLE_MEMBER, "Member"),
+                role("role:viewer", "Viewer"),
             ],
+            scopes: Vec::new(),
             features: Vec::new(),
             limits: Vec::new(),
             packages: Vec::new(),
@@ -375,15 +464,31 @@ impl Default for Config {
                 access_ttl_secs: DEFAULT_ACCESS_TTL_SECS,
                 refresh_ttl_secs: DEFAULT_REFRESH_TTL_SECS,
             },
+            // The umami admin API: role → permission mapping lives here (not on the roles), plus the
+            // synthetic is:system-tenant → cross-tenant admin permission.
             apis: vec![ApiDef {
                 code: "umami".to_owned(),
                 audience: "umami".to_owned(),
-                passthrough: true,
                 eligibility: None,
-                permissions: BTreeMap::new(),
-                claims: BTreeMap::from([("features".to_owned(), "features".to_owned())]),
+                permissions: vec![
+                    rule(
+                        ROLE_OWNER,
+                        &[
+                            ADMIN_TENANT_PERMISSION,
+                            WRITE_MEMBERS_PERMISSION,
+                            MANAGE_CONFIG_PERMISSION,
+                            WRITE_USAGE_PERMISSION,
+                        ],
+                    ),
+                    rule(
+                        "role:admin",
+                        &[WRITE_MEMBERS_PERMISSION, WRITE_USAGE_PERMISSION],
+                    ),
+                    rule(ROLE_MEMBER, &[WRITE_USAGE_PERMISSION]),
+                    rule(SYSTEM_TENANT_MARKER, &[ADMIN_SYSTEM_PERMISSION]),
+                ],
+                claims: BTreeMap::new(),
             }],
-            token_claims: Vec::new(),
         }
     }
 }
@@ -396,108 +501,129 @@ mod tests {
         items.iter().copied().collect()
     }
 
+    fn s(items: &[&str]) -> Vec<String> {
+        items.iter().map(|i| (*i).to_owned()).collect()
+    }
+
     #[test]
-    fn expression_or_and_precedence() {
+    fn expression_or_and_not_precedence() {
         // a OR (b AND c)
         assert!(eval_expression("a,b+c", &set(&["a"])));
         assert!(eval_expression("a,b+c", &set(&["b", "c"])));
         assert!(!eval_expression("a,b+c", &set(&["b"])));
         assert!(!eval_expression("a,b+c", &set(&["x"])));
-        // empty clause never matches
-        assert!(!eval_expression("", &set(&["a"])));
+        // negation
+        assert!(eval_expression("a+!b", &set(&["a"])));
+        assert!(!eval_expression("a+!b", &set(&["a", "b"])));
+        assert!(eval_expression("!b", &set(&["a"])));
+        // empty expression = no restriction
+        assert!(eval_expression("", &set(&["a"])));
     }
 
     fn dbx_api() -> ApiDef {
         ApiDef {
             code: "dbx-core".to_owned(),
             audience: "dbx-core".to_owned(),
-            passthrough: false,
-            eligibility: Some("member,admin".to_owned()),
-            permissions: BTreeMap::from([
-                ("write:blocks".to_owned(), vec!["write:blocks".to_owned()]),
-                ("ai".to_owned(), vec!["use:ai".to_owned()]),
-                (
-                    "write:members+admin:tenant".to_owned(),
-                    vec!["manage:team".to_owned()],
-                ),
-            ]),
-            claims: BTreeMap::from([
-                ("svc".to_owned(), "dbx-core".to_owned()),
-                ("features".to_owned(), "features".to_owned()),
-                ("dept".to_owned(), "customUser:department".to_owned()),
-            ]),
+            eligibility: Some("role:member,role:admin".to_owned()),
+            permissions: vec![
+                PermissionRule {
+                    when: "role:admin".to_owned(),
+                    grant: s(&["admin:blocks", "write:blocks"]),
+                },
+                PermissionRule {
+                    when: "feature:ai + role:ai".to_owned(),
+                    grant: s(&["use:ai"]),
+                },
+                // chains off an earlier grant
+                PermissionRule {
+                    when: "write:blocks".to_owned(),
+                    grant: s(&["read:blocks"]),
+                },
+            ],
+            claims: BTreeMap::from([("svc".to_owned(), "dbx-core".to_owned())]),
         }
     }
 
     #[test]
-    fn eligibility_and_projection() {
+    fn resolve_ordered_accumulate_with_chaining() {
         let api = dbx_api();
-        let perms = vec!["member".to_owned(), "write:blocks".to_owned()];
-        let features = vec!["ai".to_owned()];
-
-        assert!(api.is_eligible(&perms, &features));
-        assert!(!api.is_eligible(&["viewer".to_owned()], &[]));
-
-        let projected = api.project_permissions(&perms, &features);
-        assert_eq!(
-            projected,
-            vec!["use:ai".to_owned(), "write:blocks".to_owned()]
-        );
+        // role:admin → admin:blocks, write:blocks → (chained) read:blocks
+        let perms = api.resolve(&s(&["role:admin"])).expect("eligible");
+        assert_eq!(perms, s(&["admin:blocks", "read:blocks", "write:blocks"]));
     }
 
     #[test]
-    fn passthrough_returns_role_permissions() {
+    fn resolve_respects_eligibility_and_features() {
+        let api = dbx_api();
+        // role:ai alone is eligible? eligibility is role:member,role:admin → no.
+        assert!(api.resolve(&s(&["role:ai", "feature:ai"])).is_none());
+        // role:member is eligible but grants nothing here.
+        assert_eq!(api.resolve(&s(&["role:member"])), Some(Vec::new()));
+        // admin + ai feature + ai role
+        let perms = api
+            .resolve(&s(&["role:admin", "role:ai", "feature:ai"]))
+            .expect("eligible");
+        assert!(perms.contains(&"use:ai".to_owned()));
+        assert!(perms.contains(&"write:blocks".to_owned()));
+    }
+
+    #[test]
+    fn default_umami_maps_roles_and_system_marker() {
         let umami = Config::default().find_api("umami").unwrap().clone();
-        let perms = vec!["admin:tenant".to_owned(), "write:members".to_owned()];
-        assert_eq!(umami.project_permissions(&perms, &[]).len(), 2);
+        let owner = umami.resolve(&s(&["role:owner"])).unwrap();
+        assert!(owner.contains(&"admin:tenant".to_owned()));
+        assert!(owner.contains(&"manage:config".to_owned()));
+        // no role maps to admin:system — only the synthetic marker does
+        assert!(!owner.contains(&"admin:system".to_owned()));
+        let sys = umami
+            .resolve(&s(&["role:owner", "is:system-tenant"]))
+            .unwrap();
+        assert!(sys.contains(&"admin:system".to_owned()));
+        // viewer maps to nothing
+        assert_eq!(umami.resolve(&s(&["role:viewer"])), Some(Vec::new()));
+    }
+
+    #[test]
+    fn assignability_gates_on_tenant_features() {
+        let config = Config {
+            roles: vec![RoleDef {
+                code: "role:ai".to_owned(),
+                name: "AI".to_owned(),
+                assignable_if: Some("feature:ai".to_owned()),
+            }],
+            features: vec![
+                FeatureDef {
+                    code: "feature:base".to_owned(),
+                    name: "Base".to_owned(),
+                    assignable_if: None,
+                },
+                FeatureDef {
+                    code: "feature:ai".to_owned(),
+                    name: "AI".to_owned(),
+                    assignable_if: Some("feature:base".to_owned()),
+                },
+            ],
+            ..Config::default()
+        };
+        // role:ai only assignable when the tenant has feature:ai
+        assert!(!config.can_assign_role("role:ai", &[]));
+        assert!(config.can_assign_role("role:ai", &s(&["feature:ai"])));
+        // feature:ai grantable only once feature:base is present; and not if already granted
+        assert!(!config.can_grant_feature("feature:ai", &[]));
+        assert!(config.can_grant_feature("feature:ai", &s(&["feature:base"])));
+        assert_eq!(
+            config.assignable_features(&s(&["feature:base"])),
+            s(&["feature:ai"])
+        );
+        // synthetic markers are never grantable
+        assert!(!config.can_grant_feature("is:system-tenant", &s(&["feature:base"])));
     }
 
     #[test]
     fn claim_mapping_resolves_sources() {
         let api = dbx_api();
         let user_cf = BTreeMap::from([("department".to_owned(), json!("engineering"))]);
-        let claims = api.build_claims(&["ai".to_owned()], &user_cf, &BTreeMap::new());
+        let claims = api.build_claims(&["feature:ai".to_owned()], &user_cf, &BTreeMap::new());
         assert_eq!(claims.get("svc"), Some(&json!("dbx-core")));
-        assert_eq!(claims.get("features"), Some(&json!(["ai"])));
-        assert_eq!(claims.get("dept"), Some(&json!("engineering")));
-    }
-
-    #[test]
-    fn default_owner_has_admin_permissions() {
-        let config = Config::default();
-        let perms = config.permissions_for_roles(&["owner".to_owned()]);
-        assert!(perms.contains(&"admin:tenant".to_owned()));
-        assert!(perms.contains(&"write:members".to_owned()));
-        assert!(perms.contains(&"manage:config".to_owned()));
-    }
-
-    #[test]
-    fn unknown_and_empty_roles_grant_nothing() {
-        let config = Config::default();
-        assert!(
-            config
-                .permissions_for_roles(&["nope".to_owned()])
-                .is_empty()
-        );
-        assert!(config.permissions_for_roles(&[]).is_empty());
-        assert!(
-            config
-                .permissions_for_roles(&["viewer".to_owned()])
-                .is_empty()
-        );
-    }
-
-    #[test]
-    fn union_dedupes_across_roles() {
-        let config = Config::default();
-        // owner + admin both grant write:members → appears once
-        let perms = config.permissions_for_roles(&["owner".to_owned(), "admin".to_owned()]);
-        assert_eq!(
-            perms
-                .iter()
-                .filter(|p| p.as_str() == "write:members")
-                .count(),
-            1
-        );
     }
 }

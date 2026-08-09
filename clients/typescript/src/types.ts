@@ -197,14 +197,25 @@ export interface UsageResponse {
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
+/** A role assignable to a user (`role:*`). Permissions come from the per-API rules, not here. */
 export interface RoleDef {
   code: string;
   name: string;
-  permissions: string[];
+  /** Boolean expression over the tenant's `feature:*`/`is:*` gating whether it may be assigned. */
+  assignableIf?: string | null;
 }
+/** A scope carried by an M2M service key (`scope:*`); same assignability gating as roles. */
+export interface ScopeDef {
+  code: string;
+  name: string;
+  assignableIf?: string | null;
+}
+/** An authorization feature granted to a tenant (`feature:*`). */
 export interface FeatureDef {
   code: string;
   name: string;
+  /** Boolean expression over the tenant's current features gating whether it may be granted. */
+  assignableIf?: string | null;
 }
 export interface LimitDef {
   code: string;
@@ -238,24 +249,30 @@ export interface SecuritySettings {
   accessTtlSecs: number;
   refreshTtlSecs: number;
 }
-/** A target API in the config catalog: its `aud`, eligibility gate, permission projection, and
- * claim mapping. See `docs/AUDIENCES.md`. */
+/** An ordered permission rule: when `when` holds against the accumulated subject set, `grant` is
+ * folded in (later rules see earlier grants). An empty `when` always applies. */
+export interface PermissionRule {
+  when: string;
+  grant: string[];
+}
+/** A target API in the config catalog: its `aud`, eligibility gate, ordered permission projection,
+ * and claim mapping. See `docs/PERMISSIONS.md`. */
 export interface ApiDef {
   code: string;
   audience: string;
-  /** If true, the token carries the requester's own role permissions verbatim. */
-  passthrough?: boolean;
-  /** Boolean expression (`,`=OR, `+`=AND over permissions∪features) gating the exchange. */
+  /** Boolean expression (`,`=OR, `+`=AND, `!`=NOT) over the final subject set gating the exchange. */
   eligibility?: string | null;
-  /** Rule map: expression → injected permissions (union of all matching rules). */
-  permissions?: Record<string, string[]>;
-  /** Claim mapping: claimName → source (`features`, `customUser:<k>`, `customTenant:<k>`, literal). */
+  /** Ordered rules mapping subjects → granted permissions (accumulated top-to-bottom). */
+  permissions: PermissionRule[];
+  /** Claim mapping: claimName → source (`customUser:<k>`, `customTenant:<k>`, or a literal). */
   claims?: Record<string, string>;
 }
 
 export interface Config {
   version: number;
   roles: RoleDef[];
+  /** Scopes assignable to M2M service keys. */
+  scopes: ScopeDef[];
   features: FeatureDef[];
   limits: LimitDef[];
   packages: PackageDef[];
@@ -264,8 +281,6 @@ export interface Config {
   security: SecuritySettings;
   /** The catalog of target APIs umami can mint tokens for. */
   apis: ApiDef[];
-  /** @deprecated superseded by per-API `claims`; kept for back-compat. */
-  tokenClaims: string[];
 }
 
 // ── API keys ──────────────────────────────────────────────────────────────────
@@ -278,9 +293,9 @@ export interface ApiKeyView {
   /** Present for personal access tokens (the user the token acts as); null for service keys. */
   userId: string | null;
   name: string;
-  /** Service-key role codes (empty for PATs). */
+  /** PAT role restriction — subset of the user's `role:*` (empty for service keys / all roles). */
   roles: string[];
-  /** PAT down-scoping — subset of the user's permissions (empty for service keys / full user perms). */
+  /** Service-key `scope:*` subjects (empty for PATs). */
   scopes: string[];
   /** Target API codes this key may mint tokens for. */
   apis: string[];
@@ -291,21 +306,22 @@ export interface ApiKeyView {
   created: string;
 }
 
-/** Create a tenant **service** key (machine principal, permissions from `roles`). */
+/** Create a tenant **service** key (M2M machine principal; subjects are its `scope:*`). */
 export interface CreateApiKeyRequest {
   name: string;
-  roles?: string[];
+  /** The `scope:*` subjects this key carries (must be assignable given the tenant's features). */
+  scopes?: string[];
   /** Target API codes this key may mint for; defaults to `["umami"]`. */
   apis?: string[];
   allowedOrigins?: string[];
   expiresAt?: string;
 }
 
-/** Create a **personal access token** (acts as the current user; optionally down-scoped). */
+/** Create a **personal access token** (acts as the current user; optionally role-restricted). */
 export interface CreatePatRequest {
   name: string;
-  /** Restrict the token to this subset of your own permissions (empty = all your permissions). */
-  scopes?: string[];
+  /** Restrict the token to this subset of your own `role:*` (empty = all your roles). */
+  roles?: string[];
   /** Target API codes this PAT may mint for; defaults to `["umami"]`. */
   apis?: string[];
   expiresAt?: string;

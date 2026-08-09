@@ -12,6 +12,7 @@ use crate::constants::{
     DEFAULT_LOCALE, MAX_LIST_RESULTS, MAX_TEXT_BODY_SIZE, ROLE_MEMBER, WRITE_MEMBERS_PERMISSION,
 };
 use crate::search::{query_matches, value_search_text};
+use crate::tenants::repository::TenantRepository;
 use crate::users::repository::{NewUser, UserRepository};
 use crate::users::{User, UserStatus};
 use chrono::{DateTime, Utc};
@@ -126,6 +127,7 @@ struct UserListResponse {
 /// `POST /users` — create a user in the caller's tenant (requires `write:members`).
 pub fn create_user_route(
     users: Arc<dyn UserRepository>,
+    tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
@@ -133,6 +135,7 @@ pub fn create_user_route(
         .and(warp::post())
         .and(with_body_as_json::<CreateUserRequest>(MAX_TEXT_BODY_SIZE))
         .and(with_cloneable(users))
+        .and(with_cloneable(tenants))
         .and(with_cloneable(config))
         .and(with_user_with_any_permission(
             authenticator,
@@ -164,6 +167,7 @@ pub fn list_users_route(
 /// `PATCH /users/{id}` — update a user's roles/status/custom fields within the caller's tenant.
 pub fn patch_user_route(
     users: Arc<dyn UserRepository>,
+    tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
@@ -171,6 +175,7 @@ pub fn patch_user_route(
         .and(warp::patch())
         .and(with_body_as_json::<PatchUserRequest>(MAX_TEXT_BODY_SIZE))
         .and(with_cloneable(users))
+        .and(with_cloneable(tenants))
         .and(with_cloneable(config))
         .and(with_user_with_any_permission(
             authenticator,
@@ -227,10 +232,11 @@ pub fn reset_password_route(
 async fn handle_create_user_route(
     request: CreateUserRequest,
     users: Arc<dyn UserRepository>,
+    tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
     caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(create_user(request, users, config, caller).await)
+    into_response(create_user(request, users, tenants, config, caller).await)
 }
 
 #[tracing::instrument(level = "debug", name = "GET /users", skip_all)]
@@ -247,10 +253,11 @@ async fn handle_patch_user_route(
     user_id: String,
     request: PatchUserRequest,
     users: Arc<dyn UserRepository>,
+    tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
     caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(patch_user(user_id, request, users, config, caller).await)
+    into_response(patch_user(user_id, request, users, tenants, config, caller).await)
 }
 
 #[tracing::instrument(level = "debug", name = "DELETE /users/{id}", skip_all)]
@@ -279,6 +286,7 @@ async fn handle_reset_password_route(
 async fn create_user(
     request: CreateUserRequest,
     users: Arc<dyn UserRepository>,
+    tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
     caller: AuthUser,
 ) -> anyhow::Result<UserView> {
@@ -310,6 +318,7 @@ async fn create_user(
         .roles
         .filter(|roles| !roles.is_empty())
         .unwrap_or_else(|| vec![ROLE_MEMBER.to_owned()]);
+    validate_roles(&config, &tenants, &tenant_id, &roles).await?;
     let user = users
         .create_user(NewUser {
             tenant_id,
@@ -324,6 +333,27 @@ async fn create_user(
         .await?;
 
     Ok(user.into())
+}
+
+/// Rejects any requested role that isn't assignable given the tenant's authorization features (or
+/// isn't a defined `role:*`). Keeps admins from minting roles the tenant's plan doesn't license.
+async fn validate_roles(
+    config: &Config,
+    tenants: &Arc<dyn TenantRepository>,
+    tenant_id: &str,
+    roles: &[String],
+) -> anyhow::Result<()> {
+    let features = tenants
+        .get_tenant(tenant_id)
+        .await?
+        .map(|tenant| tenant.features)
+        .unwrap_or_default();
+    for role in roles {
+        if !config.can_assign_role(role, &features) {
+            client_bail!("Role '{role}' is not assignable in this tenant");
+        }
+    }
+    Ok(())
 }
 
 async fn list_users(
@@ -370,6 +400,7 @@ async fn patch_user(
     user_id: String,
     request: PatchUserRequest,
     users: Arc<dyn UserRepository>,
+    tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
     caller: AuthUser,
 ) -> anyhow::Result<UserView> {
@@ -381,17 +412,16 @@ async fn patch_user(
         _ => client_bail!("No such user in this tenant"),
     };
 
+    let config = config.current().await?;
     if let Some(roles) = request.roles {
+        validate_roles(&config, &tenants, tenant_id, &roles).await?;
         user.roles = roles;
     }
     if let Some(status) = request.status {
         user.status = status;
     }
     if let Some(custom_fields) = request.custom_fields {
-        Config::validate_custom_fields(
-            &config.current().await?.custom_user_fields,
-            &custom_fields,
-        )?;
+        Config::validate_custom_fields(&config.custom_user_fields, &custom_fields)?;
         user.custom_fields = custom_fields;
     }
 

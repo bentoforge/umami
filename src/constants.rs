@@ -34,13 +34,22 @@ pub const MANAGE_CONFIG_PERMISSION: &str = "manage:config";
 /// token carrying this permission.
 pub const WRITE_USAGE_PERMISSION: &str = "write:usage";
 
-// ── Built-in role codes (defined in the default config) ───────────────────────
+/// Cross-tenant / platform administration. Mapped (in the config `apis`) from the synthetic
+/// `is:system-tenant` marker, so it only ever lands in tokens of system-tenant members.
+pub const ADMIN_SYSTEM_PERMISSION: &str = "admin:system";
+
+// ── Synthetic subject markers (computed at mint time, never stored) ────────────
+
+/// Added to the subject set when the token's tenant is the configured `UMAMI_SYSTEM_TENANT_ID`.
+pub const SYSTEM_TENANT_MARKER: &str = "is:system-tenant";
+
+// ── Built-in role codes (defined in the default config, namespaced `role:*`) ───
 
 /// Role code for a tenant's first/owning user.
-pub const ROLE_OWNER: &str = "owner";
+pub const ROLE_OWNER: &str = "role:owner";
 
 /// Default role code assigned to a newly created user.
-pub const ROLE_MEMBER: &str = "member";
+pub const ROLE_MEMBER: &str = "role:member";
 
 // ── Body size limits ──────────────────────────────────────────────────────────
 

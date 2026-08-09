@@ -143,6 +143,7 @@ impl TenantRepository for DynamoTenantRepository {
             packages: Vec::new(),
             limit_overrides: BTreeMap::new(),
             feature_overrides: BTreeMap::new(),
+            features: Vec::new(),
             custom_fields: BTreeMap::new(),
             name: name.to_owned(),
             slug: slug.to_owned(),
