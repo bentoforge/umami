@@ -73,7 +73,7 @@ use crate::authz::{
     grant_feature_route, revoke_feature_route,
 };
 use crate::config::repository::{ConfigRepository, S3ConfigRepository, StaticConfigRepository};
-use crate::config::service::{get_config_route, put_config_route};
+use crate::config::service::{custom_fields_route, get_config_route, put_config_route};
 use crate::constants::{DEFAULT_LOCALE, ROLE_OWNER};
 use crate::tenants::packages::{
     assign_package_route, entitlements_route, remove_package_route, set_feature_route,
@@ -386,6 +386,7 @@ async fn app() -> anyhow::Result<()> {
         ),
         // config (global catalog + settings)
         get_config_route(config_repository.clone(), authenticator.clone()),
+        custom_fields_route(config_repository.clone(), authenticator.clone()),
         put_config_route(config_repository, authenticator.clone()),
         // audit log (read)
         tenant_audit_route(audit_repository.clone(), authenticator.clone()),

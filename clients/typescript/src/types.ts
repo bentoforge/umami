@@ -171,6 +171,8 @@ export interface CreateTenantRequest {
     name: string;
     locale?: string;
   };
+  /** Custom-field values, validated against `customTenantFields`. */
+  customFields?: Record<string, unknown>;
 }
 
 export interface CreateTenantResponse {
@@ -243,8 +245,19 @@ export interface PackageDef {
 export interface CustomFieldDef {
   key: string;
   label: string;
+  /** `"string"` | `"number"` | `"bool"` | `"select"`. */
   type: string;
+  /** Allowed values for a `select` field (ignored otherwise). */
+  options?: string[];
   required: boolean;
+  /** Whether admin list tables surface this field as a column. */
+  showInTable?: boolean;
+}
+
+/** The custom-field schemas for rendering user/tenant forms (`GET /config/custom-fields`). */
+export interface CustomFieldsSchema {
+  user: CustomFieldDef[];
+  tenant: CustomFieldDef[];
 }
 export interface SecuritySettings {
   minPasswordLength: number;

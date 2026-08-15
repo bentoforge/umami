@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
-import type { Tenant, TenantStatus } from "umami-client";
+import type { CustomFieldDef, Tenant, TenantStatus } from "umami-client";
 import { useUmami } from "../auth/UmamiProvider";
-import { Banner, Field, errMsg } from "../components";
+import { Banner, CustomFieldsForm, Field, errMsg, formatFieldValue } from "../components";
 import { card, dangerButton, ghostButton, input, primaryButton, td, th } from "../ui";
 
 const STATUSES: TenantStatus[] = [
@@ -17,6 +17,7 @@ const STATUSES: TenantStatus[] = [
 export function TenantsPage() {
   const { client, me } = useUmami();
   const [tenants, setTenants] = useState<Tenant[] | null>(null);
+  const [defs, setDefs] = useState<CustomFieldDef[]>([]);
   const [truncated, setTruncated] = useState(false);
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -24,6 +25,16 @@ export function TenantsPage() {
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   const [featuresFor, setFeaturesFor] = useState<string | null>(null);
+
+  const tableDefs = defs.filter((d) => d.showInTable);
+  const colCount = 5 + tableDefs.length;
+
+  useEffect(() => {
+    client
+      .getCustomFields()
+      .then((r) => setDefs(r.tenant))
+      .catch(() => setDefs([]));
+  }, [client]);
 
   const load = useCallback(async () => {
     setError(null);
@@ -83,6 +94,7 @@ export function TenantsPage() {
 
       {creating && (
         <CreateTenant
+          defs={defs}
           onDone={async () => {
             setCreating(false);
             setNotice("Tenant created.");
@@ -105,66 +117,84 @@ export function TenantsPage() {
                 <th className={th}>Status</th>
                 <th className={th}>Plan</th>
                 <th className={th}>Updated</th>
+                {tableDefs.map((def) => (
+                  <th key={def.key} className={th}>
+                    {def.label}
+                  </th>
+                ))}
                 <th className={th}></th>
               </tr>
             </thead>
             <tbody>
-              {tenants.map((tenant) =>
-                editing === tenant.tenantId ? (
-                  <EditRow
-                    key={tenant.tenantId}
-                    tenant={tenant}
-                    onCancel={() => setEditing(null)}
-                    onSaved={async () => {
-                      setEditing(null);
-                      await load();
-                    }}
-                    onError={setError}
-                  />
-                ) : (
-                  <Fragment key={tenant.tenantId}>
-                    <tr className="border-b border-slate-100 dark:border-slate-700/50">
-                      <td className={td}>
-                        <div className="font-medium text-slate-900 dark:text-white">
-                          {tenant.name}
-                          {tenant.tenantId === me?.user.tenantId && (
-                            <span className="ml-2 rounded bg-brand/10 text-brand px-1.5 py-0.5 text-[10px] align-middle">
-                              system
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-xs text-slate-400 font-mono">{tenant.tenantId}</div>
+              {tenants.map((tenant) => (
+                <Fragment key={tenant.tenantId}>
+                  <tr className="border-b border-slate-100 dark:border-slate-700/50">
+                    <td className={td}>
+                      <div className="font-medium text-slate-900 dark:text-white">
+                        {tenant.name}
+                        {tenant.tenantId === me?.user.tenantId && (
+                          <span className="ml-2 rounded bg-brand/10 text-brand px-1.5 py-0.5 text-[10px] align-middle">
+                            system
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xs text-slate-400 font-mono">{tenant.tenantId}</div>
+                    </td>
+                    <td className={td}>{tenant.status}</td>
+                    <td className={td}>{tenant.plan}</td>
+                    <td className={td}>{new Date(tenant.lastUpdated).toLocaleString()}</td>
+                    {tableDefs.map((def) => (
+                      <td key={def.key} className={td}>
+                        {formatFieldValue(tenant.customFields[def.key])}
                       </td>
-                      <td className={td}>{tenant.status}</td>
-                      <td className={td}>{tenant.plan}</td>
-                      <td className={td}>{new Date(tenant.lastUpdated).toLocaleString()}</td>
-                      <td className={td + " text-right whitespace-nowrap"}>
-                        <button
-                          className={ghostButton}
-                          onClick={() =>
-                            setFeaturesFor((id) => (id === tenant.tenantId ? null : tenant.tenantId))
-                          }
-                        >
-                          Features
-                        </button>{" "}
-                        <button className={ghostButton} onClick={() => setEditing(tenant.tenantId)}>
-                          Edit
-                        </button>{" "}
-                        <button className={dangerButton} onClick={() => void onDelete(tenant)}>
-                          Delete
-                        </button>
+                    ))}
+                    <td className={td + " text-right whitespace-nowrap"}>
+                      <button
+                        className={ghostButton}
+                        onClick={() =>
+                          setFeaturesFor((id) => (id === tenant.tenantId ? null : tenant.tenantId))
+                        }
+                      >
+                        Features
+                      </button>{" "}
+                      <button
+                        className={ghostButton}
+                        onClick={() =>
+                          setEditing((id) => (id === tenant.tenantId ? null : tenant.tenantId))
+                        }
+                      >
+                        Edit
+                      </button>{" "}
+                      <button className={dangerButton} onClick={() => void onDelete(tenant)}>
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                  {editing === tenant.tenantId && (
+                    <tr className="border-b border-slate-100 dark:border-slate-700/50 bg-slate-50 dark:bg-slate-900/40">
+                      <td className={td} colSpan={colCount}>
+                        <EditTenantPanel
+                          tenant={tenant}
+                          defs={defs}
+                          onCancel={() => setEditing(null)}
+                          onSaved={async () => {
+                            setEditing(null);
+                            await load();
+                          }}
+                          onError={setError}
+                        />
                       </td>
                     </tr>
-                    {featuresFor === tenant.tenantId && (
-                      <tr className="border-b border-slate-100 dark:border-slate-700/50 bg-slate-50 dark:bg-slate-900/40">
-                        <td className={td} colSpan={5}>
-                          <FeaturesPanel tenant={tenant} onChanged={load} onError={setError} />
-                        </td>
-                      </tr>
-                    )}
-                  </Fragment>
-                ),
-              )}
+                  )}
+                  {featuresFor === tenant.tenantId && (
+                    <tr className="border-b border-slate-100 dark:border-slate-700/50 bg-slate-50 dark:bg-slate-900/40">
+                      <td className={td} colSpan={colCount}>
+                        <FeaturesPanel tenant={tenant} onChanged={load} onError={setError} />
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              ))}
             </tbody>
           </table>
         )}
@@ -173,13 +203,15 @@ export function TenantsPage() {
   );
 }
 
-function EditRow({
+function EditTenantPanel({
   tenant,
+  defs,
   onCancel,
   onSaved,
   onError,
 }: {
   tenant: Tenant;
+  defs: CustomFieldDef[];
   onCancel: () => void;
   onSaved: () => Promise<void>;
   onError: (msg: string) => void;
@@ -188,15 +220,14 @@ function EditRow({
   const [name, setName] = useState(tenant.name);
   const [plan, setPlan] = useState(tenant.plan);
   const [status, setStatus] = useState<TenantStatus>(tenant.status);
+  const [fields, setFields] = useState<Record<string, unknown>>({ ...tenant.customFields });
   const [saving, setSaving] = useState(false);
 
   const save = async () => {
     setSaving(true);
     onError("");
     try {
-      if (name !== tenant.name || plan !== tenant.plan) {
-        await client.patchTenant(tenant.tenantId, { name, plan });
-      }
+      await client.patchTenant(tenant.tenantId, { name, plan, customFields: fields });
       if (status !== tenant.status) {
         await client.patchStatus(tenant.tenantId, status);
       }
@@ -209,36 +240,38 @@ function EditRow({
   };
 
   return (
-    <tr className="border-b border-slate-100 dark:border-slate-700/50 bg-slate-50 dark:bg-slate-900/40">
-      <td className={td}>
-        <input className={input} value={name} onChange={(e) => setName(e.target.value)} />
-      </td>
-      <td className={td}>
-        <select
-          className={input}
-          value={status}
-          onChange={(e) => setStatus(e.target.value as TenantStatus)}
-        >
-          {STATUSES.map((s) => (
-            <option key={s} value={s}>
-              {s}
-            </option>
-          ))}
-        </select>
-      </td>
-      <td className={td}>
-        <input className={input} value={plan} onChange={(e) => setPlan(e.target.value)} />
-      </td>
-      <td className={td}>—</td>
-      <td className={td + " text-right whitespace-nowrap"}>
+    <div className="space-y-3 py-1">
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Name">
+          <input className={input} value={name} onChange={(e) => setName(e.target.value)} />
+        </Field>
+        <Field label="Plan">
+          <input className={input} value={plan} onChange={(e) => setPlan(e.target.value)} />
+        </Field>
+        <Field label="Status">
+          <select
+            className={input}
+            value={status}
+            onChange={(e) => setStatus(e.target.value as TenantStatus)}
+          >
+            {STATUSES.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <CustomFieldsForm defs={defs} values={fields} onChange={setFields} />
+      </div>
+      <div>
         <button className={primaryButton} disabled={saving} onClick={() => void save()}>
           Save
         </button>{" "}
         <button className={ghostButton} disabled={saving} onClick={onCancel}>
           Cancel
         </button>
-      </td>
-    </tr>
+      </div>
+    </div>
   );
 }
 
@@ -341,9 +374,11 @@ function FeaturesPanel({
 }
 
 function CreateTenant({
+  defs,
   onDone,
   onError,
 }: {
+  defs: CustomFieldDef[];
   onDone: () => Promise<void>;
   onError: (msg: string) => void;
 }) {
@@ -353,6 +388,7 @@ function CreateTenant({
   const [ownerUsername, setOwnerUsername] = useState("");
   const [ownerEmail, setOwnerEmail] = useState("");
   const [ownerPassword, setOwnerPassword] = useState("");
+  const [fields, setFields] = useState<Record<string, unknown>>({});
   const [busy, setBusy] = useState(false);
 
   const submit = async () => {
@@ -367,12 +403,14 @@ function CreateTenant({
           email: ownerEmail.trim() || undefined,
           password: ownerPassword,
         },
+        customFields: fields,
       });
       setName("");
       setOwnerName("");
       setOwnerUsername("");
       setOwnerEmail("");
       setOwnerPassword("");
+      setFields({});
       await onDone();
     } catch (err) {
       onError(errMsg(err));
@@ -414,6 +452,7 @@ function CreateTenant({
             onChange={(e) => setOwnerPassword(e.target.value)}
           />
         </Field>
+        <CustomFieldsForm defs={defs} values={fields} onChange={setFields} />
       </div>
       <button className={primaryButton} disabled={busy} onClick={() => void submit()}>
         Create tenant
@@ -421,4 +460,3 @@ function CreateTenant({
     </section>
   );
 }
-

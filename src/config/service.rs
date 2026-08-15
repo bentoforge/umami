@@ -4,20 +4,30 @@
 //! writes back). Both require `manage:config`. `PUT` uses optimistic concurrency: the body's
 //! `version` must match the current one, and the saved document's version is bumped.
 
-use crate::config::Config;
 use crate::config::repository::ConfigRepository;
+use crate::config::{Config, CustomFieldDef};
 use crate::constants::{MANAGE_CONFIG_PERMISSION, MAX_TEXT_BODY_SIZE};
+use serde::Serialize;
 use std::sync::Arc;
 use warp::Filter;
 use warp::filters::BoxedFilter;
 use warp::http::StatusCode;
 use wasabi::status_bail;
 use wasabi::web::auth::authenticator::Authenticator;
-use wasabi::web::auth::with_user_with_any_permission;
+use wasabi::web::auth::user::User as AuthUser;
+use wasabi::web::auth::{with_user, with_user_with_any_permission};
 use wasabi::web::warp::{into_response, with_body_as_json, with_cloneable};
 
 /// Permission required to read/write the global config.
 const REQUIRE_MANAGE_CONFIG: &[&str] = &[MANAGE_CONFIG_PERMISSION];
+
+/// The custom-field schemas any authenticated admin needs to render user/tenant forms + tables.
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct CustomFieldsResponse {
+    user: Vec<CustomFieldDef>,
+    tenant: Vec<CustomFieldDef>,
+}
 
 /// `GET /config` — return the whole config document (requires `manage:config`).
 pub fn get_config_route(
@@ -32,6 +42,21 @@ pub fn get_config_route(
             REQUIRE_MANAGE_CONFIG,
         ))
         .and_then(handle_get_config_route)
+        .boxed()
+}
+
+/// `GET /config/custom-fields` — the user + tenant custom-field schemas. Authenticated only (not
+/// `manage:config`): every admin who edits users/tenants needs these to render forms, and the
+/// schema carries no secrets.
+pub fn custom_fields_route(
+    config: Arc<dyn ConfigRepository>,
+    authenticator: Arc<Authenticator>,
+) -> BoxedFilter<(impl warp::Reply,)> {
+    warp::path!("config" / "custom-fields")
+        .and(warp::get())
+        .and(with_cloneable(config))
+        .and(with_user(authenticator))
+        .and_then(handle_custom_fields_route)
         .boxed()
 }
 
@@ -69,8 +94,24 @@ async fn handle_put_config_route(
     into_response(put_config(request, config).await)
 }
 
+#[tracing::instrument(level = "debug", name = "GET /config/custom-fields", skip_all)]
+async fn handle_custom_fields_route(
+    config: Arc<dyn ConfigRepository>,
+    _caller: AuthUser,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    into_response(custom_fields(config).await)
+}
+
 async fn get_config(config: Arc<dyn ConfigRepository>) -> anyhow::Result<Config> {
     Ok((*config.current().await?).clone())
+}
+
+async fn custom_fields(config: Arc<dyn ConfigRepository>) -> anyhow::Result<CustomFieldsResponse> {
+    let config = config.current().await?;
+    Ok(CustomFieldsResponse {
+        user: config.custom_user_fields.clone(),
+        tenant: config.custom_tenant_fields.clone(),
+    })
 }
 
 async fn put_config(request: Config, config: Arc<dyn ConfigRepository>) -> anyhow::Result<Config> {

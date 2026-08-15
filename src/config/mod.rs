@@ -246,12 +246,18 @@ pub struct CustomFieldDef {
     pub key: String,
     /// Display label.
     pub label: String,
-    /// Field type (e.g. `string`, `number`, `bool`).
+    /// Field type: `string`, `number`, `bool`/`boolean`, or `select` (constrained to [`options`]).
     #[serde(rename = "type")]
     pub field_type: String,
-    /// Whether the field must be set.
+    /// Allowed values for a `select` field (ignored for other types).
+    #[serde(default)]
+    pub options: Vec<String>,
+    /// Whether the field must be set (a non-null, non-empty value).
     #[serde(default)]
     pub required: bool,
+    /// Whether admin list tables should surface this field as a column.
+    #[serde(default)]
+    pub show_in_table: bool,
 }
 
 /// System security/token settings.
@@ -319,7 +325,10 @@ impl Config {
     }
 
     /// Validates provided custom-field values against a schema: every key must be defined and, for
-    /// the known types, the JSON value must match. Returns a client error otherwise.
+    /// the known types, the JSON value must match (a `select` value must be one of its `options`).
+    /// A `null` value counts as "unset". Finally, every `required` field must be present with a
+    /// non-null, non-empty value. `values` is treated as the complete set (callers replace, not
+    /// merge). Returns a client error otherwise.
     pub fn validate_custom_fields(
         definitions: &[CustomFieldDef],
         values: &BTreeMap<String, Value>,
@@ -330,18 +339,51 @@ impl Config {
                 None => client_bail!("Unknown custom field '{key}'"),
             };
 
-            let type_ok = match definition.field_type.as_str() {
-                "string" => value.is_string(),
-                "number" => value.is_number(),
-                "bool" | "boolean" => value.is_boolean(),
-                // Unknown/complex types are accepted as-is.
-                _ => true,
-            };
-            if !type_ok {
-                client_bail!(
-                    "Custom field '{key}' must be of type {}",
-                    definition.field_type
-                );
+            // A null is an explicit "unset" — skip the type check (required is handled below).
+            if value.is_null() {
+                continue;
+            }
+
+            match definition.field_type.as_str() {
+                "string" if !value.is_string() => {
+                    client_bail!("Custom field '{key}' must be a string")
+                }
+                "number" if !value.is_number() => {
+                    client_bail!("Custom field '{key}' must be a number")
+                }
+                "bool" | "boolean" if !value.is_boolean() => {
+                    client_bail!("Custom field '{key}' must be a boolean")
+                }
+                "select" => {
+                    let ok = value
+                        .as_str()
+                        .is_some_and(|v| definition.options.iter().any(|opt| opt == v));
+                    if !ok {
+                        client_bail!(
+                            "Custom field '{key}' must be one of: {}",
+                            definition.options.join(", ")
+                        );
+                    }
+                }
+                // Known types matched above; anything else is accepted as-is.
+                _ => {}
+            }
+        }
+
+        // Enforce required fields against the (complete) provided value set.
+        for definition in definitions {
+            if !definition.required {
+                continue;
+            }
+            let present = values
+                .get(&definition.key)
+                .is_some_and(|value| match value {
+                    Value::Null => false,
+                    Value::String(text) => !text.trim().is_empty(),
+                    _ => true,
+                });
+            if !present {
+                client_bail!("Custom field '{}' is required", definition.key);
             }
         }
         Ok(())
@@ -503,6 +545,60 @@ mod tests {
 
     fn s(items: &[&str]) -> Vec<String> {
         items.iter().map(|i| (*i).to_owned()).collect()
+    }
+
+    fn field(key: &str, field_type: &str, required: bool, options: &[&str]) -> CustomFieldDef {
+        CustomFieldDef {
+            key: key.to_owned(),
+            label: key.to_owned(),
+            field_type: field_type.to_owned(),
+            options: s(options),
+            required,
+            show_in_table: false,
+        }
+    }
+
+    #[test]
+    fn custom_fields_select_and_required() {
+        let defs = vec![
+            field("plan", "select", true, &["gold", "silver"]),
+            field("seats", "number", false, &[]),
+        ];
+
+        // Happy path: valid select value + number.
+        let ok = BTreeMap::from([
+            ("plan".to_owned(), Value::from("gold")),
+            ("seats".to_owned(), Value::from(5)),
+        ]);
+        assert!(Config::validate_custom_fields(&defs, &ok).is_ok());
+
+        // Select value outside the option set is rejected.
+        let bad_option = BTreeMap::from([("plan".to_owned(), Value::from("bronze"))]);
+        assert!(Config::validate_custom_fields(&defs, &bad_option).is_err());
+
+        // Wrong type for a number is rejected.
+        let bad_type = BTreeMap::from([
+            ("plan".to_owned(), Value::from("gold")),
+            ("seats".to_owned(), Value::from("lots")),
+        ]);
+        assert!(Config::validate_custom_fields(&defs, &bad_type).is_err());
+
+        // Missing required field is rejected...
+        let missing = BTreeMap::from([("seats".to_owned(), Value::from(1))]);
+        assert!(Config::validate_custom_fields(&defs, &missing).is_err());
+
+        // ...and so is an empty-string / null required value.
+        let empty = BTreeMap::from([("plan".to_owned(), Value::from(""))]);
+        assert!(Config::validate_custom_fields(&defs, &empty).is_err());
+        let null = BTreeMap::from([("plan".to_owned(), Value::Null)]);
+        assert!(Config::validate_custom_fields(&defs, &null).is_err());
+
+        // Unknown key is rejected.
+        let unknown = BTreeMap::from([
+            ("plan".to_owned(), Value::from("gold")),
+            ("nope".to_owned(), Value::from("x")),
+        ]);
+        assert!(Config::validate_custom_fields(&defs, &unknown).is_err());
     }
 
     #[test]

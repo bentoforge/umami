@@ -10,6 +10,7 @@ import type {
   CreateTenantRequest,
   CreateTenantResponse,
   CreateUserRequest,
+  CustomFieldsSchema,
   EntitlementsResponse,
   ExchangeResponse,
   FeatureToggle,
@@ -432,6 +433,10 @@ export class UmamiClient {
   }
   putConfig(config: Config): Promise<Config> {
     return this.request<Config>("/config", { method: "PUT", body: JSON.stringify(config) });
+  }
+  /** The user + tenant custom-field schemas (any authenticated admin; no `manage:config` needed). */
+  getCustomFields(): Promise<CustomFieldsSchema> {
+    return this.request<CustomFieldsSchema>("/config/custom-fields");
   }
 
   // ── API keys: tenant service keys (write:members) ──────────────────────────────

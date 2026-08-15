@@ -53,9 +53,12 @@ struct OwnerSpec {
 
 /// Request body for self-serve tenant creation.
 #[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
 struct CreateTenantRequest {
     name: String,
     owner: OwnerSpec,
+    /// Optional custom-field values for the new tenant (validated against `customTenantFields`).
+    custom_fields: Option<BTreeMap<String, Value>>,
 }
 
 /// Response echoing the new tenant and its owner user id.
@@ -331,14 +334,21 @@ async fn create_tenant(
         Some(username) => username,
         None => client_bail!("Owner 'username' (or 'email' to use as the username) is required"),
     };
-    config
-        .current()
-        .await?
-        .validate_password(&request.owner.password)?;
+    let config = config.current().await?;
+    config.validate_password(&request.owner.password)?;
+    let custom_fields = request.custom_fields.unwrap_or_default();
+    Config::validate_custom_fields(&config.custom_tenant_fields, &custom_fields)?;
 
     let tenant = tenants
         .create_tenant(request.name.trim(), &slugify(&request.name))
         .await?;
+
+    // Persist any custom-field values (create_tenant starts them empty).
+    if !custom_fields.is_empty() {
+        let mut with_fields = tenant.clone();
+        with_fields.custom_fields = custom_fields;
+        let _ = tenants.put_tenant(with_fields).await?;
+    }
 
     let password_hash = crate::auth::password::hash(&request.owner.password)?;
     let owner = users
