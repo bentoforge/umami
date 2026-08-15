@@ -1,16 +1,18 @@
 //! Tenant routes: cross-tenant admin (list/create/delete) and per-tenant get/patch.
 //!
 //! `GET /tenants` (list all), `POST /tenants` (create tenant + first owner) and
-//! `DELETE /tenants/{id}` (only when the tenant has no users) are **cross-tenant** operations,
-//! restricted in Schritt 1 to members of the configured **system tenant**
-//! (`UMAMI_SYSTEM_TENANT_ID`) via [`enforce_system_tenant`] — superseded by the `is:system-tenant`
-//! feature → permission projection in Schritt 2. `GET`/`PATCH /tenants/{id}` require `admin:tenant`
-//! and operate only on the caller's own tenant.
+//! `DELETE /tenants/{id}` (only when the tenant has no users) are **cross-tenant** operations
+//! guarded by the `admin:system` permission. That permission is projected into a token only for
+//! members of the configured system tenant (`UMAMI_SYSTEM_TENANT_ID` → `is:system-tenant` →
+//! `admin:system`, in the config `apis` block), so the tenant-membership check is now expressed
+//! purely as a permission. `GET`/`PATCH /tenants/{id}` require `admin:tenant` and operate only on
+//! the caller's own tenant.
 
 use crate::config::Config;
 use crate::config::repository::ConfigRepository;
 use crate::constants::{
-    ADMIN_TENANT_PERMISSION, DEFAULT_LOCALE, MAX_LIST_RESULTS, MAX_TEXT_BODY_SIZE, ROLE_OWNER,
+    ADMIN_SYSTEM_PERMISSION, ADMIN_TENANT_PERMISSION, DEFAULT_LOCALE, MAX_LIST_RESULTS,
+    MAX_TEXT_BODY_SIZE, ROLE_OWNER,
 };
 use crate::search::{query_matches, value_search_text};
 use crate::tenants::repository::TenantRepository;
@@ -33,9 +35,9 @@ use wasabi::{client_bail, status_bail};
 /// Permission required to read/administer a tenant.
 const REQUIRE_ADMIN_TENANT: &[&str] = &[ADMIN_TENANT_PERMISSION];
 
-/// The configured system tenant, or `None` when `UMAMI_SYSTEM_TENANT_ID` is unset. Passed to the
-/// cross-tenant routes; `None` locks them down entirely.
-pub type SystemTenantId = Option<String>;
+/// Permission required for cross-tenant administration (list/create/delete tenants). Held only by
+/// system-tenant members via the `is:system-tenant` → `admin:system` projection.
+const REQUIRE_ADMIN_SYSTEM: &[&str] = &[ADMIN_SYSTEM_PERMISSION];
 
 /// The first (owner) user created alongside a new tenant.
 #[derive(Deserialize, Debug)]
@@ -104,14 +106,12 @@ struct PatchLicenseRequest {
 
 // ── Routes ──────────────────────────────────────────────────────────────────────
 
-/// `POST /tenants` — system-admin: create a tenant and its first owner. Restricted to the system
-/// tenant (see [`enforce_system_tenant`]).
+/// `POST /tenants` — system-admin: create a tenant and its first owner (requires `admin:system`).
 pub fn create_tenant_route(
     tenants: Arc<dyn TenantRepository>,
     users: Arc<dyn UserRepository>,
     config: Arc<dyn ConfigRepository>,
     authenticator: Arc<Authenticator>,
-    system_tenant_id: SystemTenantId,
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("tenants")
         .and(warp::post())
@@ -119,50 +119,45 @@ pub fn create_tenant_route(
         .and(with_cloneable(tenants))
         .and(with_cloneable(users))
         .and(with_cloneable(config))
-        .and(with_cloneable(system_tenant_id))
         .and(with_user_with_any_permission(
             authenticator,
-            REQUIRE_ADMIN_TENANT,
+            REQUIRE_ADMIN_SYSTEM,
         ))
         .and_then(handle_create_tenant_route)
         .boxed()
 }
 
-/// `GET /tenants[?q=…]` — list every tenant (system-admin only; sorted newest-updated first,
+/// `GET /tenants[?q=…]` — list every tenant (requires `admin:system`; sorted newest-updated first,
 /// capped, optional case-insensitive multi-term search over name/slug/custom fields).
 pub fn list_tenants_route(
     tenants: Arc<dyn TenantRepository>,
     authenticator: Arc<Authenticator>,
-    system_tenant_id: SystemTenantId,
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("tenants")
         .and(warp::get())
         .and(warp::query::<ListQuery>())
         .and(with_cloneable(tenants))
-        .and(with_cloneable(system_tenant_id))
         .and(with_user_with_any_permission(
             authenticator,
-            REQUIRE_ADMIN_TENANT,
+            REQUIRE_ADMIN_SYSTEM,
         ))
         .and_then(handle_list_tenants_route)
         .boxed()
 }
 
-/// `DELETE /tenants/{id}` — delete a tenant, but only when it has no users (system-admin only).
+/// `DELETE /tenants/{id}` — delete a tenant, but only when it has no users (requires `admin:system`).
 pub fn delete_tenant_route(
     tenants: Arc<dyn TenantRepository>,
     users: Arc<dyn UserRepository>,
     authenticator: Arc<Authenticator>,
-    system_tenant_id: SystemTenantId,
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("tenants" / String)
         .and(warp::delete())
         .and(with_cloneable(tenants))
         .and(with_cloneable(users))
-        .and(with_cloneable(system_tenant_id))
         .and(with_user_with_any_permission(
             authenticator,
-            REQUIRE_ADMIN_TENANT,
+            REQUIRE_ADMIN_SYSTEM,
         ))
         .and_then(handle_delete_tenant_route)
         .boxed()
@@ -245,20 +240,18 @@ async fn handle_create_tenant_route(
     tenants: Arc<dyn TenantRepository>,
     users: Arc<dyn UserRepository>,
     config: Arc<dyn ConfigRepository>,
-    system_tenant_id: SystemTenantId,
-    caller: AuthUser,
+    _caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(create_tenant(request, tenants, users, config, system_tenant_id, caller).await)
+    into_response(create_tenant(request, tenants, users, config).await)
 }
 
 #[tracing::instrument(level = "debug", name = "GET /tenants", skip_all)]
 async fn handle_list_tenants_route(
     query: ListQuery,
     tenants: Arc<dyn TenantRepository>,
-    system_tenant_id: SystemTenantId,
-    caller: AuthUser,
+    _caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(list_tenants(query, tenants, system_tenant_id, caller).await)
+    into_response(list_tenants(query, tenants).await)
 }
 
 #[tracing::instrument(level = "debug", name = "DELETE /tenants/{id}", skip_all)]
@@ -266,10 +259,9 @@ async fn handle_delete_tenant_route(
     tenant_id: String,
     tenants: Arc<dyn TenantRepository>,
     users: Arc<dyn UserRepository>,
-    system_tenant_id: SystemTenantId,
-    caller: AuthUser,
+    _caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(delete_tenant(tenant_id, tenants, users, system_tenant_id, caller).await)
+    into_response(delete_tenant(tenant_id, tenants, users).await)
 }
 
 #[tracing::instrument(level = "debug", name = "GET /tenants/{id}", skip_all)]
@@ -319,11 +311,7 @@ async fn create_tenant(
     tenants: Arc<dyn TenantRepository>,
     users: Arc<dyn UserRepository>,
     config: Arc<dyn ConfigRepository>,
-    system_tenant_id: SystemTenantId,
-    caller: AuthUser,
 ) -> anyhow::Result<CreateTenantResponse> {
-    enforce_system_tenant(&caller, &system_tenant_id)?;
-
     if request.name.trim().is_empty() {
         client_bail!("Tenant 'name' is required");
     }
@@ -378,11 +366,7 @@ async fn create_tenant(
 async fn list_tenants(
     query: ListQuery,
     tenants: Arc<dyn TenantRepository>,
-    system_tenant_id: SystemTenantId,
-    caller: AuthUser,
 ) -> anyhow::Result<TenantListResponse> {
-    enforce_system_tenant(&caller, &system_tenant_id)?;
-
     let search = query.q.unwrap_or_default();
     let mut matched: Vec<Tenant> = tenants
         .list_all()
@@ -414,16 +398,7 @@ async fn delete_tenant(
     tenant_id: String,
     tenants: Arc<dyn TenantRepository>,
     users: Arc<dyn UserRepository>,
-    system_tenant_id: SystemTenantId,
-    caller: AuthUser,
 ) -> anyhow::Result<Value> {
-    enforce_system_tenant(&caller, &system_tenant_id)?;
-
-    // Refuse to delete the system tenant itself — that would lock out cross-tenant administration.
-    if system_tenant_id.as_deref() == Some(tenant_id.as_str()) {
-        status_bail!(StatusCode::CONFLICT, "The system tenant cannot be deleted");
-    }
-
     if tenants.get_tenant(&tenant_id).await?.is_none() {
         client_bail!("No such tenant");
     }
@@ -530,29 +505,6 @@ fn enforce_own_tenant(tenant_id: &str, caller: &AuthUser) -> anyhow::Result<()> 
         status_bail!(
             StatusCode::FORBIDDEN,
             "You may only administer your own tenant"
-        );
-    }
-    Ok(())
-}
-
-/// Interim cross-tenant admin guard (Schritt 1): the caller must belong to the configured system
-/// tenant. `None` (`UMAMI_SYSTEM_TENANT_ID` unset) locks these routes down entirely. Superseded by
-/// the `is:system-tenant` feature → permission projection in Schritt 2.
-fn enforce_system_tenant(
-    caller: &AuthUser,
-    system_tenant_id: &SystemTenantId,
-) -> anyhow::Result<()> {
-    let system = match system_tenant_id.as_deref() {
-        Some(id) if !id.is_empty() => id,
-        _ => status_bail!(
-            StatusCode::FORBIDDEN,
-            "System-tenant administration is disabled (UMAMI_SYSTEM_TENANT_ID not set)"
-        ),
-    };
-    if caller.tenant_id()? != system {
-        status_bail!(
-            StatusCode::FORBIDDEN,
-            "System-tenant administration requires membership in the system tenant"
         );
     }
     Ok(())

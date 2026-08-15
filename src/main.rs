@@ -285,24 +285,18 @@ async fn app() -> anyhow::Result<()> {
             },
             authenticator.clone()
         ),
-        // tenants (cross-tenant admin: create/list/delete restricted to the system tenant)
+        // tenants (cross-tenant admin: create/list/delete require the `admin:system` permission)
         create_tenant_route(
             tenant_repository.clone(),
             user_repository.clone(),
             config_repository.clone(),
-            authenticator.clone(),
-            system_tenant_id.clone()
+            authenticator.clone()
         ),
-        list_tenants_route(
-            tenant_repository.clone(),
-            authenticator.clone(),
-            system_tenant_id.clone()
-        ),
+        list_tenants_route(tenant_repository.clone(), authenticator.clone()),
         delete_tenant_route(
             tenant_repository.clone(),
             user_repository.clone(),
-            authenticator.clone(),
-            system_tenant_id.clone()
+            authenticator.clone()
         ),
         get_tenant_route(tenant_repository.clone(), authenticator.clone()),
         patch_tenant_route(
