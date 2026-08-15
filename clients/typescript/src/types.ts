@@ -147,6 +147,8 @@ export interface Tenant {
   packages: PackageAssignment[];
   limitOverrides: Record<string, string>;
   featureOverrides: Record<string, FeatureToggle>;
+  /** Authorization features granted to the tenant (`feature:*`), fed to the token broker. */
+  features: string[];
   customFields: Record<string, unknown>;
   name: string;
   slug: string;

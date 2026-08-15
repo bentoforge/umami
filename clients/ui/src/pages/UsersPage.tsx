@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { UserStatus, UserView } from "umami-client";
 import { useUmami } from "../auth/UmamiProvider";
-import { Banner, Field, errMsg } from "../components";
+import { Banner, CheckboxTags, Field, errMsg } from "../components";
 import { card, dangerButton, ghostButton, input, primaryButton, td, th } from "../ui";
 
 const STATUSES: UserStatus[] = ["Active", "Locked", "Invited"];
@@ -218,21 +218,23 @@ function EditRow({
   onError: (msg: string) => void;
 }) {
   const { client } = useUmami();
-  const [roles, setRoles] = useState(user.roles.join(", "));
+  const [roles, setRoles] = useState<string[]>(user.roles);
+  const [assignable, setAssignable] = useState<string[]>([]);
   const [status, setStatus] = useState<UserStatus>(user.status);
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    client
+      .assignableRoles(user.userId)
+      .then((r) => setAssignable(r.codes))
+      .catch(() => setAssignable([]));
+  }, [client, user.userId]);
 
   const save = async () => {
     setSaving(true);
     onError("");
     try {
-      await client.patchUser(user.userId, {
-        roles: roles
-          .split(",")
-          .map((r) => r.trim())
-          .filter(Boolean),
-        status,
-      });
+      await client.patchUser(user.userId, { roles, status });
       await onSaved();
     } catch (err) {
       onError(errMsg(err));
@@ -251,11 +253,11 @@ function EditRow({
         </div>
       </td>
       <td className={td}>
-        <input
-          className={input}
-          value={roles}
-          placeholder="owner, admin"
-          onChange={(e) => setRoles(e.target.value)}
+        <CheckboxTags
+          options={assignable}
+          selected={roles}
+          onChange={setRoles}
+          empty="no roles assignable"
         />
       </td>
       <td className={td}>
@@ -291,13 +293,23 @@ function CreateUser({
   onDone: () => Promise<void>;
   onError: (msg: string) => void;
 }) {
-  const { client } = useUmami();
+  const { client, me } = useUmami();
   const [name, setName] = useState("");
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [roles, setRoles] = useState("member");
+  const [roles, setRoles] = useState<string[]>(["role:member"]);
+  const [assignable, setAssignable] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+
+  // Assignable roles are per-tenant; resolve via the caller's own id (same tenant as new users).
+  useEffect(() => {
+    if (!me) return;
+    client
+      .assignableRoles(me.user.userId)
+      .then((r) => setAssignable(r.codes))
+      .catch(() => setAssignable([]));
+  }, [client, me]);
 
   const submit = async () => {
     setBusy(true);
@@ -308,16 +320,13 @@ function CreateUser({
         username: username.trim() || undefined,
         email: email.trim() || undefined,
         password,
-        roles: roles
-          .split(",")
-          .map((r) => r.trim())
-          .filter(Boolean),
+        roles,
       });
       setName("");
       setUsername("");
       setEmail("");
       setPassword("");
-      setRoles("member");
+      setRoles(["role:member"]);
       await onDone();
     } catch (err) {
       onError(errMsg(err));
@@ -352,8 +361,13 @@ function CreateUser({
             onChange={(e) => setPassword(e.target.value)}
           />
         </Field>
-        <Field label="Roles (comma-separated)">
-          <input className={input} value={roles} onChange={(e) => setRoles(e.target.value)} />
+        <Field label="Roles">
+          <CheckboxTags
+            options={assignable}
+            selected={roles}
+            onChange={setRoles}
+            empty="no roles assignable"
+          />
         </Field>
       </div>
       <button className={primaryButton} disabled={busy} onClick={() => void submit()}>

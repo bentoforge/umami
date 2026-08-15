@@ -13,6 +13,52 @@ export function Field({ label, children }: { label: string; children: ReactNode 
   );
 }
 
+/** A multi-select of code chips (checkboxes). `options` is the assignable set; any already-`selected`
+ * code not in `options` is still shown (and checked) so a legacy selection is never silently dropped. */
+export function CheckboxTags({
+  options,
+  selected,
+  onChange,
+  empty = "none available",
+}: {
+  options: string[];
+  selected: string[];
+  onChange: (next: string[]) => void;
+  empty?: string;
+}) {
+  const all = Array.from(new Set([...options, ...selected]));
+  if (all.length === 0) {
+    return <span className="text-xs text-slate-400">{empty}</span>;
+  }
+  const toggle = (code: string, on: boolean) =>
+    onChange(on ? [...selected, code] : selected.filter((c) => c !== code));
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {all.map((code) => {
+        const on = selected.includes(code);
+        return (
+          <label
+            key={code}
+            className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs cursor-pointer select-none ${
+              on
+                ? "border-brand bg-brand/10 text-brand"
+                : "border-slate-300 dark:border-slate-600 text-slate-500"
+            }`}
+          >
+            <input
+              type="checkbox"
+              className="sr-only"
+              checked={on}
+              onChange={(e) => toggle(code, e.target.checked)}
+            />
+            {code}
+          </label>
+        );
+      })}
+    </div>
+  );
+}
+
 /** An inline status banner (error or success). Renders nothing for empty content. */
 export function Banner({ tone, children }: { tone: "error" | "ok"; children: ReactNode }) {
   if (!children) return null;

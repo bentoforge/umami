@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import type { Tenant, TenantStatus } from "umami-client";
 import { useUmami } from "../auth/UmamiProvider";
 import { Banner, Field, errMsg } from "../components";
@@ -23,6 +23,7 @@ export function TenantsPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
+  const [featuresFor, setFeaturesFor] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -121,33 +122,47 @@ export function TenantsPage() {
                     onError={setError}
                   />
                 ) : (
-                  <tr
-                    key={tenant.tenantId}
-                    className="border-b border-slate-100 dark:border-slate-700/50"
-                  >
-                    <td className={td}>
-                      <div className="font-medium text-slate-900 dark:text-white">
-                        {tenant.name}
-                        {tenant.tenantId === me?.user.tenantId && (
-                          <span className="ml-2 rounded bg-brand/10 text-brand px-1.5 py-0.5 text-[10px] align-middle">
-                            system
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-xs text-slate-400 font-mono">{tenant.tenantId}</div>
-                    </td>
-                    <td className={td}>{tenant.status}</td>
-                    <td className={td}>{tenant.plan}</td>
-                    <td className={td}>{new Date(tenant.lastUpdated).toLocaleString()}</td>
-                    <td className={td + " text-right whitespace-nowrap"}>
-                      <button className={ghostButton} onClick={() => setEditing(tenant.tenantId)}>
-                        Edit
-                      </button>{" "}
-                      <button className={dangerButton} onClick={() => void onDelete(tenant)}>
-                        Delete
-                      </button>
-                    </td>
-                  </tr>
+                  <Fragment key={tenant.tenantId}>
+                    <tr className="border-b border-slate-100 dark:border-slate-700/50">
+                      <td className={td}>
+                        <div className="font-medium text-slate-900 dark:text-white">
+                          {tenant.name}
+                          {tenant.tenantId === me?.user.tenantId && (
+                            <span className="ml-2 rounded bg-brand/10 text-brand px-1.5 py-0.5 text-[10px] align-middle">
+                              system
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs text-slate-400 font-mono">{tenant.tenantId}</div>
+                      </td>
+                      <td className={td}>{tenant.status}</td>
+                      <td className={td}>{tenant.plan}</td>
+                      <td className={td}>{new Date(tenant.lastUpdated).toLocaleString()}</td>
+                      <td className={td + " text-right whitespace-nowrap"}>
+                        <button
+                          className={ghostButton}
+                          onClick={() =>
+                            setFeaturesFor((id) => (id === tenant.tenantId ? null : tenant.tenantId))
+                          }
+                        >
+                          Features
+                        </button>{" "}
+                        <button className={ghostButton} onClick={() => setEditing(tenant.tenantId)}>
+                          Edit
+                        </button>{" "}
+                        <button className={dangerButton} onClick={() => void onDelete(tenant)}>
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                    {featuresFor === tenant.tenantId && (
+                      <tr className="border-b border-slate-100 dark:border-slate-700/50 bg-slate-50 dark:bg-slate-900/40">
+                        <td className={td} colSpan={5}>
+                          <FeaturesPanel tenant={tenant} onChanged={load} onError={setError} />
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
                 ),
               )}
             </tbody>
@@ -224,6 +239,104 @@ function EditRow({
         </button>
       </td>
     </tr>
+  );
+}
+
+/** Grant/revoke a tenant's authorization features (`feature:*`). Current features are revocable
+ * chips; the backend's assignable set (respecting dependencies) is offered as grantable chips. */
+function FeaturesPanel({
+  tenant,
+  onChanged,
+  onError,
+}: {
+  tenant: Tenant;
+  onChanged: () => Promise<void>;
+  onError: (msg: string) => void;
+}) {
+  const { client } = useUmami();
+  const [grantable, setGrantable] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
+
+  const loadGrantable = useCallback(() => {
+    client
+      .assignableFeatures(tenant.tenantId)
+      .then((r) => setGrantable(r.codes))
+      .catch(() => setGrantable([]));
+  }, [client, tenant.tenantId]);
+
+  useEffect(() => loadGrantable(), [loadGrantable]);
+
+  const grant = async (code: string) => {
+    setBusy(true);
+    onError("");
+    try {
+      await client.grantFeature(tenant.tenantId, code);
+      await onChanged();
+      loadGrantable();
+    } catch (err) {
+      onError(errMsg(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const revoke = async (code: string) => {
+    setBusy(true);
+    onError("");
+    try {
+      await client.revokeFeature(tenant.tenantId, code);
+      await onChanged();
+      loadGrantable();
+    } catch (err) {
+      onError(errMsg(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3 py-1">
+      <div>
+        <div className="text-xs text-slate-500 mb-1">Granted features</div>
+        {tenant.features.length === 0 ? (
+          <span className="text-xs text-slate-400">none</span>
+        ) : (
+          <div className="flex flex-wrap gap-1.5">
+            {tenant.features.map((code) => (
+              <button
+                key={code}
+                disabled={busy}
+                onClick={() => void revoke(code)}
+                title="Revoke"
+                className="inline-flex items-center gap-1 rounded-full border border-brand bg-brand/10 text-brand px-2 py-0.5 text-xs disabled:opacity-50"
+              >
+                {code} <span aria-hidden>×</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      <div>
+        <div className="text-xs text-slate-500 mb-1">Grantable now</div>
+        {grantable.length === 0 ? (
+          <span className="text-xs text-slate-400">nothing else grantable</span>
+        ) : (
+          <div className="flex flex-wrap gap-1.5">
+            {grantable.map((code) => (
+              <button
+                key={code}
+                disabled={busy}
+                onClick={() => void grant(code)}
+                title="Grant"
+                className="inline-flex items-center gap-1 rounded-full border border-slate-300 dark:border-slate-600 text-slate-500 px-2 py-0.5 text-xs disabled:opacity-50"
+              >
+                <span aria-hidden>+</span> {code}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
