@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { ApiKeyView, MessagingLink } from "umami-client";
+import type { ApiKeyView, MessagingCodeResponse, MessagingLink } from "umami-client";
 import { useUmami } from "../auth/UmamiProvider";
 import { Banner, Field, errMsg } from "../components";
 import { card, dangerButton, ghostButton, input, primaryButton } from "../ui";
@@ -75,7 +75,7 @@ export function ProfilePage() {
 
       <ChangePasswordPanel />
       <PatsPanel />
-      <MessagingPanel />
+      {client.hasPermission("messaging:self") && <MessagingPanel />}
     </div>
   );
 }
@@ -83,7 +83,7 @@ export function ProfilePage() {
 /** Messaging links: show the user's link code (regenerable) and their connected identities. */
 function MessagingPanel() {
   const { client } = useUmami();
-  const [code, setCode] = useState<string | null>(null);
+  const [code, setCode] = useState<MessagingCodeResponse | null>(null);
   const [links, setLinks] = useState<MessagingLink[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -92,7 +92,7 @@ function MessagingPanel() {
     setError(null);
     try {
       const [c, l] = await Promise.all([client.getMessagingCode(), client.listMessagingLinks()]);
-      setCode(c.code);
+      setCode(c);
       setLinks(l.links);
     } catch (err) {
       setError(errMsg(err));
@@ -108,8 +108,7 @@ function MessagingPanel() {
     setBusy(true);
     setError(null);
     try {
-      const res = await client.regenerateMessagingCode();
-      setCode(res.code);
+      setCode(await client.regenerateMessagingCode());
     } catch (err) {
       setError(errMsg(err));
     } finally {
@@ -140,13 +139,23 @@ function MessagingPanel() {
 
       <Banner tone="error">{error}</Banner>
 
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <code className="rounded-lg bg-slate-100 dark:bg-slate-900 px-3 py-2 text-lg font-mono tracking-widest text-slate-900 dark:text-white">
-          {code ?? "…"}
+          {code?.code ?? "…"}
         </code>
         <button className={ghostButton} disabled={busy} onClick={() => void regenerate()}>
           Regenerate
         </button>
+        {code?.telegramUrl && (
+          <a className={ghostButton} href={code.telegramUrl} target="_blank" rel="noreferrer">
+            Open in Telegram
+          </a>
+        )}
+        {code?.whatsappUrl && (
+          <a className={ghostButton} href={code.whatsappUrl} target="_blank" rel="noreferrer">
+            Open in WhatsApp
+          </a>
+        )}
       </div>
 
       <div>

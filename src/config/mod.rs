@@ -10,8 +10,9 @@ pub mod service;
 use crate::constants::{
     ADMIN_SYSTEM_PERMISSION, ADMIN_TENANT_PERMISSION, DEFAULT_ACCESS_TTL_SECS,
     DEFAULT_MESSAGING_CODE_TTL_SECS, DEFAULT_REFRESH_TTL_SECS, MANAGE_CONFIG_PERMISSION,
-    MESSAGING_LINK_PERMISSION, MESSAGING_RESOLVE_PERMISSION, ROLE_MEMBER, ROLE_OWNER,
-    SYSTEM_TENANT_MARKER, WRITE_MEMBERS_PERMISSION, WRITE_USAGE_PERMISSION,
+    MESSAGING_CONFIGURED_MARKER, MESSAGING_LINK_PERMISSION, MESSAGING_RESOLVE_PERMISSION,
+    MESSAGING_SELF_PERMISSION, ROLE_MEMBER, ROLE_OWNER, SYSTEM_TENANT_MARKER,
+    WRITE_MEMBERS_PERMISSION, WRITE_USAGE_PERMISSION,
 };
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
@@ -261,6 +262,32 @@ pub struct CustomFieldDef {
     pub show_in_table: bool,
 }
 
+/// Messaging integration settings. When either endpoint is set, umami can hand out ready-made
+/// deep links from `GET /auth/me/messaging-code` and synthesizes `is:messaging-configured`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct MessagingConfig {
+    /// WhatsApp business number (digits, e.g. `4915112345678`) for click-to-chat links.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub whatsapp_number: Option<String>,
+    /// Telegram bot username (without `@`) for `t.me/<bot>?start=<code>` deep links.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telegram_bot: Option<String>,
+}
+
+impl MessagingConfig {
+    /// Whether any messaging endpoint is configured.
+    pub fn is_configured(&self) -> bool {
+        self.whatsapp_number
+            .as_ref()
+            .is_some_and(|v| !v.trim().is_empty())
+            || self
+                .telegram_bot
+                .as_ref()
+                .is_some_and(|v| !v.trim().is_empty())
+    }
+}
+
 /// System security/token settings.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -310,6 +337,9 @@ pub struct Config {
     pub custom_user_fields: Vec<CustomFieldDef>,
     /// Security/token settings.
     pub security: SecuritySettings,
+    /// Messaging integration (Telegram/WhatsApp) settings.
+    #[serde(default)]
+    pub messaging: MessagingConfig,
     /// Target APIs (audiences) umami can mint tokens for — see [`ApiDef`] and `docs/AUDIENCES.md`.
     #[serde(default)]
     pub apis: Vec<ApiDef>,
@@ -419,6 +449,24 @@ impl Config {
             .is_some_and(|role| assignable(&role.assignable_if, &set))
     }
 
+    /// Augments a tenant's stored feature set with the synthetic markers that apply to it, so
+    /// `assignableIf` can gate on `is:*` (e.g. `is:system-tenant`) exactly as the mint layer does.
+    /// Mirror of the broker's subject-set construction, minus the principal's own subjects.
+    pub fn eval_feature_set(
+        &self,
+        tenant_features: &[String],
+        is_system_tenant: bool,
+    ) -> Vec<String> {
+        let mut set: Vec<String> = tenant_features.to_vec();
+        if is_system_tenant {
+            set.push(SYSTEM_TENANT_MARKER.to_owned());
+        }
+        if self.messaging.is_configured() {
+            set.push(MESSAGING_CONFIGURED_MARKER.to_owned());
+        }
+        set
+    }
+
     /// The scope codes assignable to a key in a tenant with the given feature set.
     pub fn assignable_scopes(&self, tenant_features: &[String]) -> Vec<String> {
         let set: BTreeSet<&str> = tenant_features.iter().map(String::as_str).collect();
@@ -497,10 +545,10 @@ impl Default for Config {
             when: when.to_owned(),
             grant: grant.iter().map(|p| (*p).to_owned()).collect(),
         };
-        let scope = |code: &str, name: &str| ScopeDef {
+        let scope = |code: &str, name: &str, assignable_if: Option<&str>| ScopeDef {
             code: code.to_owned(),
             name: name.to_owned(),
-            assignable_if: None,
+            assignable_if: assignable_if.map(str::to_owned),
         };
         Config {
             version: 1,
@@ -511,8 +559,17 @@ impl Default for Config {
                 role("role:viewer", "Viewer"),
             ],
             scopes: vec![
-                scope("scope:messaging-linker", "Messaging linker (bot backend)"),
-                scope("scope:messaging-resolver", "Messaging resolver"),
+                // Only assignable to a system-tenant service key (and shown only there).
+                scope(
+                    "scope:messaging-linker",
+                    "Messaging linker (bot backend)",
+                    Some(SYSTEM_TENANT_MARKER),
+                ),
+                scope(
+                    "scope:messaging-resolver",
+                    "Messaging resolver",
+                    Some(SYSTEM_TENANT_MARKER),
+                ),
             ],
             features: Vec::new(),
             limits: Vec::new(),
@@ -525,6 +582,7 @@ impl Default for Config {
                 refresh_ttl_secs: DEFAULT_REFRESH_TTL_SECS,
                 messaging_code_ttl_secs: DEFAULT_MESSAGING_CODE_TTL_SECS,
             },
+            messaging: MessagingConfig::default(),
             // The umami admin API: role → permission mapping lives here (not on the roles), plus the
             // synthetic is:system-tenant → cross-tenant admin permission.
             apis: vec![ApiDef {
@@ -547,6 +605,9 @@ impl Default for Config {
                     ),
                     rule(ROLE_MEMBER, &[WRITE_USAGE_PERMISSION]),
                     rule(SYSTEM_TENANT_MARKER, &[ADMIN_SYSTEM_PERMISSION]),
+                    // Self-service messaging is available to everyone once the deployment has a bot
+                    // and/or number configured.
+                    rule(MESSAGING_CONFIGURED_MARKER, &[MESSAGING_SELF_PERMISSION]),
                     // Messaging M2M: only system-tenant service keys carrying the scope get the
                     // cross-tenant link/resolve permissions.
                     rule(

@@ -66,12 +66,14 @@ pub fn assignable_roles_route(
 pub fn assignable_scopes_route(
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
+    system_tenant_id: Option<String>,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("tenants" / String / "assignable-scopes")
         .and(warp::get())
         .and(with_cloneable(tenants))
         .and(with_cloneable(config))
+        .and(with_cloneable(system_tenant_id))
         .and(with_user_with_any_permission(
             authenticator,
             REQUIRE_WRITE_MEMBERS,
@@ -156,9 +158,10 @@ async fn handle_assignable_scopes_route(
     tenant_id: String,
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
+    system_tenant_id: Option<String>,
     caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(assignable_scopes(tenant_id, tenants, config, caller).await)
+    into_response(assignable_scopes(tenant_id, tenants, config, system_tenant_id, caller).await)
 }
 
 #[tracing::instrument(
@@ -233,11 +236,16 @@ async fn assignable_scopes(
     tenant_id: String,
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
+    system_tenant_id: Option<String>,
     caller: AuthUser,
 ) -> anyhow::Result<CodesResponse> {
     enforce_own(&tenant_id, &caller)?;
     let features = tenant_features(&tenants, &tenant_id).await?;
-    let codes = config.current().await?.assignable_scopes(&features);
+    let config = config.current().await?;
+    // Include synthetic markers (e.g. is:system-tenant) so scopes gated on them show up correctly.
+    let is_system = system_tenant_id.as_deref() == Some(tenant_id.as_str());
+    let set = config.eval_feature_set(&features, is_system);
+    let codes = config.assignable_scopes(&set);
     Ok(CodesResponse { codes })
 }
 

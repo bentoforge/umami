@@ -197,6 +197,7 @@ pub fn create_api_key_route(
     keys: Arc<dyn ApiKeyRepository>,
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
+    system_tenant_id: Option<String>,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("tenants" / String / "api-keys")
@@ -205,6 +206,7 @@ pub fn create_api_key_route(
         .and(with_cloneable(keys))
         .and(with_cloneable(tenants))
         .and(with_cloneable(config))
+        .and(with_cloneable(system_tenant_id))
         .and(with_user_with_any_permission(
             authenticator,
             REQUIRE_WRITE_MEMBERS,
@@ -349,9 +351,21 @@ async fn handle_create_api_key_route(
     keys: Arc<dyn ApiKeyRepository>,
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
+    system_tenant_id: Option<String>,
     caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(create_api_key(tenant_id, request, keys, tenants, config, caller).await)
+    into_response(
+        create_api_key(
+            tenant_id,
+            request,
+            keys,
+            tenants,
+            config,
+            system_tenant_id,
+            caller,
+        )
+        .await,
+    )
 }
 
 #[tracing::instrument(level = "debug", name = "GET /tenants/{id}/api-keys", skip_all)]
@@ -570,6 +584,7 @@ async fn create_api_key(
     keys: Arc<dyn ApiKeyRepository>,
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
+    system_tenant_id: Option<String>,
     caller: AuthUser,
 ) -> anyhow::Result<CreateApiKeyResponse> {
     enforce_own(&tenant_id, &caller)?;
@@ -578,13 +593,16 @@ async fn create_api_key(
         client_bail!("API key 'name' is required");
     }
 
-    // Validate any requested scopes against what the tenant's features license.
+    // Validate any requested scopes against what the tenant's features license — including the
+    // synthetic markers (e.g. is:system-tenant) so system-only scopes validate in the system tenant.
     let scopes = request.scopes.unwrap_or_default();
     if !scopes.is_empty() {
         let features = tenant_features(&tenants, &tenant_id).await?;
         let config = config.current().await?;
+        let is_system = system_tenant_id.as_deref() == Some(tenant_id.as_str());
+        let set = config.eval_feature_set(&features, is_system);
         for scope in &scopes {
-            if !config.can_assign_scope(scope, &features) {
+            if !config.can_assign_scope(scope, &set) {
                 client_bail!("Scope '{scope}' is not assignable in this tenant");
             }
         }

@@ -11,9 +11,11 @@ use crate::audit::repository::{AuditRepository, record_best_effort};
 use crate::audit::{AuditSeverity, NewAuditEntry};
 use crate::auth::broker::{MintParams, mint_for_api};
 use crate::auth::tokens::TokenIssuer;
+use crate::config::MessagingConfig;
 use crate::config::repository::ConfigRepository;
 use crate::constants::{
     MAX_TEXT_BODY_SIZE, MESSAGING_LINK_PERMISSION, MESSAGING_RESOLVE_PERMISSION,
+    MESSAGING_SELF_PERMISSION,
 };
 use crate::messaging::repository::MessagingRepository;
 use crate::messaging::{MessagingLink, normalize_platform};
@@ -28,17 +30,46 @@ use warp::filters::BoxedFilter;
 use warp::http::StatusCode;
 use wasabi::web::auth::authenticator::Authenticator;
 use wasabi::web::auth::user::User as AuthUser;
-use wasabi::web::auth::{with_user, with_user_with_any_permission};
+use wasabi::web::auth::with_user_with_any_permission;
 use wasabi::web::warp::{into_response, with_body_as_json, with_cloneable};
 use wasabi::{client_bail, status_bail};
 
+const REQUIRE_SELF: &[&str] = &[MESSAGING_SELF_PERMISSION];
 const REQUIRE_LINK: &[&str] = &[MESSAGING_LINK_PERMISSION];
 const REQUIRE_RESOLVE: &[&str] = &[MESSAGING_RESOLVE_PERMISSION];
 
-/// Self-service link-code response.
+/// Self-service link-code response, with ready-made deep links when the deployment is configured.
 #[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
 struct CodeResponse {
     code: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    telegram_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    whatsapp_url: Option<String>,
+}
+
+impl CodeResponse {
+    /// Builds the response, filling deep links from the configured bot/number.
+    fn new(code: String, messaging: &MessagingConfig) -> Self {
+        let telegram_url = messaging
+            .telegram_bot
+            .as_ref()
+            .map(|bot| bot.trim().trim_start_matches('@'))
+            .filter(|bot| !bot.is_empty())
+            .map(|bot| format!("https://t.me/{bot}?start={code}"));
+        let whatsapp_url = messaging
+            .whatsapp_number
+            .as_ref()
+            .map(|num| num.chars().filter(char::is_ascii_digit).collect::<String>())
+            .filter(|num| !num.is_empty())
+            .map(|num| format!("https://wa.me/{num}?text={code}"));
+        CodeResponse {
+            code,
+            telegram_url,
+            whatsapp_url,
+        }
+    }
 }
 
 /// Self-service link list.
@@ -92,7 +123,7 @@ pub fn my_code_route(
         .and(with_cloneable(messaging))
         .and(with_cloneable(config))
         .and(with_cloneable(audit))
-        .and(with_user(authenticator))
+        .and(with_user_with_any_permission(authenticator, REQUIRE_SELF))
         .and_then(handle_my_code_route)
         .boxed()
 }
@@ -100,14 +131,16 @@ pub fn my_code_route(
 /// `POST /auth/me/messaging-code/regenerate` — replace the caller's link code.
 pub fn regenerate_code_route(
     messaging: Arc<dyn MessagingRepository>,
+    config: Arc<dyn ConfigRepository>,
     audit: Arc<dyn AuditRepository>,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("auth" / "me" / "messaging-code" / "regenerate")
         .and(warp::post())
         .and(with_cloneable(messaging))
+        .and(with_cloneable(config))
         .and(with_cloneable(audit))
-        .and(with_user(authenticator))
+        .and(with_user_with_any_permission(authenticator, REQUIRE_SELF))
         .and_then(handle_regenerate_code_route)
         .boxed()
 }
@@ -120,7 +153,7 @@ pub fn my_links_route(
     warp::path!("auth" / "me" / "messaging-links")
         .and(warp::get())
         .and(with_cloneable(messaging))
-        .and(with_user(authenticator))
+        .and(with_user_with_any_permission(authenticator, REQUIRE_SELF))
         .and_then(handle_my_links_route)
         .boxed()
 }
@@ -133,7 +166,7 @@ pub fn delete_my_link_route(
     warp::path!("auth" / "me" / "messaging-links" / String / String)
         .and(warp::delete())
         .and(with_cloneable(messaging))
-        .and(with_user(authenticator))
+        .and(with_user_with_any_permission(authenticator, REQUIRE_SELF))
         .and_then(handle_delete_my_link_route)
         .boxed()
 }
@@ -207,10 +240,11 @@ async fn handle_my_code_route(
 )]
 async fn handle_regenerate_code_route(
     messaging: Arc<dyn MessagingRepository>,
+    config: Arc<dyn ConfigRepository>,
     audit: Arc<dyn AuditRepository>,
     caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(regenerate_code(messaging, audit, caller).await)
+    into_response(regenerate_code(messaging, config, audit, caller).await)
 }
 
 #[tracing::instrument(level = "debug", name = "GET /auth/me/messaging-links", skip_all)]
@@ -265,17 +299,19 @@ async fn my_code(
 ) -> anyhow::Result<CodeResponse> {
     let user_id = caller.user_id()?;
     let tenant_id = caller.tenant_id()?;
-    let ttl_secs = config.current().await?.security.messaging_code_ttl_secs as i64;
+    let config = config.current().await?;
+    let ttl_secs = config.security.messaging_code_ttl_secs as i64;
 
     let (code, generated) = messaging.current_code(user_id, tenant_id, ttl_secs).await?;
     if generated {
         audit_code_generated(&audit, tenant_id, user_id).await;
     }
-    Ok(CodeResponse { code })
+    Ok(CodeResponse::new(code, &config.messaging))
 }
 
 async fn regenerate_code(
     messaging: Arc<dyn MessagingRepository>,
+    config: Arc<dyn ConfigRepository>,
     audit: Arc<dyn AuditRepository>,
     caller: AuthUser,
 ) -> anyhow::Result<CodeResponse> {
@@ -283,7 +319,7 @@ async fn regenerate_code(
     let tenant_id = caller.tenant_id()?;
     let code = messaging.regenerate_code(user_id, tenant_id).await?;
     audit_code_generated(&audit, tenant_id, user_id).await;
-    Ok(CodeResponse { code })
+    Ok(CodeResponse::new(code, &config.current().await?.messaging))
 }
 
 /// Records a "link code generated" event (neutral — benign self-service).

@@ -46,10 +46,19 @@ pub const MESSAGING_LINK_PERMISSION: &str = "messaging:link";
 /// `scope:messaging-resolver`.
 pub const MESSAGING_RESOLVE_PERMISSION: &str = "messaging:resolve";
 
+/// Self-service management of one's own messaging links (get/regenerate code, list/unlink).
+/// Derived (in the config `apis`) from `is:messaging-configured`, so it only appears when the
+/// deployment actually has a Telegram bot and/or WhatsApp number configured.
+pub const MESSAGING_SELF_PERMISSION: &str = "messaging:self";
+
 // ── Synthetic subject markers (computed at mint time, never stored) ────────────
 
 /// Added to the subject set when the token's tenant is the configured `UMAMI_SYSTEM_TENANT_ID`.
 pub const SYSTEM_TENANT_MARKER: &str = "is:system-tenant";
+
+/// Added to every token's subject set when the config has a Telegram bot and/or WhatsApp number
+/// set (`messaging.telegramBot` / `messaging.whatsappNumber`). A global capability marker.
+pub const MESSAGING_CONFIGURED_MARKER: &str = "is:messaging-configured";
 
 // ── Built-in role codes (defined in the default config, namespaced `role:*`) ───
 

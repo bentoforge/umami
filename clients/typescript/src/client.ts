@@ -16,6 +16,7 @@ import type {
   FeatureToggle,
   LoginResponse,
   MeResponse,
+  MessagingCodeResponse,
   MessagingLink,
   MetricUsage,
   MfaStatus,
@@ -441,13 +442,15 @@ export class UmamiClient {
 
   // ── messaging links ─────────────────────────────────────────────────────────
 
-  /** The caller's stable messaging link code (created on first read). */
-  getMessagingCode(): Promise<{ code: string }> {
-    return this.request<{ code: string }>("/auth/me/messaging-code");
+  /** The caller's current link code (rotated if expired), with deep links when configured. */
+  getMessagingCode(): Promise<MessagingCodeResponse> {
+    return this.request<MessagingCodeResponse>("/auth/me/messaging-code");
   }
   /** Replace the caller's link code (invalidates the old). */
-  regenerateMessagingCode(): Promise<{ code: string }> {
-    return this.request<{ code: string }>("/auth/me/messaging-code/regenerate", { method: "POST" });
+  regenerateMessagingCode(): Promise<MessagingCodeResponse> {
+    return this.request<MessagingCodeResponse>("/auth/me/messaging-code/regenerate", {
+      method: "POST",
+    });
   }
   /** The caller's linked external identities. */
   listMessagingLinks(): Promise<{ links: MessagingLink[] }> {

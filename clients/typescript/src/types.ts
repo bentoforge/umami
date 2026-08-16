@@ -296,6 +296,8 @@ export interface Config {
   customTenantFields: CustomFieldDef[];
   customUserFields: CustomFieldDef[];
   security: SecuritySettings;
+  /** Messaging integration (Telegram/WhatsApp) settings. */
+  messaging?: MessagingConfig;
   /** The catalog of target APIs umami can mint tokens for. */
   apis: ApiDef[];
 }
@@ -351,7 +353,23 @@ export interface CreateApiKeyResponse {
   name: string;
 }
 
+/** Messaging integration settings (Telegram/WhatsApp). */
+export interface MessagingConfig {
+  /** WhatsApp business number (digits) for click-to-chat links. */
+  whatsappNumber?: string;
+  /** Telegram bot username (without `@`) for deep links. */
+  telegramBot?: string;
+}
+
 // ── Messaging links ───────────────────────────────────────────────────────────
+
+/** The caller's link code plus ready-made deep links (when the deployment is configured). */
+export interface MessagingCodeResponse {
+  code: string;
+  telegramUrl?: string;
+  whatsappUrl?: string;
+}
+
 
 /** An external messaging identity mapped to a user. */
 export interface MessagingLink {

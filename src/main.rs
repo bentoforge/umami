@@ -275,6 +275,7 @@ async fn app() -> anyhow::Result<()> {
             api_key_repository.clone(),
             tenant_repository.clone(),
             config_repository.clone(),
+            system_tenant_id.clone(),
             authenticator.clone()
         ),
         list_api_keys_route(api_key_repository.clone(), authenticator.clone()),
@@ -292,6 +293,7 @@ async fn app() -> anyhow::Result<()> {
         ),
         regenerate_code_route(
             messaging_repository.clone(),
+            config_repository.clone(),
             audit_repository.clone(),
             authenticator.clone()
         ),
@@ -408,6 +410,7 @@ async fn app() -> anyhow::Result<()> {
         assignable_scopes_route(
             tenant_repository.clone(),
             config_repository.clone(),
+            system_tenant_id.clone(),
             authenticator.clone()
         ),
         assignable_features_route(

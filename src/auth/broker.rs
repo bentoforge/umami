@@ -4,7 +4,7 @@
 
 use crate::auth::tokens::{AccessTokenClaims, TokenIssuer};
 use crate::config::Config;
-use crate::constants::SYSTEM_TENANT_MARKER;
+use crate::constants::{MESSAGING_CONFIGURED_MARKER, SYSTEM_TENANT_MARKER};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use warp::http::StatusCode;
@@ -54,6 +54,11 @@ pub async fn mint_for_api(
     subject_set.extend(params.features.iter().cloned());
     if params.system_tenant {
         subject_set.push(SYSTEM_TENANT_MARKER.to_owned());
+    }
+    // Global capability marker: messaging self-service is available when the deployment has a bot
+    // and/or WhatsApp number configured.
+    if config.messaging.is_configured() {
+        subject_set.push(MESSAGING_CONFIGURED_MARKER.to_owned());
     }
 
     let permissions = match api.resolve(&subject_set) {
