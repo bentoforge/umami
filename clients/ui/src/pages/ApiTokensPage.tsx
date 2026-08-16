@@ -137,7 +137,7 @@ function CreateKey({
   const [name, setName] = useState("");
   const [scopes, setScopes] = useState<string[]>([]);
   const [assignable, setAssignable] = useState<string[]>([]);
-  const [apis, setApis] = useState("umami");
+  const [apis, setApis] = useState("");
   const [origins, setOrigins] = useState("");
   const [expiresAt, setExpiresAt] = useState("");
   const [busy, setBusy] = useState(false);
@@ -168,7 +168,7 @@ function CreateKey({
       });
       setName("");
       setScopes([]);
-      setApis("umami");
+      setApis("");
       setOrigins("");
       setExpiresAt("");
       await onDone(res.apiKey);
@@ -186,8 +186,13 @@ function CreateKey({
         <Field label="Name">
           <input className={input} value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
-        <Field label="Target APIs (comma-separated)">
-          <input className={input} value={apis} onChange={(e) => setApis(e.target.value)} />
+        <Field label="Target APIs (comma-separated, optional)">
+          <input
+            className={input}
+            placeholder="empty = any audience (hardening only)"
+            value={apis}
+            onChange={(e) => setApis(e.target.value)}
+          />
         </Field>
         <Field label="Scopes">
           <CheckboxTags
