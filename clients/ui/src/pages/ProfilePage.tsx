@@ -73,10 +73,55 @@ export function ProfilePage() {
         {notice && <p className="mt-3 text-sm text-slate-600 dark:text-slate-300">{notice}</p>}
       </section>
 
-      <ChangePasswordPanel />
-      <PatsPanel />
+      {!client.hasPermission("self:readonly") && <EditProfilePanel />}
+      {!client.hasPermission("self:readonly") && <ChangePasswordPanel />}
+      {client.hasPermission("manage:pat") && <PatsPanel />}
       {client.hasPermission("messaging:self") && <MessagingPanel />}
     </div>
+  );
+}
+
+/** Self-service profile edit (name/locale). Hidden for `self:readonly` users. */
+function EditProfilePanel() {
+  const { client, me, refreshMe } = useUmami();
+  const [name, setName] = useState(me?.user.name ?? "");
+  const [locale, setLocale] = useState(me?.user.locale ?? "");
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await client.patchMe({ name: name.trim(), locale: locale.trim() });
+      await refreshMe();
+      setNotice("Profile updated.");
+    } catch (err) {
+      setError(errMsg(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className={card + " space-y-3"}>
+      <h2 className="font-medium text-slate-800 dark:text-slate-200">Edit profile</h2>
+      <Banner tone="error">{error}</Banner>
+      {notice && <p className="text-sm text-emerald-600 dark:text-emerald-400">{notice}</p>}
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Name">
+          <input className={input} value={name} onChange={(e) => setName(e.target.value)} />
+        </Field>
+        <Field label="Locale">
+          <input className={input} value={locale} onChange={(e) => setLocale(e.target.value)} />
+        </Field>
+      </div>
+      <button className={primaryButton} disabled={busy || !name.trim()} onClick={() => void save()}>
+        Save
+      </button>
+    </section>
   );
 }
 

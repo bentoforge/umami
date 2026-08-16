@@ -17,9 +17,9 @@ export function AdminLayout() {
 
   const tabs: { to: string; label: string; show: boolean }[] = [
     { to: "/", label: "Profile", show: true },
-    { to: "/tenants", label: "Tenants", show: can("admin:system") },
-    { to: "/users", label: "Users", show: can("write:members") },
-    { to: "/api-tokens", label: "API Tokens", show: can("write:members") },
+    { to: "/tenants", label: "Tenants", show: can("manage:tenants") },
+    { to: "/users", label: "Users", show: can("manage:users") },
+    { to: "/api-tokens", label: "API Tokens", show: can("manage:service-keys") },
     { to: "/audit", label: "Audit", show: can("admin:tenant") },
     { to: "/config", label: "Config", show: can("manage:config") },
   ];
@@ -32,7 +32,7 @@ export function AdminLayout() {
             {t("app.title")}
           </span>
           <div className="flex items-center gap-2">
-            {can("admin:system") && <TenantSwitcher />}
+            {can("switch:tenant") && <TenantSwitcher />}
             <button onClick={() => void client.logoutAll()} className={ghostButton}>
               {t("dashboard.logoutAll")}
             </button>

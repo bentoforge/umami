@@ -1,6 +1,6 @@
 //! User administration routes (within the caller's tenant).
 //!
-//! All routes require `write:members` and operate strictly on the caller's own tenant (resolved
+//! All routes require `manage:users` and operate strictly on the caller's own tenant (resolved
 //! from the caller's token), so an admin can never see or touch another tenant's users. The first
 //! user of a tenant is created by `POST /tenants` (see `tenants::service`), not here.
 
@@ -9,7 +9,7 @@ use crate::audit::{AuditSeverity, NewAuditEntry};
 use crate::config::Config;
 use crate::config::repository::ConfigRepository;
 use crate::constants::{
-    DEFAULT_LOCALE, MAX_LIST_RESULTS, MAX_TEXT_BODY_SIZE, ROLE_MEMBER, WRITE_MEMBERS_PERMISSION,
+    DEFAULT_LOCALE, MANAGE_USERS_PERMISSION, MAX_LIST_RESULTS, MAX_TEXT_BODY_SIZE, ROLE_MEMBER,
 };
 use crate::search::{query_matches, value_search_text};
 use crate::tenants::repository::TenantRepository;
@@ -31,7 +31,7 @@ use wasabi::web::warp::{into_response, with_body_as_json, with_cloneable};
 use wasabi::{client_bail, status_bail};
 
 /// Permission required to administer a tenant's users.
-const REQUIRE_WRITE_MEMBERS: &[&str] = &[WRITE_MEMBERS_PERMISSION];
+const REQUIRE_MANAGE_USERS: &[&str] = &[MANAGE_USERS_PERMISSION];
 
 /// Request body for creating a user.
 #[derive(Deserialize, Debug)]
@@ -124,7 +124,7 @@ struct UserListResponse {
 
 // ── Routes ──────────────────────────────────────────────────────────────────────
 
-/// `POST /users` — create a user in the caller's tenant (requires `write:members`).
+/// `POST /users` — create a user in the caller's tenant (requires `manage:users`).
 pub fn create_user_route(
     users: Arc<dyn UserRepository>,
     tenants: Arc<dyn TenantRepository>,
@@ -139,13 +139,13 @@ pub fn create_user_route(
         .and(with_cloneable(config))
         .and(with_user_with_any_permission(
             authenticator,
-            REQUIRE_WRITE_MEMBERS,
+            REQUIRE_MANAGE_USERS,
         ))
         .and_then(handle_create_user_route)
         .boxed()
 }
 
-/// `GET /users[?q=…]` — list the caller's tenant's users (requires `write:members`). Sorted by
+/// `GET /users[?q=…]` — list the caller's tenant's users (requires `manage:users`). Sorted by
 /// recent activity, capped, with optional case-insensitive multi-term search over
 /// username/email/name/custom fields.
 pub fn list_users_route(
@@ -158,7 +158,7 @@ pub fn list_users_route(
         .and(with_cloneable(users))
         .and(with_user_with_any_permission(
             authenticator,
-            REQUIRE_WRITE_MEMBERS,
+            REQUIRE_MANAGE_USERS,
         ))
         .and_then(handle_list_users_route)
         .boxed()
@@ -179,13 +179,13 @@ pub fn patch_user_route(
         .and(with_cloneable(config))
         .and(with_user_with_any_permission(
             authenticator,
-            REQUIRE_WRITE_MEMBERS,
+            REQUIRE_MANAGE_USERS,
         ))
         .and_then(handle_patch_user_route)
         .boxed()
 }
 
-/// `DELETE /users/{id}` — hard-delete a user within the caller's tenant (requires `write:members`).
+/// `DELETE /users/{id}` — hard-delete a user within the caller's tenant (requires `manage:users`).
 pub fn delete_user_route(
     users: Arc<dyn UserRepository>,
     authenticator: Arc<Authenticator>,
@@ -195,7 +195,7 @@ pub fn delete_user_route(
         .and(with_cloneable(users))
         .and(with_user_with_any_permission(
             authenticator,
-            REQUIRE_WRITE_MEMBERS,
+            REQUIRE_MANAGE_USERS,
         ))
         .and_then(handle_delete_user_route)
         .boxed()
@@ -203,7 +203,7 @@ pub fn delete_user_route(
 
 /// `POST /users/{id}/password` — admin password reset within the caller's tenant. Sets the given
 /// `newPassword`, or generates a temporary one (returned once) when omitted. Bumps `tokenVersion`
-/// so the target user's existing sessions/PATs stop working. Requires `write:members`.
+/// so the target user's existing sessions/PATs stop working. Requires `manage:users`.
 pub fn reset_password_route(
     users: Arc<dyn UserRepository>,
     config: Arc<dyn ConfigRepository>,
@@ -220,7 +220,7 @@ pub fn reset_password_route(
         .and(with_cloneable(audit))
         .and(with_user_with_any_permission(
             authenticator,
-            REQUIRE_WRITE_MEMBERS,
+            REQUIRE_MANAGE_USERS,
         ))
         .and_then(handle_reset_password_route)
         .boxed()

@@ -19,11 +19,11 @@ use std::sync::Arc;
 use warp::Filter;
 use warp::filters::BoxedFilter;
 use warp::http::StatusCode;
-use wasabi::status_bail;
 use wasabi::web::auth::authenticator::Authenticator;
 use wasabi::web::auth::user::User as AuthUser;
-use wasabi::web::auth::with_user;
+use wasabi::web::auth::{with_user, with_user_with};
 use wasabi::web::warp::{into_response, with_body_as_json, with_cloneable};
+use wasabi::{client_bail, status_bail};
 
 /// Current user, without the password hash.
 #[derive(Serialize, Debug)]
@@ -89,12 +89,23 @@ pub fn logout_all_route(
         .boxed()
 }
 
+/// Guard expression for self-service mutations: blocked when the caller has `self:readonly`.
+const DENY_READONLY: &str = "!self:readonly";
+
 /// Request body for a self-service password change.
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct ChangePasswordRequest {
     current_password: String,
     new_password: String,
+}
+
+/// Request body for a self-service profile update. Absent fields are left unchanged.
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct PatchMeRequest {
+    name: Option<String>,
+    locale: Option<String>,
 }
 
 /// `POST /auth/me/password` — change the caller's own password (verifies the current one, then
@@ -113,8 +124,24 @@ pub fn change_password_route(
         .and(with_cloneable(users))
         .and(with_cloneable(config))
         .and(with_cloneable(audit))
-        .and(with_user(authenticator))
+        .and(with_user_with(authenticator, DENY_READONLY))
         .and_then(handle_change_password_route)
+        .boxed()
+}
+
+/// `PATCH /auth/me` — update the caller's own profile (name/locale). Blocked for `self:readonly`.
+pub fn patch_me_route(
+    users: Arc<dyn UserRepository>,
+    tenants: Arc<dyn TenantRepository>,
+    authenticator: Arc<Authenticator>,
+) -> BoxedFilter<(impl warp::Reply,)> {
+    warp::path!("auth" / "me")
+        .and(warp::patch())
+        .and(with_body_as_json::<PatchMeRequest>(MAX_TEXT_BODY_SIZE))
+        .and(with_cloneable(users))
+        .and(with_cloneable(tenants))
+        .and(with_user_with(authenticator, DENY_READONLY))
+        .and_then(handle_patch_me_route)
         .boxed()
 }
 
@@ -161,6 +188,51 @@ async fn logout_all(
 ) -> anyhow::Result<serde_json::Value> {
     users.bump_token_version(caller.user_id()?).await?;
     Ok(json!({ "status": "ok" }))
+}
+
+#[tracing::instrument(level = "debug", name = "PATCH /auth/me", skip_all)]
+async fn handle_patch_me_route(
+    request: PatchMeRequest,
+    users: Arc<dyn UserRepository>,
+    tenants: Arc<dyn TenantRepository>,
+    caller: AuthUser,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    into_response(patch_me(request, users, tenants, caller).await)
+}
+
+async fn patch_me(
+    request: PatchMeRequest,
+    users: Arc<dyn UserRepository>,
+    tenants: Arc<dyn TenantRepository>,
+    caller: AuthUser,
+) -> anyhow::Result<MeResponse> {
+    let user_id = caller.user_id()?;
+    let mut user = match users.get_user(user_id).await? {
+        Some(user) => user,
+        None => status_bail!(StatusCode::UNAUTHORIZED, "User no longer exists"),
+    };
+
+    if let Some(name) = request.name {
+        let name = name.trim();
+        if name.is_empty() {
+            client_bail!("'name' must not be empty");
+        }
+        user.name = name.to_owned();
+    }
+    if let Some(locale) = request.locale {
+        let locale = locale.trim();
+        if locale.is_empty() {
+            client_bail!("'locale' must not be empty");
+        }
+        user.locale = locale.to_owned();
+    }
+
+    let updated = users.put_user(user).await?;
+    let tenant = tenants.get_tenant(&updated.tenant_id).await?;
+    Ok(MeResponse {
+        user: updated.into(),
+        tenant,
+    })
 }
 
 #[tracing::instrument(level = "debug", name = "POST /auth/me/password", skip_all)]

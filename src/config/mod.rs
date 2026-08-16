@@ -8,11 +8,12 @@ pub mod repository;
 pub mod service;
 
 use crate::constants::{
-    ADMIN_SYSTEM_PERMISSION, ADMIN_TENANT_PERMISSION, DEFAULT_ACCESS_TTL_SECS,
-    DEFAULT_MESSAGING_CODE_TTL_SECS, DEFAULT_REFRESH_TTL_SECS, MANAGE_CONFIG_PERMISSION,
+    ADMIN_TENANT_PERMISSION, DEFAULT_ACCESS_TTL_SECS, DEFAULT_MESSAGING_CODE_TTL_SECS,
+    DEFAULT_REFRESH_TTL_SECS, MANAGE_CONFIG_PERMISSION, MANAGE_PAT_PERMISSION,
+    MANAGE_SERVICE_KEYS_PERMISSION, MANAGE_TENANTS_PERMISSION, MANAGE_USERS_PERMISSION,
     MESSAGING_CONFIGURED_MARKER, MESSAGING_LINK_PERMISSION, MESSAGING_RESOLVE_PERMISSION,
-    MESSAGING_SELF_PERMISSION, ROLE_MEMBER, ROLE_OWNER, SYSTEM_TENANT_MARKER,
-    WRITE_MEMBERS_PERMISSION, WRITE_USAGE_PERMISSION,
+    MESSAGING_SELF_PERMISSION, ROLE_MEMBER, ROLE_OWNER, SELF_READONLY_PERMISSION,
+    SWITCH_TENANT_PERMISSION, SYSTEM_TENANT_MARKER, WRITE_USAGE_PERMISSION,
 };
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
@@ -541,6 +542,7 @@ impl Default for Config {
                 role("role:admin", "Administrator"),
                 role(ROLE_MEMBER, "Member"),
                 role("role:viewer", "Viewer"),
+                role("role:readonly", "Read-only (blocks self-service edits)"),
             ],
             scopes: vec![
                 // Only assignable to a system-tenant service key (and shown only there).
@@ -567,28 +569,35 @@ impl Default for Config {
                 messaging_code_ttl_secs: DEFAULT_MESSAGING_CODE_TTL_SECS,
             },
             messaging: MessagingConfig::default(),
-            // The umami admin API: role → permission mapping lives here (not on the roles), plus the
-            // synthetic is:system-tenant → cross-tenant admin permission.
+            // The umami admin API. This is a deliberately MINIMAL, bootstrap-only mapping: it grants
+            // the system-tenant owner enough to log in and administer (so they can then write the
+            // real config), maps the cross-tenant + messaging + readonly markers, and stops there.
+            // The full role matrix (admin/member/viewer → …) is NOT hardcoded — see the standard
+            // config in docs/CONFIG.md. Routes only ever check the resulting plain permissions.
             apis: vec![ApiDef {
                 code: "umami".to_owned(),
                 audience: "umami".to_owned(),
                 eligibility: None,
                 permissions: vec![
+                    // Bootstrap owner: full self-tenant administration + own PATs + config.
                     rule(
                         ROLE_OWNER,
                         &[
                             ADMIN_TENANT_PERMISSION,
-                            WRITE_MEMBERS_PERMISSION,
+                            MANAGE_USERS_PERMISSION,
+                            MANAGE_SERVICE_KEYS_PERMISSION,
+                            MANAGE_PAT_PERMISSION,
                             MANAGE_CONFIG_PERMISSION,
                             WRITE_USAGE_PERMISSION,
                         ],
                     ),
+                    // Cross-tenant admin comes only from the system tenant.
                     rule(
-                        "role:admin",
-                        &[WRITE_MEMBERS_PERMISSION, WRITE_USAGE_PERMISSION],
+                        SYSTEM_TENANT_MARKER,
+                        &[MANAGE_TENANTS_PERMISSION, SWITCH_TENANT_PERMISSION],
                     ),
-                    rule(ROLE_MEMBER, &[WRITE_USAGE_PERMISSION]),
-                    rule(SYSTEM_TENANT_MARKER, &[ADMIN_SYSTEM_PERMISSION]),
+                    // Deny marker: a user tagged role:readonly loses self-service mutations.
+                    rule("role:readonly", &[SELF_READONLY_PERMISSION]),
                     // Self-service messaging is available to everyone once the deployment has a bot
                     // and/or number configured.
                     rule(MESSAGING_CONFIGURED_MARKER, &[MESSAGING_SELF_PERMISSION]),
@@ -742,14 +751,23 @@ mod tests {
         let umami = Config::default().find_api("umami").unwrap().clone();
         let owner = umami.resolve(&s(&["role:owner"])).unwrap();
         assert!(owner.contains(&"admin:tenant".to_owned()));
+        assert!(owner.contains(&"manage:users".to_owned()));
         assert!(owner.contains(&"manage:config".to_owned()));
-        // no role maps to admin:system — only the synthetic marker does
-        assert!(!owner.contains(&"admin:system".to_owned()));
+        // cross-tenant permissions come only from the system-tenant marker, never a plain role
+        assert!(!owner.contains(&"manage:tenants".to_owned()));
+        assert!(!owner.contains(&"switch:tenant".to_owned()));
         let sys = umami
             .resolve(&s(&["role:owner", "is:system-tenant"]))
             .unwrap();
-        assert!(sys.contains(&"admin:system".to_owned()));
-        // viewer maps to nothing
+        assert!(sys.contains(&"manage:tenants".to_owned()));
+        assert!(sys.contains(&"switch:tenant".to_owned()));
+        // readonly maps to the deny marker; viewer (unmapped in the minimal default) maps to nothing
+        assert!(
+            umami
+                .resolve(&s(&["role:readonly"]))
+                .unwrap()
+                .contains(&"self:readonly".to_owned())
+        );
         assert_eq!(umami.resolve(&s(&["role:viewer"])), Some(Vec::new()));
     }
 

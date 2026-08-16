@@ -1,9 +1,9 @@
 //! `POST /auth/switch-tenant` — a system admin re-scopes their access token to another tenant.
 //!
-//! Guarded by `admin:system` (held only by system-tenant members). The re-issued `umami` token
+//! Guarded by `switch:tenant` (held only by system-tenant members). The re-issued `umami` token
 //! keeps the acting user's identity + roles but sets `tenant` to the target and re-resolves
 //! permissions against the target tenant's features. The synthetic `is:system-tenant` marker is
-//! **retained** (so the admin keeps `admin:system` + owner-level rights in the target and can switch
+//! **retained** (so the admin keeps `manage:tenants`/`switch:tenant` + owner-level rights in the target and can switch
 //! again/back). Access-token only — no session/cookie is created, so a later refresh returns the
 //! admin to their home tenant.
 
@@ -11,7 +11,7 @@ use crate::audit::repository::record_best_effort;
 use crate::audit::{AuditSeverity, NewAuditEntry};
 use crate::auth::AuthContext;
 use crate::auth::broker::{MintParams, mint_for_api};
-use crate::constants::{ADMIN_SYSTEM_PERMISSION, MAX_TEXT_BODY_SIZE};
+use crate::constants::{MAX_TEXT_BODY_SIZE, SWITCH_TENANT_PERMISSION};
 use crate::users::UserStatus;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -28,7 +28,7 @@ use wasabi::web::warp::{into_response, with_body_as_json, with_cloneable};
 const UMAMI_API_CODE: &str = "umami";
 
 /// Permission required to switch tenants (cross-tenant admin).
-const REQUIRE_ADMIN_SYSTEM: &[&str] = &[ADMIN_SYSTEM_PERMISSION];
+const REQUIRE_SWITCH_TENANT: &[&str] = &[SWITCH_TENANT_PERMISSION];
 
 /// Request: the tenant to switch into.
 #[derive(Deserialize, Debug)]
@@ -56,7 +56,7 @@ pub fn switch_tenant_route(
         .and(with_cloneable(context))
         .and(with_user_with_any_permission(
             authenticator,
-            REQUIRE_ADMIN_SYSTEM,
+            REQUIRE_SWITCH_TENANT,
         ))
         .and_then(handle_switch_tenant_route)
         .boxed()
@@ -103,7 +103,7 @@ async fn switch_tenant(
             token_version: user.token_version,
             subjects: &user.roles,
             features: &target.features,
-            // Retain system-admin: keep is:system-tenant so admin:system + the switch ability persist.
+            // Retain system-admin: keep is:system-tenant so manage:tenants + switch:tenant + the switch ability persist.
             system_tenant: true,
             user_custom_fields: &user.custom_fields,
             tenant_custom_fields: &target.custom_fields,

@@ -2,16 +2,13 @@
 //!
 //! `GET /tenants` (list all), `POST /tenants` (create tenant + first owner) and
 //! `DELETE /tenants/{id}` (only when the tenant has no users) are **cross-tenant** operations
-//! guarded by the `admin:system` permission. That permission is projected into a token only for
-//! members of the configured system tenant (`UMAMI_SYSTEM_TENANT_ID` → `is:system-tenant` →
-//! `admin:system`, in the config `apis` block), so the tenant-membership check is now expressed
-//! purely as a permission. `GET`/`PATCH /tenants/{id}` require `admin:tenant` and operate only on
+//! guarded by the `manage:tenants` permission, projected from `is:system-tenant` (see docs/CONFIG.md). `GET`/`PATCH /tenants/{id}` require `admin:tenant` and operate only on
 //! the caller's own tenant.
 
 use crate::config::Config;
 use crate::config::repository::ConfigRepository;
 use crate::constants::{
-    ADMIN_SYSTEM_PERMISSION, ADMIN_TENANT_PERMISSION, DEFAULT_LOCALE, MAX_LIST_RESULTS,
+    ADMIN_TENANT_PERMISSION, DEFAULT_LOCALE, MANAGE_TENANTS_PERMISSION, MAX_LIST_RESULTS,
     MAX_TEXT_BODY_SIZE, ROLE_OWNER,
 };
 use crate::search::{query_matches, value_search_text};
@@ -36,8 +33,8 @@ use wasabi::{client_bail, status_bail};
 const REQUIRE_ADMIN_TENANT: &[&str] = &[ADMIN_TENANT_PERMISSION];
 
 /// Permission required for cross-tenant administration (list/create/delete tenants). Held only by
-/// system-tenant members via the `is:system-tenant` → `admin:system` projection.
-const REQUIRE_ADMIN_SYSTEM: &[&str] = &[ADMIN_SYSTEM_PERMISSION];
+/// system-tenant members via the `is:system-tenant` → `manage:tenants` projection.
+const REQUIRE_MANAGE_TENANTS: &[&str] = &[MANAGE_TENANTS_PERMISSION];
 
 /// The first (owner) user created alongside a new tenant.
 #[derive(Deserialize, Debug)]
@@ -109,7 +106,7 @@ struct PatchLicenseRequest {
 
 // ── Routes ──────────────────────────────────────────────────────────────────────
 
-/// `POST /tenants` — system-admin: create a tenant and its first owner (requires `admin:system`).
+/// `POST /tenants` — system-admin: create a tenant and its first owner (requires `manage:tenants`).
 pub fn create_tenant_route(
     tenants: Arc<dyn TenantRepository>,
     users: Arc<dyn UserRepository>,
@@ -124,13 +121,13 @@ pub fn create_tenant_route(
         .and(with_cloneable(config))
         .and(with_user_with_any_permission(
             authenticator,
-            REQUIRE_ADMIN_SYSTEM,
+            REQUIRE_MANAGE_TENANTS,
         ))
         .and_then(handle_create_tenant_route)
         .boxed()
 }
 
-/// `GET /tenants[?q=…]` — list every tenant (requires `admin:system`; sorted newest-updated first,
+/// `GET /tenants[?q=…]` — list every tenant (requires `manage:tenants`; sorted newest-updated first,
 /// capped, optional case-insensitive multi-term search over name/slug/custom fields).
 pub fn list_tenants_route(
     tenants: Arc<dyn TenantRepository>,
@@ -142,13 +139,13 @@ pub fn list_tenants_route(
         .and(with_cloneable(tenants))
         .and(with_user_with_any_permission(
             authenticator,
-            REQUIRE_ADMIN_SYSTEM,
+            REQUIRE_MANAGE_TENANTS,
         ))
         .and_then(handle_list_tenants_route)
         .boxed()
 }
 
-/// `DELETE /tenants/{id}` — delete a tenant, but only when it has no users (requires `admin:system`).
+/// `DELETE /tenants/{id}` — delete a tenant, but only when it has no users (requires `manage:tenants`).
 pub fn delete_tenant_route(
     tenants: Arc<dyn TenantRepository>,
     users: Arc<dyn UserRepository>,
@@ -160,7 +157,7 @@ pub fn delete_tenant_route(
         .and(with_cloneable(users))
         .and(with_user_with_any_permission(
             authenticator,
-            REQUIRE_ADMIN_SYSTEM,
+            REQUIRE_MANAGE_TENANTS,
         ))
         .and_then(handle_delete_tenant_route)
         .boxed()

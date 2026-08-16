@@ -12,7 +12,9 @@
 
 use crate::config::repository::ConfigRepository;
 use crate::config::{eval_expression, is_synthetic};
-use crate::constants::{ADMIN_SYSTEM_PERMISSION, WRITE_MEMBERS_PERMISSION};
+use crate::constants::{
+    MANAGE_SERVICE_KEYS_PERMISSION, MANAGE_TENANTS_PERMISSION, MANAGE_USERS_PERMISSION,
+};
 use crate::tenants::repository::TenantRepository;
 use crate::users::repository::UserRepository;
 use serde::Serialize;
@@ -28,11 +30,14 @@ use wasabi::web::auth::with_user_with_any_permission;
 use wasabi::web::warp::{into_response, with_cloneable};
 use wasabi::{client_bail, status_bail};
 
-/// Permission required to read/assign roles + scopes within a tenant.
-const REQUIRE_WRITE_MEMBERS: &[&str] = &[WRITE_MEMBERS_PERMISSION];
+/// Permission required to read a user's assignable roles.
+const REQUIRE_MANAGE_USERS: &[&str] = &[MANAGE_USERS_PERMISSION];
+
+/// Permission required to read a tenant's assignable service-key scopes.
+const REQUIRE_MANAGE_SERVICE_KEYS: &[&str] = &[MANAGE_SERVICE_KEYS_PERMISSION];
 
 /// Permission required to grant/revoke a tenant's authorization features (cross-tenant admin).
-const REQUIRE_ADMIN_SYSTEM: &[&str] = &[ADMIN_SYSTEM_PERMISSION];
+const REQUIRE_MANAGE_TENANTS: &[&str] = &[MANAGE_TENANTS_PERMISSION];
 
 /// The set of assignable/grantable codes for a UI picker.
 #[derive(Serialize, Debug)]
@@ -56,7 +61,7 @@ pub fn assignable_roles_route(
         .and(with_cloneable(config))
         .and(with_user_with_any_permission(
             authenticator,
-            REQUIRE_WRITE_MEMBERS,
+            REQUIRE_MANAGE_USERS,
         ))
         .and_then(handle_assignable_roles_route)
         .boxed()
@@ -76,7 +81,7 @@ pub fn assignable_scopes_route(
         .and(with_cloneable(system_tenant_id))
         .and(with_user_with_any_permission(
             authenticator,
-            REQUIRE_WRITE_MEMBERS,
+            REQUIRE_MANAGE_SERVICE_KEYS,
         ))
         .and_then(handle_assignable_scopes_route)
         .boxed()
@@ -94,7 +99,7 @@ pub fn assignable_features_route(
         .and(with_cloneable(config))
         .and(with_user_with_any_permission(
             authenticator,
-            REQUIRE_ADMIN_SYSTEM,
+            REQUIRE_MANAGE_TENANTS,
         ))
         .and_then(handle_assignable_features_route)
         .boxed()
@@ -112,7 +117,7 @@ pub fn grant_feature_route(
         .and(with_cloneable(config))
         .and(with_user_with_any_permission(
             authenticator,
-            REQUIRE_ADMIN_SYSTEM,
+            REQUIRE_MANAGE_TENANTS,
         ))
         .and_then(handle_grant_feature_route)
         .boxed()
@@ -130,7 +135,7 @@ pub fn revoke_feature_route(
         .and(with_cloneable(config))
         .and(with_user_with_any_permission(
             authenticator,
-            REQUIRE_ADMIN_SYSTEM,
+            REQUIRE_MANAGE_TENANTS,
         ))
         .and_then(handle_revoke_feature_route)
         .boxed()

@@ -60,7 +60,7 @@ use crate::auth::apikeys::{
 };
 use crate::auth::exchange::{ExchangeDeps, exchange_route as user_exchange_route};
 use crate::auth::login::{login_route, logout_route, refresh_route};
-use crate::auth::me::{change_password_route, logout_all_route, me_route};
+use crate::auth::me::{change_password_route, logout_all_route, me_route, patch_me_route};
 use crate::auth::secretbox::SecretBox;
 use crate::auth::session::DynamoSessionRepository;
 use crate::auth::switch_tenant::switch_tenant_route;
@@ -234,6 +234,11 @@ async fn app() -> anyhow::Result<()> {
             authenticator.clone()
         ),
         logout_all_route(user_repository.clone(), authenticator.clone()),
+        patch_me_route(
+            user_repository.clone(),
+            tenant_repository.clone(),
+            authenticator.clone()
+        ),
         switch_tenant_route(auth_context.clone(), authenticator.clone()),
         change_password_route(
             user_repository.clone(),
@@ -273,7 +278,7 @@ async fn app() -> anyhow::Result<()> {
             audit_repository.clone(),
             system_tenant_id.clone()
         ),
-        // tenant service keys (write:members)
+        // tenant service keys (manage:service-keys)
         create_api_key_route(
             api_key_repository.clone(),
             tenant_repository.clone(),
@@ -331,7 +336,7 @@ async fn app() -> anyhow::Result<()> {
             },
             authenticator.clone()
         ),
-        // tenants (cross-tenant admin: create/list/delete require the `admin:system` permission)
+        // tenants (cross-tenant admin: create/list/delete require manage:tenants)
         create_tenant_route(
             tenant_repository.clone(),
             user_repository.clone(),

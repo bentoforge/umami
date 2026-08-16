@@ -14,7 +14,7 @@ For the permission-string DSL and the mint algorithm in depth, see [PERMISSIONS.
 - **S3-backed** when `UMAMI_CONFIG_BUCKET` is set: the whole document is stored as one object and
   cached in memory. Edit it via `PUT /config` (load → edit → write back; optimistic `version`).
 - **Built-in default** otherwise (dev/tests): [`Config::default()`](../src/config/mod.rs). This is the
-  config described under [§7](#7-the-built-in-default).
+  config described under [§5](#5-the-built-in-default).
 
 New fields are added with `#[serde(default)]`, so an older stored document keeps loading after an
 upgrade (missing keys fall back to defaults).
@@ -24,7 +24,7 @@ Relevant environment variables:
 | Env | Effect |
 |-----|--------|
 | `UMAMI_CONFIG_BUCKET` | Use S3 config instead of the built-in default. |
-| `UMAMI_SYSTEM_TENANT_ID` | Tenant whose members get the `is:system-tenant` marker (⇒ `admin:system`). |
+| `UMAMI_SYSTEM_TENANT_ID` | Tenant whose members get the `is:system-tenant` marker (⇒ `manage:tenants` + `switch:tenant`). |
 | `UMAMI_AUTO_INIT=true` | Bootstrap a first tenant + owner when zero tenants exist. |
 
 ---
@@ -103,7 +103,7 @@ Synthetic markers also participate in **assignability** (`assignableIf`) via
 `Config::eval_feature_set`, so a scope/role can be gated on e.g. `is:system-tenant` and will only
 appear in that tenant's pickers.
 
-Code only ever checks **permissions** (bare strings like `write:members`). Roles/scopes/features/
+Code only ever checks **permissions** (bare strings like `manage:users`). Roles/scopes/features/
 markers are turned into permissions solely by the `apis` mapping — there are no ad-hoc tenant/marker
 checks in the route handlers.
 
@@ -116,58 +116,68 @@ define their own.
 
 | Permission | Gates (umami routes) |
 |------------|----------------------|
-| `admin:system` | `GET/POST /tenants`, `DELETE /tenants/{id}`, `POST /auth/switch-tenant`, `GET /tenants/{id}/assignable-features`, `POST`/`DELETE /tenants/{id}/features/{code}` |
-| `admin:tenant` | `GET`/`PATCH /tenants/{id}`, `PATCH …/status`, `PATCH …/license`, packages + entitlements, `GET /tenants/{id}/audit` |
-| `write:members` | users CRUD + admin password reset, service-key create/list/delete, `GET /users/{id}/assignable-roles`, `GET /tenants/{id}/assignable-scopes` |
+| `manage:tenants` | `GET/POST /tenants`, `DELETE /tenants/{id}`, `GET /tenants/{id}/assignable-features`, `POST`/`DELETE /tenants/{id}/features/{code}` (cross-tenant) |
+| `switch:tenant` | `POST /auth/switch-tenant` |
+| `admin:tenant` | `GET`/`PATCH /tenants/{id}`, `PATCH …/status`, `PATCH …/license`, packages + entitlements, `GET /tenants/{id}/audit` (own tenant) |
+| `manage:users` | users CRUD + admin password reset, `GET /users/{id}/assignable-roles` |
+| `manage:service-keys` | service-key create/list/revoke, `GET /tenants/{id}/assignable-scopes` |
+| `manage:pat` | own personal access tokens under `/auth/me/api-keys` |
 | `manage:config` | `GET`/`PUT /config` |
 | `write:usage` | `GET`/`POST /tenants/{id}/usage` (metering) |
+| `self:readonly` | **deny marker** — its presence *blocks* `POST /auth/me/password` and `PATCH /auth/me` (guarded via `!self:readonly`) |
 | `messaging:self` | `/auth/me/messaging-code` (+regenerate), `/auth/me/messaging-links` (+unlink) |
 | `messaging:link` | `POST /messaging/links` (bot backend claims a mapping) |
 | `messaging:resolve` | `GET /messaging/resolve` (identity → user info / token) |
 
 **Authenticated but permission-free** (any valid token): `GET /auth/me`, `POST /auth/logout-all`,
-`POST /auth/me/password`, PAT management under `/auth/me/api-keys`, `POST /auth/exchange`,
-`GET /config/custom-fields`, plus login/refresh/logout, JWKS and the MFA ceremonies.
+`POST /auth/exchange`, `GET /config/custom-fields`, plus login/refresh/logout, JWKS and the MFA
+ceremonies. (`POST /auth/me/password` and `PATCH /auth/me` are authenticated too, but blocked when
+`self:readonly` is present.)
 
 ---
 
 ## 5. The built-in default
 
-The default `apis[0]` (`umami`) ships this mapping (ordered):
+The built-in default is **deliberately minimal** — a bootstrap-only mapping so the auto-init
+system-tenant owner can log in and administer (and then write the real config). It is *not* a full
+role matrix; see [§6](#6-proposed-standard-config) for that. The default `apis[0]` (`umami`) ships
+(ordered):
 
 | `when` | `grant` |
 |--------|---------|
-| `role:owner` | `admin:tenant`, `write:members`, `manage:config`, `write:usage` |
-| `role:admin` | `write:members`, `write:usage` |
-| `role:member` | `write:usage` |
-| `is:system-tenant` | `admin:system` |
+| `role:owner` | `admin:tenant`, `manage:users`, `manage:service-keys`, `manage:pat`, `manage:config`, `write:usage` |
+| `is:system-tenant` | `manage:tenants`, `switch:tenant` |
+| `role:readonly` | `self:readonly` (deny marker) |
 | `is:messaging-configured` | `messaging:self` |
 | `scope:messaging-linker + is:system-tenant` | `messaging:link` |
 | `scope:messaging-resolver + is:system-tenant` | `messaging:resolve` |
 
-Default **roles**: `role:owner`, `role:admin`, `role:member`, `role:viewer` (all `assignableIf`
-omitted). Default **scopes**: `scope:messaging-linker`, `scope:messaging-resolver` (both
-`assignableIf: "is:system-tenant"`). No default features/limits/packages/custom fields.
+Default **roles**: `role:owner`, `role:admin`, `role:member`, `role:viewer`, `role:readonly`
+(all `assignableIf` omitted). Default **scopes**: `scope:messaging-linker`,
+`scope:messaging-resolver` (both `assignableIf: "is:system-tenant"`). No default
+features/limits/packages/custom fields.
 
-> ⚠ **`role:viewer` has no mapping** in the default — a viewer gets zero permissions, and there is
-> no read-only permission in the umami API (listing users needs `write:members`). If you want
-> viewers to read, add a permission and map it (see the standard config below).
+> ⚠ In the minimal default, **only `role:owner` is mapped** — `role:admin` / `role:member` /
+> `role:viewer` grant nothing until you map them in your config. This is intentional: real
+> deployments define the matrix (see §6). `role:readonly` maps to the deny marker; assign it to a
+> user to block their self-service profile/password edits.
 
 ---
 
 ## 6. Proposed standard config
 
-A fuller starting point. It keeps the built-in umami mapping, **adds a read permission for
-viewers**, shows a licensed feature/scope, and adds a product-API entry with eligibility + claims.
+A fuller starting point — the full role matrix the minimal default omits, plus a licensed
+feature/scope and a product-API entry with eligibility + claims. Copy, adjust, `PUT /config`.
 
 ```jsonc
 {
   "version": 1,
   "roles": [
-    { "code": "role:owner",  "name": "Owner" },
-    { "code": "role:admin",  "name": "Administrator" },
-    { "code": "role:member", "name": "Member" },
-    { "code": "role:viewer", "name": "Viewer" }
+    { "code": "role:owner",    "name": "Owner" },
+    { "code": "role:admin",    "name": "Administrator" },
+    { "code": "role:member",   "name": "Member" },
+    { "code": "role:viewer",   "name": "Viewer" },
+    { "code": "role:readonly", "name": "Read-only" }
   ],
   "scopes": [
     { "code": "scope:messaging-linker",   "name": "Messaging linker",   "assignableIf": "is:system-tenant" },
@@ -195,11 +205,11 @@ viewers**, shows a licensed feature/scope, and adds a product-API entry with eli
     {
       "code": "umami", "audience": "umami",
       "permissions": [
-        { "when": "role:owner",  "grant": ["admin:tenant","write:members","manage:config","write:usage"] },
-        { "when": "role:admin",  "grant": ["write:members","write:usage"] },
-        { "when": "role:member", "grant": ["write:usage"] },
-        { "when": "role:viewer", "grant": ["read:members"] },
-        { "when": "is:system-tenant", "grant": ["admin:system"] },
+        { "when": "role:owner",  "grant": ["admin:tenant","manage:users","manage:service-keys","manage:pat","manage:config","write:usage"] },
+        { "when": "role:admin",  "grant": ["manage:users","manage:service-keys","manage:pat","write:usage"] },
+        { "when": "role:member", "grant": ["manage:pat","write:usage"] },
+        { "when": "is:system-tenant", "grant": ["manage:tenants","switch:tenant"] },
+        { "when": "role:readonly", "grant": ["self:readonly"] },
         { "when": "is:messaging-configured", "grant": ["messaging:self"] },
         { "when": "scope:messaging-linker + is:system-tenant",   "grant": ["messaging:link"] },
         { "when": "scope:messaging-resolver + is:system-tenant", "grant": ["messaging:resolve"] }
@@ -220,9 +230,10 @@ viewers**, shows a licensed feature/scope, and adds a product-API entry with eli
 }
 ```
 
-> Note: `read:members` above is *illustrative* — if you add it, also gate the umami list routes on
-> it in code (they currently require `write:members`). The config can only mint permissions; which
-> permission a route requires is decided in the handler.
+> Note: `role:viewer` is intentionally left unmapped here — the umami list routes require
+> `manage:users` / `manage:service-keys`, and there is no read-only variant in code. To give
+> viewers read access you would add a `read:*` permission **and** gate the relevant routes on it in
+> the handler; the config can only mint permissions, not decide which a route requires.
 
 ---
 

@@ -15,28 +15,39 @@ pub const MAX_LIST_RESULTS: usize = 250;
 
 // ── Permission strings (umami's own admin surface) ────────────────────────────
 //
-// Provisional role→permission map (see `users::role_permissions`). Product-service permission
-// strings (e.g. dbx-core's `write:blocks`) will be folded in when the permission model is
-// redesigned; for now these gate umami's own tenant/user administration.
+// The route handlers check ONLY these plain permission strings; the mapping from roles/scopes/
+// features/markers to permissions lives entirely in the config `apis` block (see `docs/CONFIG.md`).
+// Product-service permission strings (e.g. dbx-core's `write:blocks`) are defined by those services.
 
-/// Full administrative control over a tenant (settings, license).
+/// Administer the caller's **own** tenant (settings, status, license, packages, audit).
 pub const ADMIN_TENANT_PERMISSION: &str = "admin:tenant";
 
-/// Manage a tenant's users (create/list/patch, roles, status).
-pub const WRITE_MEMBERS_PERMISSION: &str = "write:members";
+/// Manage a tenant's users (create/list/patch/delete, roles, status, password reset).
+pub const MANAGE_USERS_PERMISSION: &str = "manage:users";
 
-/// Read/write the global config document. **Global scope** — in a multi-tenant deployment this
-/// must be restricted to a platform admin, not a tenant owner; the default config grants it to
-/// `owner` for now (single-operator dev).
+/// Manage a tenant's **service keys** (M2M API tokens): create/list/revoke + assignable scopes.
+pub const MANAGE_SERVICE_KEYS_PERMISSION: &str = "manage:service-keys";
+
+/// Manage one's **own** personal access tokens (`/auth/me/api-keys`).
+pub const MANAGE_PAT_PERMISSION: &str = "manage:pat";
+
+/// Read/write the global config document. **Global scope** — restrict to platform admins.
 pub const MANAGE_CONFIG_PERMISSION: &str = "manage:config";
 
-/// Read and increment a tenant's usage counters (metering). Product services meter usage with a
-/// token carrying this permission.
+/// Read and increment a tenant's usage counters (metering).
 pub const WRITE_USAGE_PERMISSION: &str = "write:usage";
 
-/// Cross-tenant / platform administration. Mapped (in the config `apis`) from the synthetic
-/// `is:system-tenant` marker, so it only ever lands in tokens of system-tenant members.
-pub const ADMIN_SYSTEM_PERMISSION: &str = "admin:system";
+/// Cross-tenant administration: create/list/delete tenants + grant/revoke tenant features. Mapped
+/// (in the config `apis`) from `is:system-tenant`, so it only lands in system-tenant tokens.
+pub const MANAGE_TENANTS_PERMISSION: &str = "manage:tenants";
+
+/// Re-scope one's token to another tenant (`POST /auth/switch-tenant`). Mapped from
+/// `is:system-tenant`.
+pub const SWITCH_TENANT_PERMISSION: &str = "switch:tenant";
+
+/// **Deny** marker: when present, blocks the caller's self-service mutations (profile edit,
+/// password change). Checked via `!self:readonly` at the route (see `with_user_with`).
+pub const SELF_READONLY_PERMISSION: &str = "self:readonly";
 
 /// Claim a `(platform, externalId) → user` messaging mapping via a link code. Held by a bot backend
 /// (a system-tenant service key carrying `scope:messaging-linker`).

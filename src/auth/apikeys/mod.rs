@@ -5,7 +5,7 @@
 //! - **Service key** (`user_id = None`): a tenant machine principal. The exchange mints
 //!   `sub = keyId` with the key's `scope:*` subjects (M2M granularity, independent of user roles).
 //!   Origin-bound (Mode 1) for browser use, or a plain server-side secret. Managed at
-//!   `/tenants/{id}/api-keys` (`write:members`).
+//!   `/tenants/{id}/api-keys` (`manage:service-keys`).
 //! - **Personal access token** (`user_id = Some`): acts as that user — the exchange mints
 //!   `sub = userId` with the user's `role:*` subjects (optionally restricted to the key's `roles`),
 //!   and respects the user's `tokenVersion` (deactivating the user kills the PAT). Self-managed at
@@ -21,7 +21,7 @@ use crate::auth::broker::{MintParams, mint_for_api};
 use crate::auth::session::{generate_refresh_secret, hash_refresh_secret, verify_refresh_secret};
 use crate::auth::tokens::TokenIssuer;
 use crate::config::repository::ConfigRepository;
-use crate::constants::{MAX_TEXT_BODY_SIZE, WRITE_MEMBERS_PERMISSION};
+use crate::constants::{MANAGE_PAT_PERMISSION, MANAGE_SERVICE_KEYS_PERMISSION, MAX_TEXT_BODY_SIZE};
 use crate::tenants::repository::TenantRepository;
 use crate::users::UserStatus;
 use crate::users::repository::UserRepository;
@@ -38,7 +38,7 @@ use warp::http::StatusCode;
 use wasabi::aws::dynamodb::generate_id;
 use wasabi::web::auth::authenticator::Authenticator;
 use wasabi::web::auth::user::User as AuthUser;
-use wasabi::web::auth::{with_user, with_user_with_any_permission};
+use wasabi::web::auth::with_user_with_any_permission;
 use wasabi::web::warp::{into_response, with_body_as_json, with_cloneable};
 use wasabi::{client_bail, status_bail};
 
@@ -48,8 +48,11 @@ const KEY_PREFIX: &str = "umk_";
 /// Length of the embedded key id (a `generate_id()` value).
 const KEY_ID_LEN: usize = 32;
 
-/// Permission required to manage a tenant's API keys.
-const REQUIRE_WRITE_MEMBERS: &[&str] = &[WRITE_MEMBERS_PERMISSION];
+/// Permission required to manage a tenant's service keys.
+const REQUIRE_MANAGE_SERVICE_KEYS: &[&str] = &[MANAGE_SERVICE_KEYS_PERMISSION];
+
+/// Permission required to manage one's own personal access tokens.
+const REQUIRE_MANAGE_PAT: &[&str] = &[MANAGE_PAT_PERMISSION];
 
 /// Splits a presented `umk_<keyId>_<secret>` into `(keyId, secret)`.
 fn parse_api_key(presented: &str) -> Option<(&str, &str)> {
@@ -192,7 +195,7 @@ pub fn exchange_route(
         .boxed()
 }
 
-/// `POST /tenants/{id}/api-keys` — create a key (requires `write:members`).
+/// `POST /tenants/{id}/api-keys` — create a key (requires `manage:service-keys`).
 pub fn create_api_key_route(
     keys: Arc<dyn ApiKeyRepository>,
     tenants: Arc<dyn TenantRepository>,
@@ -209,13 +212,13 @@ pub fn create_api_key_route(
         .and(with_cloneable(system_tenant_id))
         .and(with_user_with_any_permission(
             authenticator,
-            REQUIRE_WRITE_MEMBERS,
+            REQUIRE_MANAGE_SERVICE_KEYS,
         ))
         .and_then(handle_create_api_key_route)
         .boxed()
 }
 
-/// `GET /tenants/{id}/api-keys` — list a tenant's keys (requires `write:members`).
+/// `GET /tenants/{id}/api-keys` — list a tenant's keys (requires `manage:service-keys`).
 pub fn list_api_keys_route(
     keys: Arc<dyn ApiKeyRepository>,
     authenticator: Arc<Authenticator>,
@@ -225,13 +228,13 @@ pub fn list_api_keys_route(
         .and(with_cloneable(keys))
         .and(with_user_with_any_permission(
             authenticator,
-            REQUIRE_WRITE_MEMBERS,
+            REQUIRE_MANAGE_SERVICE_KEYS,
         ))
         .and_then(handle_list_api_keys_route)
         .boxed()
 }
 
-/// `DELETE /tenants/{id}/api-keys/{keyId}` — revoke a key (requires `write:members`).
+/// `DELETE /tenants/{id}/api-keys/{keyId}` — revoke a key (requires `manage:service-keys`).
 pub fn delete_api_key_route(
     keys: Arc<dyn ApiKeyRepository>,
     authenticator: Arc<Authenticator>,
@@ -241,7 +244,7 @@ pub fn delete_api_key_route(
         .and(with_cloneable(keys))
         .and(with_user_with_any_permission(
             authenticator,
-            REQUIRE_WRITE_MEMBERS,
+            REQUIRE_MANAGE_SERVICE_KEYS,
         ))
         .and_then(handle_delete_api_key_route)
         .boxed()
@@ -256,7 +259,10 @@ pub fn create_my_pat_route(
         .and(warp::post())
         .and(with_body_as_json::<CreatePatRequest>(MAX_TEXT_BODY_SIZE))
         .and(with_cloneable(keys))
-        .and(with_user(authenticator))
+        .and(with_user_with_any_permission(
+            authenticator,
+            REQUIRE_MANAGE_PAT,
+        ))
         .and_then(handle_create_my_pat_route)
         .boxed()
 }
@@ -269,7 +275,10 @@ pub fn list_my_pats_route(
     warp::path!("auth" / "me" / "api-keys")
         .and(warp::get())
         .and(with_cloneable(keys))
-        .and(with_user(authenticator))
+        .and(with_user_with_any_permission(
+            authenticator,
+            REQUIRE_MANAGE_PAT,
+        ))
         .and_then(handle_list_my_pats_route)
         .boxed()
 }
@@ -282,7 +291,10 @@ pub fn delete_my_pat_route(
     warp::path!("auth" / "me" / "api-keys" / String)
         .and(warp::delete())
         .and(with_cloneable(keys))
-        .and(with_user(authenticator))
+        .and(with_user_with_any_permission(
+            authenticator,
+            REQUIRE_MANAGE_PAT,
+        ))
         .and_then(handle_delete_my_pat_route)
         .boxed()
 }

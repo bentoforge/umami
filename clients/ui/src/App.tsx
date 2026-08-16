@@ -30,15 +30,15 @@ export function App() {
         <Route index element={<ProfilePage />} />
         <Route
           path="tenants"
-          element={can("admin:system") ? <TenantsPage /> : <Navigate to="/" replace />}
+          element={can("manage:tenants") ? <TenantsPage /> : <Navigate to="/" replace />}
         />
         <Route
           path="users"
-          element={can("write:members") ? <UsersPage /> : <Navigate to="/" replace />}
+          element={can("manage:users") ? <UsersPage /> : <Navigate to="/" replace />}
         />
         <Route
           path="api-tokens"
-          element={can("write:members") ? <ApiTokensPage /> : <Navigate to="/" replace />}
+          element={can("manage:service-keys") ? <ApiTokensPage /> : <Navigate to="/" replace />}
         />
         <Route
           path="audit"

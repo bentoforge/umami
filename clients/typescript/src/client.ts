@@ -189,6 +189,10 @@ export class UmamiClient {
   getMe(): Promise<MeResponse> {
     return this.request<MeResponse>("/auth/me");
   }
+  /** Update the caller's own profile (name/locale). Blocked for `self:readonly` users. */
+  patchMe(body: { name?: string; locale?: string }): Promise<MeResponse> {
+    return this.request<MeResponse>("/auth/me", { method: "PATCH", body: JSON.stringify(body) });
+  }
 
   /** Re-scope the access token to another tenant (requires `admin:system`). Access-token only —
    * a later silent refresh returns to the home tenant. Returns the active tenant id. */
