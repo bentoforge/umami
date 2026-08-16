@@ -26,6 +26,7 @@ Relevant environment variables:
 | `UMAMI_CONFIG_BUCKET` | Use S3 config instead of the built-in default. |
 | `UMAMI_SYSTEM_TENANT_ID` | Tenant whose members get the `is:system-tenant` marker (⇒ `manage:tenants` + `switch:tenant`). |
 | `UMAMI_AUTO_INIT=true` | Bootstrap a first tenant + owner when zero tenants exist. |
+| `UMAMI_UI_DIR` | Directory of the built management SPA to serve under `/app` (default `clients/ui/dist`; absent index.html ⇒ API-only). |
 
 ---
 
