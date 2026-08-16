@@ -28,8 +28,11 @@ export function AdminLayout() {
     <div className="min-h-screen bg-slate-100 dark:bg-slate-900">
       <header className="bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700">
         <div className="mx-auto max-w-5xl px-6 py-4 flex items-center justify-between gap-3">
-          {/* Swappable logo served by umami from config `branding.logo` (default = umami wordmark). */}
-          <img src="/app/logo" alt={t("app.title")} className="h-8 w-auto" />
+          {/* Swappable logo (config `branding.logoLight`/`logoDark`); the browser picks by theme. */}
+          <picture>
+            <source srcSet="/app/logo/dark" media="(prefers-color-scheme: dark)" />
+            <img src="/app/logo/light" alt={t("app.title")} className="h-8 w-auto" />
+          </picture>
           <div className="flex items-center gap-2">
             {can("switch:tenant") && <TenantSwitcher />}
             <button onClick={() => void client.logoutAll()} className={ghostButton}>

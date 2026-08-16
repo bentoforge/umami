@@ -283,9 +283,13 @@ pub struct BrandingConfig {
     /// `:root{--brand: <r> <g> <b>; --brand-dark: <r> <g> <b>}` (space-separated RGB channels).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_css: Option<String>,
-    /// Logo image — a `data:` URI or an `http(s)` URL. Empty → the built-in default.
+    /// Logo for **light** backgrounds — a `data:` URI or an `http(s)` URL. Empty → falls back to the
+    /// dark logo, then a built-in default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub logo: Option<String>,
+    pub logo_light: Option<String>,
+    /// Logo for **dark** backgrounds. Empty → falls back to the light logo, then a built-in default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub logo_dark: Option<String>,
     /// Favicon — a `data:` URI or an `http(s)` URL. Empty → the built-in default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub favicon: Option<String>,

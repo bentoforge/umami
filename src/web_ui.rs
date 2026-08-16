@@ -70,12 +70,25 @@ pub fn ui_routes(
                 DEFAULT_FAVICON_SVG,
             ))
         });
-    let logo = warp::path!("app" / "logo")
+    // Two theme variants; each falls back to the other, then a built-in default. The UI picks via
+    // <picture media="(prefers-color-scheme: dark)">.
+    let logo_light = warp::path!("app" / "logo" / "light")
+        .and(warp::get())
+        .and(with_cloneable(config.clone()))
+        .and_then(|config: Arc<dyn ConfigRepository>| async move {
+            let brand = branding(&config).await;
+            Ok::<_, Rejection>(asset_response(
+                brand.logo_light.or(brand.logo_dark),
+                DEFAULT_LOGO_SVG,
+            ))
+        });
+    let logo_dark = warp::path!("app" / "logo" / "dark")
         .and(warp::get())
         .and(with_cloneable(config))
         .and_then(|config: Arc<dyn ConfigRepository>| async move {
+            let brand = branding(&config).await;
             Ok::<_, Rejection>(asset_response(
-                branding(&config).await.logo,
+                brand.logo_dark.or(brand.logo_light),
                 DEFAULT_LOGO_SVG,
             ))
         });
@@ -103,7 +116,8 @@ pub fn ui_routes(
         assets
             .or(branding_css)
             .or(favicon)
-            .or(logo)
+            .or(logo_light)
+            .or(logo_dark)
             .or(files)
             .or(fallback)
             .or(root)
@@ -230,13 +244,12 @@ mod tests {
                 .starts_with("text/css")
         );
 
-        // Favicon default → an SVG.
-        let res = warp::test::request()
-            .path("/app/favicon")
-            .reply(&routes)
-            .await;
-        assert_eq!(res.status(), 200);
-        assert_eq!(res.headers()["content-type"], "image/svg+xml");
+        // Favicon + both logo variants default → an SVG.
+        for path in ["/app/favicon", "/app/logo/light", "/app/logo/dark"] {
+            let res = warp::test::request().path(path).reply(&routes).await;
+            assert_eq!(res.status(), 200, "{path}");
+            assert_eq!(res.headers()["content-type"], "image/svg+xml", "{path}");
+        }
 
         // Deep client route → index.html shell (SPA), revalidated.
         let res = warp::test::request()

@@ -77,8 +77,10 @@ Relevant environment variables:
 //   serves these at /app/branding.css, /app/logo, /app/favicon. logo/favicon may be a data: URI
 //   (self-contained) or an http(s) URL. Swap the accent via customCss:
 { "customCss": ":root{--brand: 225 29 72; --brand-dark: 190 18 60}",  // space-separated RGB
-  "logo": "data:image/svg+xml;base64,…",   // or "https://cdn.example.com/logo.svg"
-  "favicon": "data:image/png;base64,…" }
+  "logoLight": "data:image/svg+xml;base64,…",  // or "https://cdn.example.com/logo-light.svg"
+  "logoDark":  "data:image/svg+xml;base64,…",  // shown in dark mode; each falls back to the other
+  "favicon":   "data:image/png;base64,…" }
+//   served at /app/logo/light, /app/logo/dark, /app/favicon; the UI picks the logo by theme.
 
 // ApiDef — a target audience + its permission projection:
 { "code": "dbx-core", "audience": "dbx-core",

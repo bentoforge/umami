@@ -361,7 +361,10 @@ export interface BrandingConfig {
   /** Extra CSS injected after the app stylesheet — override the accent via
    * `:root{--brand: <r> <g> <b>; --brand-dark: <r> <g> <b>}` (space-separated RGB channels). */
   customCss?: string;
-  logo?: string;
+  /** Logo for light backgrounds (data: URI or http(s) URL); falls back to logoDark, then default. */
+  logoLight?: string;
+  /** Logo for dark backgrounds; falls back to logoLight, then default. */
+  logoDark?: string;
   favicon?: string;
 }
 
