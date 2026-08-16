@@ -1,0 +1,24 @@
+name: CI (Rust)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/ci-rust.yml"
+  pull_request:
+    paths:
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+
+jobs:
+  verify:
+    name: fmt + clippy + build + test + audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Runs fmt --check, clippy -D warnings, build, test and cargo audit in a pinned rust container.
+      - uses: ./.github/actions/verify-rust

@@ -1,0 +1,15 @@
+# Rust build output
+target
+
+# Node artifacts (rebuilt inside the image)
+**/node_modules
+**/dist
+
+# VCS + CI + local
+.git
+.github
+.env
+.env.*
+*.md
+docs
+http

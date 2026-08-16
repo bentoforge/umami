@@ -1,0 +1,86 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  # 1. TS client lib → build, lint, typecheck, publish to npm at the tag version.
+  ts-lib:
+    name: Publish TS client lib
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: clients/typescript
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: "https://registry.npmjs.org"
+      - run: npm ci
+      - run: npx biome ci
+      - run: npm run typecheck
+      - run: npm run build
+      - name: Set version from tag
+        run: npm version --no-git-tag-version "${GITHUB_REF_NAME#v}"
+      - name: Publish
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  # 2. Management UI → build, lint, typecheck (build again inside the image later).
+  ui:
+    name: Verify UI
+    needs: ts-lib
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build the TS client lib
+        working-directory: clients/typescript
+        run: npm ci && npm run build
+      - working-directory: clients/ui
+        run: npm ci && npx biome ci && npm run typecheck && npm run build
+
+  # 3. Rust → fmt, clippy, test, audit (the release compile happens in the Docker build).
+  rust:
+    name: Verify Rust
+    needs: ui
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/verify-rust
+
+  # 4. Docker → build the self-contained image (UI baked in) and push to GHCR.
+  docker:
+    name: Build & push image
+    needs: rust
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lowercase image name
+        id: img
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          build-args: |
+            APP_VERSION=${{ github.ref_name }}
+          tags: |
+            ${{ steps.img.outputs.name }}:${{ github.ref_name }}
+            ${{ steps.img.outputs.name }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

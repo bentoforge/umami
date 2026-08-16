@@ -1,0 +1,52 @@
+name: "Verify Rust"
+description: "Run fmt --check, clippy -D warnings, build, test and cargo audit in a pinned Rust container"
+
+inputs:
+  rust-version:
+    description: "Rust version (must match a rust: Docker image tag)"
+    default: "1.97.0"
+  audit-ignore:
+    description: >
+      Comma/newline separated RustSec advisory IDs to ignore in cargo audit
+      (only for transitive, non-exploitable advisories blocked on an upstream fix).
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Cache cargo + target
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: cargo-verify-${{ runner.os }}-${{ inputs.rust-version }}-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Verify and test
+      shell: bash
+      env:
+        AUDIT_IGNORE: ${{ inputs.audit-ignore }}
+      run: |
+        AUDIT_FLAGS=""
+        for id in $(echo "$AUDIT_IGNORE" | tr ',\n' ' '); do
+          if [ -n "$id" ]; then
+            AUDIT_FLAGS="$AUDIT_FLAGS --ignore $id"
+          fi
+        done
+
+        docker run --rm \
+          -v "$GITHUB_WORKSPACE:/app" \
+          -v "$HOME/.cargo:/cargo-cache" \
+          -e CARGO_HOME=/cargo-cache \
+          -v "$GITHUB_WORKSPACE/target:/app/target" \
+          -w /app \
+          rust:${{ inputs.rust-version }} \
+          bash -c "\
+            rustup component add rustfmt clippy && \
+            cargo fmt --check && \
+            cargo clippy --all-targets -- -D warnings && \
+            cargo build && \
+            cargo test && \
+            cargo install cargo-audit --locked && \
+            cargo audit $AUDIT_FLAGS"
