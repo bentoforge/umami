@@ -44,6 +44,7 @@ Relevant environment variables:
   "customUserFields":   [ CustomFieldDef, … ],
   "security":  SecuritySettings,
   "messaging": MessagingConfig,
+  "branding":  BrandingConfig,        // white-labeling the management UI
   "apis":      [ ApiDef, … ]          // audiences + permission mapping
 }
 ```
@@ -71,6 +72,13 @@ Relevant environment variables:
 // MessagingConfig — either/both optional; when set, /auth/me/messaging-code returns deep links
 //   and every token gets the is:messaging-configured marker:
 { "whatsappNumber": "4915112345678", "telegramBot": "my_link_bot" }
+
+// BrandingConfig — white-label the UI at runtime (all optional; empty → built-in defaults). umami
+//   serves these at /app/branding.css, /app/logo, /app/favicon. logo/favicon may be a data: URI
+//   (self-contained) or an http(s) URL. Swap the accent via customCss:
+{ "customCss": ":root{--brand: 225 29 72; --brand-dark: 190 18 60}",  // space-separated RGB
+  "logo": "data:image/svg+xml;base64,…",   // or "https://cdn.example.com/logo.svg"
+  "favicon": "data:image/png;base64,…" }
 
 // ApiDef — a target audience + its permission projection:
 { "code": "dbx-core", "audience": "dbx-core",

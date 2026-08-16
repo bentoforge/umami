@@ -298,6 +298,8 @@ export interface Config {
   security: SecuritySettings;
   /** Messaging integration (Telegram/WhatsApp) settings. */
   messaging?: MessagingConfig;
+  /** White-labeling for the management UI. */
+  branding?: BrandingConfig;
   /** The catalog of target APIs umami can mint tokens for. */
   apis: ApiDef[];
 }
@@ -351,6 +353,16 @@ export interface CreateApiKeyResponse {
   /** The full `umk_…` secret — returned only once. */
   apiKey: string;
   name: string;
+}
+
+/** White-labeling for the management UI. All optional; empty → built-in defaults. `logo`/`favicon`
+ * may be a `data:` URI or an `http(s)` URL. Served at /app/branding.css, /app/logo, /app/favicon. */
+export interface BrandingConfig {
+  /** Extra CSS injected after the app stylesheet — override the accent via
+   * `:root{--brand: <r> <g> <b>; --brand-dark: <r> <g> <b>}` (space-separated RGB channels). */
+  customCss?: string;
+  logo?: string;
+  favicon?: string;
 }
 
 /** Messaging integration settings (Telegram/WhatsApp). */

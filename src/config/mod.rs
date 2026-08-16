@@ -273,6 +273,24 @@ impl MessagingConfig {
     }
 }
 
+/// White-labeling for the management UI. All optional; empty fields fall back to the built-in
+/// defaults. `logo`/`favicon` may be a `data:` URI (self-contained in the config) or an `http(s)`
+/// URL. Served by umami at `/app/branding.css`, `/app/logo`, `/app/favicon` (see `web_ui`).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct BrandingConfig {
+    /// Extra CSS injected after the app's stylesheet — override the accent via
+    /// `:root{--brand: <r> <g> <b>; --brand-dark: <r> <g> <b>}` (space-separated RGB channels).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_css: Option<String>,
+    /// Logo image — a `data:` URI or an `http(s)` URL. Empty → the built-in default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub logo: Option<String>,
+    /// Favicon — a `data:` URI or an `http(s)` URL. Empty → the built-in default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub favicon: Option<String>,
+}
+
 /// System security/token settings.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -325,6 +343,9 @@ pub struct Config {
     /// Messaging integration (Telegram/WhatsApp) settings.
     #[serde(default)]
     pub messaging: MessagingConfig,
+    /// White-labeling for the management UI (accent CSS, logo, favicon).
+    #[serde(default)]
+    pub branding: BrandingConfig,
     /// Target APIs (audiences) umami can mint tokens for — see [`ApiDef`] and `docs/AUDIENCES.md`.
     #[serde(default)]
     pub apis: Vec<ApiDef>,
@@ -569,6 +590,7 @@ impl Default for Config {
                 messaging_code_ttl_secs: DEFAULT_MESSAGING_CODE_TTL_SECS,
             },
             messaging: MessagingConfig::default(),
+            branding: BrandingConfig::default(),
             // The umami admin API. This is a deliberately MINIMAL, bootstrap-only mapping: it grants
             // the system-tenant owner enough to log in and administer (so they can then write the
             // real config), maps the cross-tenant + messaging + readonly markers, and stops there.

@@ -442,7 +442,7 @@ async fn app() -> anyhow::Result<()> {
         // config (global catalog + settings)
         get_config_route(config_repository.clone(), authenticator.clone()),
         custom_fields_route(config_repository.clone(), authenticator.clone()),
-        put_config_route(config_repository, authenticator.clone()),
+        put_config_route(config_repository.clone(), authenticator.clone()),
         // audit log (read)
         tenant_audit_route(audit_repository.clone(), authenticator.clone()),
         my_audit_route(audit_repository, authenticator)
@@ -451,7 +451,7 @@ async fn app() -> anyhow::Result<()> {
     // Optionally serve the built management UI (SPA) under /app from the same origin. Mounted only
     // when UMAMI_UI_DIR contains a built index.html; otherwise umami runs API-only.
     let ui_dir = env::var("UMAMI_UI_DIR").unwrap_or_else(|_| "clients/ui/dist".to_owned());
-    match ui_routes(&ui_dir) {
+    match ui_routes(&ui_dir, config_repository.clone()) {
         Some(ui) => {
             tracing::info!("Serving management UI from '{ui_dir}' under /app");
             run_webserver(api.or(ui)).await
