@@ -59,6 +59,7 @@ use crate::auth::login::{login_route, logout_route, refresh_route};
 use crate::auth::me::{change_password_route, logout_all_route, me_route};
 use crate::auth::secretbox::SecretBox;
 use crate::auth::session::DynamoSessionRepository;
+use crate::auth::switch_tenant::switch_tenant_route;
 use crate::auth::tokens::{EnvKeyRepository, KeyRepository, TokenIssuer, jwks_route};
 use crate::auth::totp::{totp_disable_route, totp_setup_route, totp_verify_route};
 use crate::auth::webauthn::WebauthnService;
@@ -222,6 +223,7 @@ async fn app() -> anyhow::Result<()> {
             authenticator.clone()
         ),
         logout_all_route(user_repository.clone(), authenticator.clone()),
+        switch_tenant_route(auth_context.clone(), authenticator.clone()),
         change_password_route(
             user_repository.clone(),
             config_repository.clone(),

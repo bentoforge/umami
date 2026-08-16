@@ -15,7 +15,7 @@ const STATUSES: TenantStatus[] = [
 
 /** System-admin screen: list / create / edit / delete tenants. */
 export function TenantsPage() {
-  const { client, me } = useUmami();
+  const { client, me, switchTenant } = useUmami();
   const [tenants, setTenants] = useState<Tenant[] | null>(null);
   const [defs, setDefs] = useState<CustomFieldDef[]>([]);
   const [truncated, setTruncated] = useState(false);
@@ -149,6 +149,12 @@ export function TenantsPage() {
                       </td>
                     ))}
                     <td className={td + " text-right whitespace-nowrap"}>
+                      <button
+                        className={ghostButton}
+                        onClick={() => void switchTenant(tenant.tenantId, tenant.name)}
+                      >
+                        Switch to
+                      </button>{" "}
                       <button
                         className={ghostButton}
                         onClick={() =>

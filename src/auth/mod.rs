@@ -12,6 +12,7 @@ pub mod me;
 pub mod password;
 pub mod secretbox;
 pub mod session;
+pub mod switch_tenant;
 pub mod tokens;
 pub mod totp;
 pub mod webauthn;

@@ -30,7 +30,7 @@ export function App() {
         <Route index element={<ProfilePage />} />
         <Route
           path="tenants"
-          element={can("admin:tenant") ? <TenantsPage /> : <Navigate to="/" replace />}
+          element={can("admin:system") ? <TenantsPage /> : <Navigate to="/" replace />}
         />
         <Route
           path="users"

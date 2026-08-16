@@ -187,6 +187,17 @@ export class UmamiClient {
     return this.request<MeResponse>("/auth/me");
   }
 
+  /** Re-scope the access token to another tenant (requires `admin:system`). Access-token only —
+   * a later silent refresh returns to the home tenant. Returns the active tenant id. */
+  async switchTenant(tenantId: string): Promise<string> {
+    const data = await this.request<TokenResponse>("/auth/switch-tenant", {
+      method: "POST",
+      body: JSON.stringify({ tenantId }),
+    });
+    this.setToken(data.accessToken);
+    return this.getClaims()?.tenant ?? tenantId;
+  }
+
   // ── MFA: TOTP ─────────────────────────────────────────────────────────────────
 
   totpSetup(): Promise<TotpSetup> {
