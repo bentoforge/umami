@@ -1,13 +1,13 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { useUmami } from "./auth/UmamiProvider";
 import { AdminLayout } from "./pages/AdminLayout";
+import { ApiTokensPage } from "./pages/ApiTokensPage";
+import { AuditPage } from "./pages/AuditPage";
+import { ConfigPage } from "./pages/ConfigPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ProfilePage } from "./pages/ProfilePage";
 import { TenantsPage } from "./pages/TenantsPage";
 import { UsersPage } from "./pages/UsersPage";
-import { ApiTokensPage } from "./pages/ApiTokensPage";
-import { AuditPage } from "./pages/AuditPage";
-import { ConfigPage } from "./pages/ConfigPage";
 
 export function App() {
   const { me, loading, client } = useUmami();

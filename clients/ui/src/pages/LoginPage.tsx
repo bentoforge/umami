@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { type FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { UmamiError } from "umami-client";
 import { useUmami } from "../auth/UmamiProvider";
@@ -88,7 +88,12 @@ export function LoginPage() {
             {t("login.submit")}
           </button>
         </form>
-        <button type="button" onClick={onPasskey} disabled={busy || !username} className={secondaryButtonClass}>
+        <button
+          type="button"
+          onClick={onPasskey}
+          disabled={busy || !username}
+          className={secondaryButtonClass}
+        >
           {t("login.passkey")}
         </button>
       </div>
@@ -99,7 +104,9 @@ export function LoginPage() {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">{label}</span>
+      <span className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+        {label}
+      </span>
       {children}
     </label>
   );

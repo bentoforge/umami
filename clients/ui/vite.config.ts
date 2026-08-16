@@ -1,5 +1,5 @@
-import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { defineConfig } from "vite";
 
 // Dev: proxy the umami API paths to the local server so the SPA is same-origin (the HttpOnly
 // refresh cookie then works). In production, host the UI on the same origin as umami (or set

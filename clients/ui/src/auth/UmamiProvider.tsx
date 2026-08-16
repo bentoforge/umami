@@ -1,5 +1,5 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { UmamiClient, type MeResponse } from "umami-client";
+import { createContext, type ReactNode, useContext, useEffect, useMemo, useState } from "react";
+import { type MeResponse, UmamiClient } from "umami-client";
 
 interface AuthContextValue {
   client: UmamiClient;

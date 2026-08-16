@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
 import type { CustomFieldDef, Tenant, TenantStatus } from "umami-client";
 import { useUmami } from "../auth/UmamiProvider";
-import { Banner, CustomFieldsForm, Field, errMsg, formatFieldValue } from "../components";
+import { Banner, CustomFieldsForm, errMsg, Field, formatFieldValue } from "../components";
 import { card, dangerButton, ghostButton, input, primaryButton, td, th } from "../ui";
 
 const STATUSES: TenantStatus[] = [
@@ -433,7 +433,11 @@ function CreateTenant({
           <input className={input} value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
         <Field label="Owner name">
-          <input className={input} value={ownerName} onChange={(e) => setOwnerName(e.target.value)} />
+          <input
+            className={input}
+            value={ownerName}
+            onChange={(e) => setOwnerName(e.target.value)}
+          />
         </Field>
         <Field label="Owner username (defaults to email)">
           <input

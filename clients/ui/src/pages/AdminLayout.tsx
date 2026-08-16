@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { NavLink, Outlet } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import { NavLink, Outlet } from "react-router-dom";
 import type { Tenant } from "umami-client";
 import { useUmami } from "../auth/UmamiProvider";
 import { errMsg } from "../components";
@@ -46,8 +46,8 @@ export function AdminLayout() {
         {switched && (
           <div className="bg-amber-50 dark:bg-amber-950/40 border-t border-amber-200 dark:border-amber-900">
             <div className="mx-auto max-w-5xl px-6 py-1.5 text-xs text-amber-700 dark:text-amber-300">
-              Viewing tenant <strong>{activeTenantName ?? activeTenantId}</strong> — you are acting as
-              a system admin.
+              Viewing tenant <strong>{activeTenantName ?? activeTenantId}</strong> — you are acting
+              as a system admin.
             </div>
           </div>
         )}

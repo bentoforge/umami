@@ -12,14 +12,21 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist", "src", "README.md"],
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "lint": "biome check",
+    "format": "biome check --write"
   },
   "license": "MIT",
   "devDependencies": {
+    "@biomejs/biome": "^2.5.8",
     "typescript": "^5.6.0"
   }
 }

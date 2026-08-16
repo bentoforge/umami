@@ -1,7 +1,14 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
 import type { CustomFieldDef, UserStatus, UserView } from "umami-client";
 import { useUmami } from "../auth/UmamiProvider";
-import { Banner, CheckboxTags, CustomFieldsForm, Field, errMsg, formatFieldValue } from "../components";
+import {
+  Banner,
+  CheckboxTags,
+  CustomFieldsForm,
+  errMsg,
+  Field,
+  formatFieldValue,
+} from "../components";
 import { card, dangerButton, ghostButton, input, primaryButton, td, th } from "../ui";
 
 const STATUSES: UserStatus[] = ["Active", "Locked", "Invited"];
@@ -31,7 +38,9 @@ export function UsersPage() {
   }, [client]);
 
   const resetPassword = async (user: UserView) => {
-    if (!window.confirm(`Reset password for "${user.username}"? A temporary one will be generated.`))
+    if (
+      !window.confirm(`Reset password for "${user.username}"? A temporary one will be generated.`)
+    )
       return;
     setError(null);
     setResetPw(null);
@@ -183,7 +192,9 @@ export function UsersPage() {
                     <td className={td + " text-right whitespace-nowrap"}>
                       <button
                         className={ghostButton}
-                        onClick={() => setEditing((id) => (id === user.userId ? null : user.userId))}
+                        onClick={() =>
+                          setEditing((id) => (id === user.userId ? null : user.userId))
+                        }
                       >
                         Edit
                       </button>{" "}
@@ -191,11 +202,17 @@ export function UsersPage() {
                         Reset pw
                       </button>{" "}
                       {user.status === "Locked" ? (
-                        <button className={ghostButton} onClick={() => void setStatus(user, "Active")}>
+                        <button
+                          className={ghostButton}
+                          onClick={() => void setStatus(user, "Active")}
+                        >
                           Unlock
                         </button>
                       ) : (
-                        <button className={ghostButton} onClick={() => void setStatus(user, "Locked")}>
+                        <button
+                          className={ghostButton}
+                          onClick={() => void setStatus(user, "Locked")}
+                        >
                           Suspend
                         </button>
                       )}{" "}

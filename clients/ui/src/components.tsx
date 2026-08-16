@@ -59,7 +59,9 @@ export function CustomFieldsForm({
                 className={input}
                 type="number"
                 value={value === null || value === undefined ? "" : String(value)}
-                onChange={(e) => set(def.key, e.target.value === "" ? undefined : Number(e.target.value))}
+                onChange={(e) =>
+                  set(def.key, e.target.value === "" ? undefined : Number(e.target.value))
+                }
               />
             ) : (
               <input

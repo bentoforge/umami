@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ApiKeyView } from "umami-client";
 import { useUmami } from "../auth/UmamiProvider";
-import { Banner, CheckboxTags, Field, errMsg } from "../components";
+import { Banner, CheckboxTags, errMsg, Field } from "../components";
 import { card, dangerButton, input, primaryButton, td, th } from "../ui";
 
 /** Own-tenant screen: manage service keys (M2M machine principals). Personal access tokens live in
@@ -45,8 +45,8 @@ export function ApiTokensPage() {
         <div>
           <h1 className="text-xl font-semibold text-slate-900 dark:text-white">API tokens</h1>
           <p className="text-sm text-slate-500">
-            Service keys act as the tenant (M2M). Exchange one at <code>POST /auth/token</code> for a
-            short-lived access token.
+            Service keys act as the tenant (M2M). Exchange one at <code>POST /auth/token</code> for
+            a short-lived access token.
           </p>
         </div>
         <button className={primaryButton} onClick={() => setCreating((v) => !v)}>
@@ -219,7 +219,11 @@ function CreateKey({
           />
         </Field>
       </div>
-      <button className={primaryButton} disabled={busy || !name.trim()} onClick={() => void submit()}>
+      <button
+        className={primaryButton}
+        disabled={busy || !name.trim()}
+        onClick={() => void submit()}
+      >
         Create key
       </button>
     </section>

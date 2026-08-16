@@ -20,9 +20,9 @@ import type {
   MessagingLink,
   MetricUsage,
   MfaStatus,
-  ResolvedMessagingUser,
   PatchUserRequest,
   ResetPasswordResponse,
+  ResolvedMessagingUser,
   Tenant,
   TenantStatus,
   TokenResponse,
@@ -113,11 +113,7 @@ export class UmamiClient {
   }
 
   /** Performs a request, refreshing once on a 401 for authenticated calls. */
-  private async request<T>(
-    path: string,
-    init: RequestInit = {},
-    useAuth = true,
-  ): Promise<T> {
+  private async request<T>(path: string, init: RequestInit = {}, useAuth = true): Promise<T> {
     let response = await this.doFetch(path, init, useAuth);
     if (response.status === 401 && useAuth) {
       const refreshed = await this.refresh().catch(() => false);
@@ -232,7 +228,9 @@ export class UmamiClient {
       { method: "POST" },
     );
     const publicKey = toCreationOptions(start.options.publicKey);
-    const credential = (await navigator.credentials.create({ publicKey })) as PublicKeyCredential | null;
+    const credential = (await navigator.credentials.create({
+      publicKey,
+    })) as PublicKeyCredential | null;
     if (!credential) throw new Error("Passkey registration was cancelled");
     return this.request<{ credentialId: string }>("/auth/webauthn/register/finish", {
       method: "POST",
@@ -253,7 +251,9 @@ export class UmamiClient {
       false,
     );
     const publicKey = toRequestOptions(start.options.publicKey);
-    const credential = (await navigator.credentials.get({ publicKey })) as PublicKeyCredential | null;
+    const credential = (await navigator.credentials.get({
+      publicKey,
+    })) as PublicKeyCredential | null;
     if (!credential) throw new Error("Passkey login was cancelled");
     const data = await this.request<TokenResponse>(
       "/auth/webauthn/login/finish",
@@ -318,8 +318,14 @@ export class UmamiClient {
   getTenant(tenantId: string): Promise<Tenant> {
     return this.request<Tenant>(`/tenants/${enc(tenantId)}`);
   }
-  patchTenant(tenantId: string, body: Partial<Pick<Tenant, "name" | "plan" | "customFields">>): Promise<Tenant> {
-    return this.request<Tenant>(`/tenants/${enc(tenantId)}`, { method: "PATCH", body: JSON.stringify(body) });
+  patchTenant(
+    tenantId: string,
+    body: Partial<Pick<Tenant, "name" | "plan" | "customFields">>,
+  ): Promise<Tenant> {
+    return this.request<Tenant>(`/tenants/${enc(tenantId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
   }
   patchStatus(tenantId: string, status: TenantStatus): Promise<Tenant> {
     return this.request<Tenant>(`/tenants/${enc(tenantId)}/status`, {
@@ -339,7 +345,10 @@ export class UmamiClient {
   getEntitlements(tenantId: string): Promise<EntitlementsResponse> {
     return this.request<EntitlementsResponse>(`/tenants/${enc(tenantId)}/entitlements`);
   }
-  assignPackage(tenantId: string, request: { code: string; monthlyPrice?: string }): Promise<Tenant> {
+  assignPackage(
+    tenantId: string,
+    request: { code: string; monthlyPrice?: string },
+  ): Promise<Tenant> {
     return this.request<Tenant>(`/tenants/${enc(tenantId)}/packages`, {
       method: "POST",
       body: JSON.stringify(request),
@@ -405,7 +414,10 @@ export class UmamiClient {
     return this.request<{ users: UserView[]; truncated: boolean }>(`/users${qs}`);
   }
   patchUser(userId: string, body: PatchUserRequest): Promise<UserView> {
-    return this.request<UserView>(`/users/${enc(userId)}`, { method: "PATCH", body: JSON.stringify(body) });
+    return this.request<UserView>(`/users/${enc(userId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
   }
   /** Hard-delete a user in the caller's tenant (cannot delete your own account). */
   deleteUser(userId: string): Promise<{ status: string }> {

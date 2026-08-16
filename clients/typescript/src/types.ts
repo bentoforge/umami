@@ -121,13 +121,7 @@ export interface MeResponse {
 
 // ── Tenants ──────────────────────────────────────────────────────────────────
 
-export type TenantStatus =
-  | "Lead"
-  | "Testing"
-  | "Onboarding"
-  | "Active"
-  | "Suspended"
-  | "Churned";
+export type TenantStatus = "Lead" | "Testing" | "Onboarding" | "Active" | "Suspended" | "Churned";
 
 export type FeatureToggle = "standard" | "on" | "off";
 
@@ -384,7 +378,6 @@ export interface MessagingCodeResponse {
   telegramUrl?: string;
   whatsappUrl?: string;
 }
-
 
 /** An external messaging identity mapped to a user. */
 export interface MessagingLink {

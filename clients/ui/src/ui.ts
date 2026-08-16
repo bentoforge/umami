@@ -14,5 +14,6 @@ export const input =
 
 export const card = "rounded-2xl bg-white dark:bg-slate-800 shadow p-6";
 
-export const th = "text-left text-xs font-semibold uppercase tracking-wide text-slate-500 px-3 py-2";
+export const th =
+  "text-left text-xs font-semibold uppercase tracking-wide text-slate-500 px-3 py-2";
 export const td = "px-3 py-2 text-sm text-slate-800 dark:text-slate-200 align-middle";
