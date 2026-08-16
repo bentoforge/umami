@@ -81,3 +81,7 @@ pub const DEFAULT_ACCESS_TTL_SECS: u64 = 600;
 
 /// Default refresh/session lifetime in seconds (30 days). Override via `UMAMI_REFRESH_TTL_SECS`.
 pub const DEFAULT_REFRESH_TTL_SECS: u64 = 30 * 24 * 60 * 60;
+
+/// Default validity window for a messaging link code (10 min). A code older than this is treated as
+/// expired: the self endpoint rotates it, and the machine link endpoint rejects it.
+pub const DEFAULT_MESSAGING_CODE_TTL_SECS: u64 = 600;

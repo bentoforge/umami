@@ -9,9 +9,9 @@ pub mod service;
 
 use crate::constants::{
     ADMIN_SYSTEM_PERMISSION, ADMIN_TENANT_PERMISSION, DEFAULT_ACCESS_TTL_SECS,
-    DEFAULT_REFRESH_TTL_SECS, MANAGE_CONFIG_PERMISSION, MESSAGING_LINK_PERMISSION,
-    MESSAGING_RESOLVE_PERMISSION, ROLE_MEMBER, ROLE_OWNER, SYSTEM_TENANT_MARKER,
-    WRITE_MEMBERS_PERMISSION, WRITE_USAGE_PERMISSION,
+    DEFAULT_MESSAGING_CODE_TTL_SECS, DEFAULT_REFRESH_TTL_SECS, MANAGE_CONFIG_PERMISSION,
+    MESSAGING_LINK_PERMISSION, MESSAGING_RESOLVE_PERMISSION, ROLE_MEMBER, ROLE_OWNER,
+    SYSTEM_TENANT_MARKER, WRITE_MEMBERS_PERMISSION, WRITE_USAGE_PERMISSION,
 };
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
@@ -271,6 +271,15 @@ pub struct SecuritySettings {
     pub access_ttl_secs: u64,
     /// Refresh/session lifetime (seconds).
     pub refresh_ttl_secs: u64,
+    /// Validity window for a messaging link code (seconds). Older codes are rotated on read and
+    /// rejected on link.
+    #[serde(default = "default_messaging_code_ttl_secs")]
+    pub messaging_code_ttl_secs: u64,
+}
+
+/// Serde default for [`SecuritySettings::messaging_code_ttl_secs`] (back-compat for older configs).
+fn default_messaging_code_ttl_secs() -> u64 {
+    DEFAULT_MESSAGING_CODE_TTL_SECS
 }
 
 /// The whole configuration document.
@@ -514,6 +523,7 @@ impl Default for Config {
                 min_password_length: 8,
                 access_ttl_secs: DEFAULT_ACCESS_TTL_SECS,
                 refresh_ttl_secs: DEFAULT_REFRESH_TTL_SECS,
+                messaging_code_ttl_secs: DEFAULT_MESSAGING_CODE_TTL_SECS,
             },
             // The umami admin API: role → permission mapping lives here (not on the roles), plus the
             // synthetic is:system-tenant → cross-tenant admin permission.

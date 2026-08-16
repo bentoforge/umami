@@ -12,8 +12,9 @@ use anyhow::Context;
 use async_trait::async_trait;
 use aws_sdk_dynamodb::types::{
     BillingMode, GlobalSecondaryIndex, KeySchemaElement, KeyType, Projection, ProjectionType,
+    ReturnValue,
 };
-use chrono::{SecondsFormat, Utc};
+use chrono::{DateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use warp::http::StatusCode;
 use wasabi::aws::dynamodb::client::DynamoClient;
@@ -51,14 +52,21 @@ pub struct LinkSubject {
 /// Persistence for messaging codes + links.
 #[async_trait]
 pub trait MessagingRepository: Send + Sync {
-    /// Returns the user's existing code, or creates one if they have none.
-    async fn ensure_code(&self, user_id: &str, tenant_id: &str) -> anyhow::Result<String>;
+    /// Returns the user's current code when it is younger than `ttl_secs`; otherwise mints a fresh
+    /// one. The bool is `true` when a new code was generated (so callers can audit only real mints).
+    async fn current_code(
+        &self,
+        user_id: &str,
+        tenant_id: &str,
+        ttl_secs: i64,
+    ) -> anyhow::Result<(String, bool)>;
 
     /// Replaces the user's code with a fresh one (invalidating the old), returning it.
     async fn regenerate_code(&self, user_id: &str, tenant_id: &str) -> anyhow::Result<String>;
 
-    /// Resolves a link code to its owning subject.
-    async fn subject_for_code(&self, code: &str) -> anyhow::Result<Option<LinkSubject>>;
+    /// Atomically **consumes** a link code (single-use): deletes it and, when it existed and was
+    /// still within `ttl_secs`, returns its owning subject. Expired/absent → `None` (⇒ reject).
+    async fn consume_code(&self, code: &str, ttl_secs: i64) -> anyhow::Result<Option<LinkSubject>>;
 
     /// Creates a `(platform, externalId) → user` mapping. Idempotent for the same user; a conflict
     /// (already mapped to a different user) is a client error.
@@ -183,6 +191,14 @@ impl DynamoMessagingRepository {
     }
 }
 
+/// Whether an RFC3339 `created` timestamp is within `ttl_secs` of now (unparseable → expired).
+fn is_fresh(created: &str, ttl_secs: i64) -> bool {
+    match DateTime::parse_from_rfc3339(created) {
+        Ok(ts) => (Utc::now() - ts.with_timezone(&Utc)).num_seconds() < ttl_secs,
+        Err(_) => false,
+    }
+}
+
 /// A GSI keyed by a single hash attribute, projecting all attributes.
 fn hash_gsi(
     index_name: &str,
@@ -235,11 +251,20 @@ fn hash_range_gsi(
 #[async_trait]
 impl MessagingRepository for DynamoMessagingRepository {
     #[tracing::instrument(level = "debug", skip(self), err(Display))]
-    async fn ensure_code(&self, user_id: &str, tenant_id: &str) -> anyhow::Result<String> {
-        if let Some(entity) = self.code_entity(user_id).await? {
-            return Ok(entity.code);
+    async fn current_code(
+        &self,
+        user_id: &str,
+        tenant_id: &str,
+        ttl_secs: i64,
+    ) -> anyhow::Result<(String, bool)> {
+        if let Some(entity) = self.code_entity(user_id).await?
+            && is_fresh(&entity.created, ttl_secs)
+        {
+            return Ok((entity.code, false));
         }
-        self.put_new_code(user_id, tenant_id).await
+        // None yet, or the existing one has expired → rotate.
+        let code = self.regenerate_code(user_id, tenant_id).await?;
+        Ok((code, true))
     }
 
     #[tracing::instrument(level = "debug", skip(self), err(Display))]
@@ -258,19 +283,28 @@ impl MessagingRepository for DynamoMessagingRepository {
     }
 
     #[tracing::instrument(level = "debug", skip(self), err(Display))]
-    async fn subject_for_code(&self, code: &str) -> anyhow::Result<Option<LinkSubject>> {
-        let result = self
+    async fn consume_code(&self, code: &str, ttl_secs: i64) -> anyhow::Result<Option<LinkSubject>> {
+        // Atomic single-use: delete the row and inspect what was there. Under a race, only one
+        // caller receives the old item; a concurrent second delete returns nothing. Expired rows are
+        // deleted too (cleanup) but still rejected.
+        let output = self
             .client
-            .get_item(TABLE_CODES)
+            .delete_item(TABLE_CODES)
             .key(FIELD_CODE, str(code))
-            .consistent_read(true)
+            .return_values(ReturnValue::AllOld)
             .send()
             .await
-            .context("Error reading 'messaging-codes'")?;
-        let entity: Option<CodeEntity> = deserialize_entity(result.item)?;
-        Ok(entity.map(|entity| LinkSubject {
-            user_id: entity.user_id,
-            tenant_id: entity.tenant_id,
+            .context("Error consuming 'messaging-codes'")?;
+        let entity: Option<CodeEntity> = deserialize_entity(output.attributes)?;
+        Ok(entity.and_then(|entity| {
+            if is_fresh(&entity.created, ttl_secs) {
+                Some(LinkSubject {
+                    user_id: entity.user_id,
+                    tenant_id: entity.tenant_id,
+                })
+            } else {
+                None
+            }
         }))
     }
 
@@ -380,5 +414,22 @@ impl MessagingRepository for DynamoMessagingRepository {
                 }
             })?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_fresh;
+    use chrono::{Duration, SecondsFormat, Utc};
+
+    #[test]
+    fn freshness_respects_ttl() {
+        let recent =
+            (Utc::now() - Duration::seconds(60)).to_rfc3339_opts(SecondsFormat::Millis, true);
+        let old =
+            (Utc::now() - Duration::seconds(1200)).to_rfc3339_opts(SecondsFormat::Millis, true);
+        assert!(is_fresh(&recent, 600));
+        assert!(!is_fresh(&old, 600));
+        assert!(!is_fresh("not-a-timestamp", 600));
     }
 }

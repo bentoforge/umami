@@ -284,12 +284,26 @@ async fn app() -> anyhow::Result<()> {
         list_my_pats_route(api_key_repository.clone(), authenticator.clone()),
         delete_my_pat_route(api_key_repository, authenticator.clone()),
         // messaging links (self-service code + own links)
-        my_code_route(messaging_repository.clone(), authenticator.clone()),
-        regenerate_code_route(messaging_repository.clone(), authenticator.clone()),
+        my_code_route(
+            messaging_repository.clone(),
+            config_repository.clone(),
+            audit_repository.clone(),
+            authenticator.clone()
+        ),
+        regenerate_code_route(
+            messaging_repository.clone(),
+            audit_repository.clone(),
+            authenticator.clone()
+        ),
         my_links_route(messaging_repository.clone(), authenticator.clone()),
         delete_my_link_route(messaging_repository.clone(), authenticator.clone()),
         // messaging links (machine: link via code + resolve identity)
-        create_link_route(messaging_repository.clone(), authenticator.clone()),
+        create_link_route(
+            messaging_repository.clone(),
+            config_repository.clone(),
+            audit_repository.clone(),
+            authenticator.clone()
+        ),
         resolve_route(
             ResolveDeps {
                 messaging: messaging_repository,

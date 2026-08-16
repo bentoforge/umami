@@ -263,6 +263,8 @@ export interface SecuritySettings {
   minPasswordLength: number;
   accessTtlSecs: number;
   refreshTtlSecs: number;
+  /** Validity window for a messaging link code (seconds); older codes rotate on read / reject on link. */
+  messagingCodeTtlSecs?: number;
 }
 /** An ordered permission rule: when `when` holds against the accumulated subject set, `grant` is
  * folded in (later rules see earlier grants). An empty `when` always applies. */

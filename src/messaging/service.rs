@@ -7,6 +7,8 @@
 //!   minted token. Both permissions are held only by system-tenant service keys (see the config
 //!   `scope:messaging-*` mappings gated on `is:system-tenant`).
 
+use crate::audit::repository::{AuditRepository, record_best_effort};
+use crate::audit::{AuditSeverity, NewAuditEntry};
 use crate::auth::broker::{MintParams, mint_for_api};
 use crate::auth::tokens::TokenIssuer;
 use crate::config::repository::ConfigRepository;
@@ -78,14 +80,18 @@ struct ResolvedUser {
 
 // ── Routes ──────────────────────────────────────────────────────────────────────
 
-/// `GET /auth/me/messaging-code` — the caller's link code (created on first read).
+/// `GET /auth/me/messaging-code` — the caller's link code (valid one, or freshly rotated).
 pub fn my_code_route(
     messaging: Arc<dyn MessagingRepository>,
+    config: Arc<dyn ConfigRepository>,
+    audit: Arc<dyn AuditRepository>,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("auth" / "me" / "messaging-code")
         .and(warp::get())
         .and(with_cloneable(messaging))
+        .and(with_cloneable(config))
+        .and(with_cloneable(audit))
         .and(with_user(authenticator))
         .and_then(handle_my_code_route)
         .boxed()
@@ -94,11 +100,13 @@ pub fn my_code_route(
 /// `POST /auth/me/messaging-code/regenerate` — replace the caller's link code.
 pub fn regenerate_code_route(
     messaging: Arc<dyn MessagingRepository>,
+    audit: Arc<dyn AuditRepository>,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("auth" / "me" / "messaging-code" / "regenerate")
         .and(warp::post())
         .and(with_cloneable(messaging))
+        .and(with_cloneable(audit))
         .and(with_user(authenticator))
         .and_then(handle_regenerate_code_route)
         .boxed()
@@ -133,12 +141,16 @@ pub fn delete_my_link_route(
 /// `POST /messaging/links` — machine: claim a mapping from a link code (`messaging:link`).
 pub fn create_link_route(
     messaging: Arc<dyn MessagingRepository>,
+    config: Arc<dyn ConfigRepository>,
+    audit: Arc<dyn AuditRepository>,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("messaging" / "links")
         .and(warp::post())
         .and(with_body_as_json::<LinkRequest>(MAX_TEXT_BODY_SIZE))
         .and(with_cloneable(messaging))
+        .and(with_cloneable(config))
+        .and(with_cloneable(audit))
         .and(with_user_with_any_permission(authenticator, REQUIRE_LINK))
         .and_then(handle_create_link_route)
         .boxed()
@@ -181,9 +193,11 @@ pub fn resolve_route(
 #[tracing::instrument(level = "debug", name = "GET /auth/me/messaging-code", skip_all)]
 async fn handle_my_code_route(
     messaging: Arc<dyn MessagingRepository>,
+    config: Arc<dyn ConfigRepository>,
+    audit: Arc<dyn AuditRepository>,
     caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(my_code(messaging, caller).await)
+    into_response(my_code(messaging, config, audit, caller).await)
 }
 
 #[tracing::instrument(
@@ -193,9 +207,10 @@ async fn handle_my_code_route(
 )]
 async fn handle_regenerate_code_route(
     messaging: Arc<dyn MessagingRepository>,
+    audit: Arc<dyn AuditRepository>,
     caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(regenerate_code(messaging, caller).await)
+    into_response(regenerate_code(messaging, audit, caller).await)
 }
 
 #[tracing::instrument(level = "debug", name = "GET /auth/me/messaging-links", skip_all)]
@@ -224,9 +239,11 @@ async fn handle_delete_my_link_route(
 async fn handle_create_link_route(
     request: LinkRequest,
     messaging: Arc<dyn MessagingRepository>,
+    config: Arc<dyn ConfigRepository>,
+    audit: Arc<dyn AuditRepository>,
     _caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(create_link(request, messaging).await)
+    into_response(create_link(request, messaging, config, audit).await)
 }
 
 #[tracing::instrument(level = "debug", name = "GET /messaging/resolve", skip_all)]
@@ -242,22 +259,45 @@ async fn handle_resolve_route(
 
 async fn my_code(
     messaging: Arc<dyn MessagingRepository>,
+    config: Arc<dyn ConfigRepository>,
+    audit: Arc<dyn AuditRepository>,
     caller: AuthUser,
 ) -> anyhow::Result<CodeResponse> {
-    let code = messaging
-        .ensure_code(caller.user_id()?, caller.tenant_id()?)
-        .await?;
+    let user_id = caller.user_id()?;
+    let tenant_id = caller.tenant_id()?;
+    let ttl_secs = config.current().await?.security.messaging_code_ttl_secs as i64;
+
+    let (code, generated) = messaging.current_code(user_id, tenant_id, ttl_secs).await?;
+    if generated {
+        audit_code_generated(&audit, tenant_id, user_id).await;
+    }
     Ok(CodeResponse { code })
 }
 
 async fn regenerate_code(
     messaging: Arc<dyn MessagingRepository>,
+    audit: Arc<dyn AuditRepository>,
     caller: AuthUser,
 ) -> anyhow::Result<CodeResponse> {
-    let code = messaging
-        .regenerate_code(caller.user_id()?, caller.tenant_id()?)
-        .await?;
+    let user_id = caller.user_id()?;
+    let tenant_id = caller.tenant_id()?;
+    let code = messaging.regenerate_code(user_id, tenant_id).await?;
+    audit_code_generated(&audit, tenant_id, user_id).await;
     Ok(CodeResponse { code })
+}
+
+/// Records a "link code generated" event (neutral — benign self-service).
+async fn audit_code_generated(audit: &Arc<dyn AuditRepository>, tenant_id: &str, user_id: &str) {
+    record_best_effort(
+        audit,
+        NewAuditEntry::new(
+            AuditSeverity::Neutral,
+            Some(tenant_id.to_owned()),
+            Some(user_id.to_owned()),
+            "Messaging link code generated".to_owned(),
+        ),
+    )
+    .await;
 }
 
 async fn my_links(
@@ -284,6 +324,8 @@ async fn delete_my_link(
 async fn create_link(
     request: LinkRequest,
     messaging: Arc<dyn MessagingRepository>,
+    config: Arc<dyn ConfigRepository>,
+    audit: Arc<dyn AuditRepository>,
 ) -> anyhow::Result<Value> {
     let platform = normalize_platform(&request.platform)?;
     let external_id = request.external_id.trim().to_owned();
@@ -292,14 +334,43 @@ async fn create_link(
     }
     // Codes are uppercase; accept case-insensitively.
     let code = request.code.trim().to_uppercase();
+    let ttl_secs = config.current().await?.security.messaging_code_ttl_secs as i64;
 
-    let subject = match messaging.subject_for_code(&code).await? {
+    // Single-use: consuming deletes the code; only a still-valid one yields a subject.
+    let subject = match messaging.consume_code(&code, ttl_secs).await? {
         Some(subject) => subject,
-        None => status_bail!(StatusCode::NOT_FOUND, "Invalid link code"),
+        None => {
+            // No tenant/user context on a bad code — record the failed attempt globally.
+            record_best_effort(
+                &audit,
+                NewAuditEntry::new(
+                    AuditSeverity::Bad,
+                    None,
+                    None,
+                    format!(
+                        "Messaging link rejected (invalid/expired code) for platform '{platform}'"
+                    ),
+                ),
+            )
+            .await;
+            status_bail!(StatusCode::NOT_FOUND, "Invalid or expired link code");
+        }
     };
+
     messaging
         .create_link(&subject, &platform, &external_id)
         .await?;
+
+    record_best_effort(
+        &audit,
+        NewAuditEntry::new(
+            AuditSeverity::Good,
+            Some(subject.tenant_id.clone()),
+            Some(subject.user_id.clone()),
+            format!("Messaging identity linked ({platform})"),
+        ),
+    )
+    .await;
 
     Ok(json!({ "userId": subject.user_id, "tenantId": subject.tenant_id }))
 }
