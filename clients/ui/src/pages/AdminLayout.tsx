@@ -13,6 +13,7 @@ export function AdminLayout() {
     { to: "/", label: "Profile", show: true },
     { to: "/tenants", label: "Tenants", show: can("admin:tenant") },
     { to: "/users", label: "Users", show: can("write:members") },
+    { to: "/api-tokens", label: "API Tokens", show: can("write:members") },
     { to: "/audit", label: "Audit", show: can("admin:tenant") },
     { to: "/config", label: "Config", show: can("manage:config") },
   ];
