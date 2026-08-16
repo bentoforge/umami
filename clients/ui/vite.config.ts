@@ -8,7 +8,8 @@ const apiPaths = ["/auth", "/users", "/tenants", "/config", "/info", "/user-info
 const target = process.env.VITE_UMAMI_URL ?? "http://localhost:8093";
 
 export default defineConfig({
-  base: "/ui/umami/",
+  // Served by umami itself under /app (see src/web_ui.rs). The router basename derives from this.
+  base: "/app/",
   plugins: [react()],
   server: {
     proxy: Object.fromEntries(apiPaths.map((path) => [path, { target, changeOrigin: false }])),

@@ -50,6 +50,7 @@ mod messaging;
 mod search;
 mod tenants;
 mod users;
+mod web_ui;
 
 use crate::audit::repository::{AuditRepository, DynamoAuditRepository};
 use crate::audit::service::{my_audit_route, tenant_audit_route};
@@ -100,8 +101,10 @@ use crate::users::repository::{DynamoUserRepository, NewUser, UserRepository};
 use crate::users::service::{
     create_user_route, delete_user_route, list_users_route, patch_user_route, reset_password_route,
 };
+use crate::web_ui::ui_routes;
 use std::env;
 use std::sync::Arc;
+use warp::Filter;
 use wasabi::aws::dynamodb::client::DynamoClient;
 use wasabi::aws::dynamodb::generate_id;
 use wasabi::aws::s3::S3Client;
@@ -220,7 +223,7 @@ async fn app() -> anyhow::Result<()> {
     )
     .await?;
 
-    run_webserver(routes![
+    let api = routes![
         get_info_route(),
         get_user_info_route(authenticator.clone()),
         jwks_route(key_repository),
@@ -443,8 +446,18 @@ async fn app() -> anyhow::Result<()> {
         // audit log (read)
         tenant_audit_route(audit_repository.clone(), authenticator.clone()),
         my_audit_route(audit_repository, authenticator)
-    ])
-    .await
+    ];
+
+    // Optionally serve the built management UI (SPA) under /app from the same origin. Mounted only
+    // when UMAMI_UI_DIR contains a built index.html; otherwise umami runs API-only.
+    let ui_dir = env::var("UMAMI_UI_DIR").unwrap_or_else(|_| "clients/ui/dist".to_owned());
+    match ui_routes(&ui_dir) {
+        Some(ui) => {
+            tracing::info!("Serving management UI from '{ui_dir}' under /app");
+            run_webserver(api.or(ui)).await
+        }
+        None => run_webserver(api).await,
+    }
 }
 
 /// Bootstraps the first tenant + owner on an empty deployment when `UMAMI_AUTO_INIT=true`.
