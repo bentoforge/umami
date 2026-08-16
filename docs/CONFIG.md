@@ -1,95 +1,241 @@
-# umami — Configuration Model (authoritative)
+# umami configuration reference
 
-The **config** is the catalog + system settings that define the *shape* of the system (which roles,
-features, packages, limits, custom fields exist; security settings; token composition). It is read
-often, written rarely, and small — so it is loaded and saved as **one whole document**, cached in
-memory, and edited by the client (load → edit → write the whole thing back).
+umami's behaviour is driven by **one JSON document** — the *config*. It holds the catalogs (roles,
+scopes, features, limits, packages, custom fields), the security settings, the messaging integration
+and, crucially, the **per-API permission mapping**. This file documents the whole document, the full
+permission catalog, and a copy-pasteable **standard config**.
 
-## The split (catalog vs assignments)
+For the permission-string DSL and the mint algorithm in depth, see [PERMISSIONS.md](PERMISSIONS.md).
 
-| Layer | What | Where |
-|-------|------|-------|
-| **Config** (this doc) | role/feature/limit/package **definitions**, custom-field **schemas**, security settings, token-claim composition | `ConfigRepository` (one document) |
-| **Assignments + values** | `user.roles`, `tenant.packages` (accounting records), per-tenant feature overrides, custom-field **values** | on the entities (DynamoDB; accounting is optimistic-locked) |
+---
 
-"Which roles exist" = config. "A user has roles" = assignment. "Which features exist" = config.
-"Per tenant on/off/standard" = override.
+## 1. Where the config lives
 
-## `ConfigRepository` (trait — like `KeyRepository`)
+- **S3-backed** when `UMAMI_CONFIG_BUCKET` is set: the whole document is stored as one object and
+  cached in memory. Edit it via `PUT /config` (load → edit → write back; optimistic `version`).
+- **Built-in default** otherwise (dev/tests): [`Config::default()`](../src/config/mod.rs). This is the
+  config described under [§7](#7-the-built-in-default).
 
-- `current() -> Arc<Config>` — cached, periodically refreshed (no per-request I/O; umami only reads
-  config at login/refresh, not on the product-service hot path).
-- `save(&Config) -> Result<()>` — writes the whole document (optimistic concurrency via `version`).
-- Impls:
-  - **`S3ConfigRepository`** (production): whole `config.json` in S3 — `cached_object(bucket, key,
-    ttl)` for reads, `put_object` for writes. Falls back to `Config::default()` if the object is
-    absent (clean first-boot). S3 versioning gives free history/audit.
-  - **`StaticConfigRepository`** (dev/tests/no-S3): serves a built-in `Config::default()`.
-  - Selection: S3 when `UMAMI_CONFIG_BUCKET` is set, else Static.
-- **Live editing** is client-driven: `GET /config` → edit → `PUT /config` (whole doc, admin-gated).
+New fields are added with `#[serde(default)]`, so an older stored document keeps loading after an
+upgrade (missing keys fall back to defaults).
 
-## `Config` entity (JSON; money/limits as `rust_decimal::Decimal`)
+Relevant environment variables:
+
+| Env | Effect |
+|-----|--------|
+| `UMAMI_CONFIG_BUCKET` | Use S3 config instead of the built-in default. |
+| `UMAMI_SYSTEM_TENANT_ID` | Tenant whose members get the `is:system-tenant` marker (⇒ `admin:system`). |
+| `UMAMI_AUTO_INIT=true` | Bootstrap a first tenant + owner when zero tenants exist. |
+
+---
+
+## 2. Document shape
 
 ```jsonc
-Config {
-  version: u64,                 // optimistic-concurrency counter for save()
-  roles:    [ { code, name, permissions: ["manage-users","delete-user", …] } ],
-  features: [ { code, name } ],
-  limits:   [ { code, name, unit?: string, default?: Decimal } ],
-  packages: [ { code, name,
-                features: ["ai","export"],                 // feature codes turned on
-                limits:   [ { code: "ai-tokens", value: Decimal } ],  // limits raised
-                prices:   [ { validFrom: Date, price: Decimal } ] } ],
-  customTenantFields: [ { key, label, type, … } ],
-  customUserFields:   [ { key, label, type, … } ],
-  security: { minPasswordLength: u32, accessTtlSecs: u64, refreshTtlSecs: u64 },
-  tokenClaims: [ … which optional claims to include … ]
+{
+  "version": 1,                       // optimistic-concurrency counter, bumped on every PUT
+  "roles":   [ RoleDef, … ],          // assignable to users        (role:*)
+  "scopes":  [ ScopeDef, … ],         // assignable to service keys (scope:*)
+  "features":[ FeatureDef, … ],       // granted to tenants         (feature:*)
+  "limits":  [ LimitDef, … ],         // metered quotas (accounting)
+  "packages":[ PackageDef, … ],       // sellable bundles of features+limits (accounting)
+  "customTenantFields": [ CustomFieldDef, … ],
+  "customUserFields":   [ CustomFieldDef, … ],
+  "security":  SecuritySettings,
+  "messaging": MessagingConfig,
+  "apis":      [ ApiDef, … ]          // audiences + permission mapping
 }
 ```
 
-**Numerics:** all money/limit values use `rust_decimal::Decimal` — exact decimal, **never `f64`**;
-serialized as a precise decimal (and stored as DynamoDB `N`, which is exact).
+### Building blocks
 
-## Roles → permissions (replaces the Phase-3 provisional map)
+```jsonc
+// RoleDef / ScopeDef / FeatureDef — same shape:
+{ "code": "role:admin", "name": "Administrator", "assignableIf": "feature:pro" }
+//   assignableIf (optional): a DSL expression over the tenant's feature set (incl. synthetic
+//   is:* markers). Role/scope: gates whether it may be assigned. Feature: gates whether it may be
+//   granted (prerequisites). Omitted = always assignable/grantable.
 
-- `User.role` → **`User.roles: [code]`** (a list).
-- The token's `permissions` claim = **union** of `config.roles[code].permissions` over the user's
-  roles.
-- umami's own admin routes still require specific permission strings (e.g. `admin:tenant`,
-  `write:members`); the **default config** grants those to `owner`/`admin`. Redefining roles so
-  they no longer grant them is the admin's responsibility (umami may reserve a few strings later).
+// CustomFieldDef:
+{ "key": "customerNo", "label": "Kundennummer", "type": "string",
+  "options": [],          // allowed values, for type "select"
+  "required": true,
+  "showInTable": true }   // surface as a column in the admin list tables
+//   type ∈ { "string", "number", "bool"/"boolean", "select" }
 
-## Features & limits resolution (pure function of config + tenant)
+// SecuritySettings:
+{ "minPasswordLength": 8, "accessTtlSecs": 600, "refreshTtlSecs": 2592000,
+  "messagingCodeTtlSecs": 600 }   // link-code validity window (single-use OTP)
 
-- **Effective features** = union of the active packages' features, then per-tenant override
-  (`standard` = inherit / `on` = force on / `off` = force off).
-- **Effective limits** = raised by the active packages, then per-tenant override (explicit value,
-  or empty → computed from packages).
+// MessagingConfig — either/both optional; when set, /auth/me/messaging-code returns deep links
+//   and every token gets the is:messaging-configured marker:
+{ "whatsappNumber": "4915112345678", "telegramBot": "my_link_bot" }
 
-## Accounting & consistency
+// ApiDef — a target audience + its permission projection:
+{ "code": "dbx-core", "audience": "dbx-core",
+  "eligibility": "role:member,role:admin",      // optional gate; no token minted if it fails
+  "permissions": [ { "when": "role:admin", "grant": ["write:blocks"] }, … ],  // ordered
+  "claims": { "svc": "dbx-core", "org": "customTenant:customerNo" } }
+```
 
-- `tenant.packages`: `[{ code, assignedAt, accountedUntil, monthlyPrice?, priceFixedUntil, active }]`
-  on the tenant entity (same package `code` may appear multiple times). This already covers most of
-  licensing + accounting.
-- **No stale reads for accounting.** Consistency-critical writes use **optimistic locking**: a
-  `version` field + a conditional write (`condition: version = :expected`, `SET version = :expected
-  + 1`); on `ConditionalCheckFailedException`, re-read and retry. Read-modify-write reads the base
-  table **strongly consistent** (`get_item(...).consistent_read(true)`). **Never** read accounting
-  state from a GSI (GSIs are always eventually consistent). Pure counters (usage metering) use the
-  atomic `ADD` update expression (no read).
-- **Uniqueness reminder** (confirmed against dbx-core's `AssetRepository`): a conditional write
-  enforces uniqueness only on an item's **own primary key**; a GSI never does. `AssetRepository`
-  guards only its PK (random `assetId`) and deliberately allows duplicate `assetName`s. So config
-  codes are the **PK** of their item (uniqueness free); a unique secondary attribute needs a guard
-  item (as `user-emails` does).
+---
 
-## Build order (sub-steps)
+## 3. The subject model
 
-1. **Foundation** — `config` module + `ConfigRepository` trait + S3/Static impls + `Config`
-   entity + `Config::default()`; `User.role` → `roles: [code]`; config-driven permission
-   resolution in login/refresh; `GET`/`PUT /config` (admin-gated).
-2. **Security settings** — enforce `minPasswordLength` on user/owner creation; take access/refresh
-   TTLs from config.
-3. **Packages + accounting** — `tenant.packages`, optimistic locking (`version`), price schedule,
-   effective-limits resolver.
-4. **Features + custom fields + configurable claims**.
+At mint time umami builds a **subject set** and runs it through the target API's ordered
+`permissions` rules (see [PERMISSIONS.md](PERMISSIONS.md)). Subjects are namespaced:
+
+| Namespace | Source | Example |
+|-----------|--------|---------|
+| `role:*`  | the user's `roles` (a PAT intersects with its restriction) | `role:owner` |
+| `scope:*` | a service key's `scopes` | `scope:messaging-linker` |
+| `feature:*` | the tenant's granted `features` | `feature:pro` |
+| `is:*` | **synthetic** — computed at mint, never stored | `is:system-tenant` |
+
+**Synthetic markers:**
+
+| Marker | Added when |
+|--------|-----------|
+| `is:system-tenant` | the token's tenant equals `UMAMI_SYSTEM_TENANT_ID` |
+| `is:messaging-configured` | the config has `messaging.telegramBot` and/or `messaging.whatsappNumber` |
+
+Synthetic markers also participate in **assignability** (`assignableIf`) via
+`Config::eval_feature_set`, so a scope/role can be gated on e.g. `is:system-tenant` and will only
+appear in that tenant's pickers.
+
+Code only ever checks **permissions** (bare strings like `write:members`). Roles/scopes/features/
+markers are turned into permissions solely by the `apis` mapping — there are no ad-hoc tenant/marker
+checks in the route handlers.
+
+---
+
+## 4. Permission catalog
+
+These are all the permission strings umami's own API (`code: "umami"`) recognises. Product APIs
+define their own.
+
+| Permission | Gates (umami routes) |
+|------------|----------------------|
+| `admin:system` | `GET/POST /tenants`, `DELETE /tenants/{id}`, `POST /auth/switch-tenant`, `GET /tenants/{id}/assignable-features`, `POST`/`DELETE /tenants/{id}/features/{code}` |
+| `admin:tenant` | `GET`/`PATCH /tenants/{id}`, `PATCH …/status`, `PATCH …/license`, packages + entitlements, `GET /tenants/{id}/audit` |
+| `write:members` | users CRUD + admin password reset, service-key create/list/delete, `GET /users/{id}/assignable-roles`, `GET /tenants/{id}/assignable-scopes` |
+| `manage:config` | `GET`/`PUT /config` |
+| `write:usage` | `GET`/`POST /tenants/{id}/usage` (metering) |
+| `messaging:self` | `/auth/me/messaging-code` (+regenerate), `/auth/me/messaging-links` (+unlink) |
+| `messaging:link` | `POST /messaging/links` (bot backend claims a mapping) |
+| `messaging:resolve` | `GET /messaging/resolve` (identity → user info / token) |
+
+**Authenticated but permission-free** (any valid token): `GET /auth/me`, `POST /auth/logout-all`,
+`POST /auth/me/password`, PAT management under `/auth/me/api-keys`, `POST /auth/exchange`,
+`GET /config/custom-fields`, plus login/refresh/logout, JWKS and the MFA ceremonies.
+
+---
+
+## 5. The built-in default
+
+The default `apis[0]` (`umami`) ships this mapping (ordered):
+
+| `when` | `grant` |
+|--------|---------|
+| `role:owner` | `admin:tenant`, `write:members`, `manage:config`, `write:usage` |
+| `role:admin` | `write:members`, `write:usage` |
+| `role:member` | `write:usage` |
+| `is:system-tenant` | `admin:system` |
+| `is:messaging-configured` | `messaging:self` |
+| `scope:messaging-linker + is:system-tenant` | `messaging:link` |
+| `scope:messaging-resolver + is:system-tenant` | `messaging:resolve` |
+
+Default **roles**: `role:owner`, `role:admin`, `role:member`, `role:viewer` (all `assignableIf`
+omitted). Default **scopes**: `scope:messaging-linker`, `scope:messaging-resolver` (both
+`assignableIf: "is:system-tenant"`). No default features/limits/packages/custom fields.
+
+> ⚠ **`role:viewer` has no mapping** in the default — a viewer gets zero permissions, and there is
+> no read-only permission in the umami API (listing users needs `write:members`). If you want
+> viewers to read, add a permission and map it (see the standard config below).
+
+---
+
+## 6. Proposed standard config
+
+A fuller starting point. It keeps the built-in umami mapping, **adds a read permission for
+viewers**, shows a licensed feature/scope, and adds a product-API entry with eligibility + claims.
+
+```jsonc
+{
+  "version": 1,
+  "roles": [
+    { "code": "role:owner",  "name": "Owner" },
+    { "code": "role:admin",  "name": "Administrator" },
+    { "code": "role:member", "name": "Member" },
+    { "code": "role:viewer", "name": "Viewer" }
+  ],
+  "scopes": [
+    { "code": "scope:messaging-linker",   "name": "Messaging linker",   "assignableIf": "is:system-tenant" },
+    { "code": "scope:messaging-resolver", "name": "Messaging resolver", "assignableIf": "is:system-tenant" },
+    { "code": "scope:ingest",             "name": "Telemetry ingest" }
+  ],
+  "features": [
+    { "code": "feature:pro", "name": "Pro plan" },
+    { "code": "feature:ai",  "name": "AI add-on", "assignableIf": "feature:pro" }
+  ],
+  "limits":   [ { "code": "seats", "name": "Seats", "default": "5" } ],
+  "packages": [],
+  "customTenantFields": [
+    { "key": "customerNo", "label": "Customer no.", "type": "string", "required": false, "showInTable": true }
+  ],
+  "customUserFields": [],
+  "security": {
+    "minPasswordLength": 8,
+    "accessTtlSecs": 600,
+    "refreshTtlSecs": 2592000,
+    "messagingCodeTtlSecs": 600
+  },
+  "messaging": { "telegramBot": "my_link_bot", "whatsappNumber": "4915112345678" },
+  "apis": [
+    {
+      "code": "umami", "audience": "umami",
+      "permissions": [
+        { "when": "role:owner",  "grant": ["admin:tenant","write:members","manage:config","write:usage"] },
+        { "when": "role:admin",  "grant": ["write:members","write:usage"] },
+        { "when": "role:member", "grant": ["write:usage"] },
+        { "when": "role:viewer", "grant": ["read:members"] },
+        { "when": "is:system-tenant", "grant": ["admin:system"] },
+        { "when": "is:messaging-configured", "grant": ["messaging:self"] },
+        { "when": "scope:messaging-linker + is:system-tenant",   "grant": ["messaging:link"] },
+        { "when": "scope:messaging-resolver + is:system-tenant", "grant": ["messaging:resolve"] }
+      ]
+    },
+    {
+      "code": "dbx-core", "audience": "dbx-core",
+      "eligibility": "role:member,role:admin,role:owner",
+      "permissions": [
+        { "when": "role:admin,role:owner", "grant": ["write:blocks","read:blocks"] },
+        { "when": "role:member",           "grant": ["read:blocks"] },
+        { "when": "feature:ai + role:member", "grant": ["use:ai"] },
+        { "when": "scope:ingest",          "grant": ["write:telemetry"] }
+      ],
+      "claims": { "org": "customTenant:customerNo" }
+    }
+  ]
+}
+```
+
+> Note: `read:members` above is *illustrative* — if you add it, also gate the umami list routes on
+> it in code (they currently require `write:members`). The config can only mint permissions; which
+> permission a route requires is decided in the handler.
+
+---
+
+## 7. Messaging specifics
+
+- The per-user **link code** is a short-lived, single-use OTP (`security.messagingCodeTtlSecs`).
+  `GET /auth/me/messaging-code` returns the current code, rotating it if expired, and — when
+  `messaging` is configured — ready-made deep links (`t.me/<bot>?start=<code>`,
+  `wa.me/<number>?text=<code>`).
+- The bot backend is a **system-tenant service key** carrying `scope:messaging-linker`
+  (→ `messaging:link`) and/or `scope:messaging-resolver` (→ `messaging:resolve`). Because the
+  mapping requires `+ is:system-tenant`, such a key only works in the system tenant.
+- Code generation and link attempts are written to the audit log.
+
+See [PERMISSIONS.md](PERMISSIONS.md) for the DSL and mint flow, and the module docs in
+[`src/messaging`](../src/messaging) for the link/resolve endpoints.
