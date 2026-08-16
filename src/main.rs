@@ -4,6 +4,9 @@
 //! This binary boots a warp web server (via wasabi's `run_webserver`) and wires the auth, tenant,
 //! team, user and membership routes. See `docs/ROADMAP.md` for the phased build plan.
 
+// The `routes![…]` macro builds one deeply-nested `Or<…>` filter type; warp 0.4's layout query
+// needs more headroom than the default.
+#![recursion_limit = "512"]
 #![deny(
     // Code Quality
     warnings,

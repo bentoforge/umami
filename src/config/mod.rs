@@ -53,30 +53,14 @@ pub struct ApiDef {
     pub claims: BTreeMap<String, String>,
 }
 
-/// Evaluates a permission-string expression against a token set (subjects ∪ granted permissions).
-/// `,` = OR (lowest precedence), `+` = AND, `!term` = NOT. An empty expression holds (no gate); an
-/// empty clause is skipped.
+/// Evaluates a permission-string expression against a subject set (subjects ∪ granted permissions).
+/// `,` = OR (lowest precedence), `+` = AND, `!term` = NOT. An empty expression holds (no gate).
+///
+/// Thin wrapper over wasabi's [`eval_permission_expr`](wasabi::web::auth::permission_expr) — the
+/// single grammar/implementation shared with the route guards (`with_user_with`) and product
+/// services.
 pub fn eval_expression(expression: &str, set: &BTreeSet<&str>) -> bool {
-    let clauses: Vec<&str> = expression
-        .split(',')
-        .map(str::trim)
-        .filter(|clause| !clause.is_empty())
-        .collect();
-    if clauses.is_empty() {
-        return true;
-    }
-    clauses.iter().any(|clause| {
-        let terms: Vec<&str> = clause
-            .split('+')
-            .map(str::trim)
-            .filter(|term| !term.is_empty())
-            .collect();
-        !terms.is_empty()
-            && terms.iter().all(|term| match term.strip_prefix('!') {
-                Some(negated) => !set.contains(negated.trim()),
-                None => set.contains(term),
-            })
-    })
+    wasabi::web::auth::permission_expr::eval_permission_expr(expression, |term| set.contains(term))
 }
 
 impl ApiDef {
