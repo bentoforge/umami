@@ -43,6 +43,7 @@ mod auth;
 mod authz;
 mod config;
 mod constants;
+mod messaging;
 mod search;
 mod tenants;
 mod users;
@@ -76,6 +77,11 @@ use crate::authz::{
 use crate::config::repository::{ConfigRepository, S3ConfigRepository, StaticConfigRepository};
 use crate::config::service::{custom_fields_route, get_config_route, put_config_route};
 use crate::constants::{DEFAULT_LOCALE, ROLE_OWNER};
+use crate::messaging::repository::{DynamoMessagingRepository, MessagingRepository};
+use crate::messaging::service::{
+    ResolveDeps, create_link_route, delete_my_link_route, my_code_route, my_links_route,
+    regenerate_code_route, resolve_route,
+};
 use crate::tenants::packages::{
     assign_package_route, entitlements_route, remove_package_route, set_feature_route,
 };
@@ -162,6 +168,8 @@ async fn app() -> anyhow::Result<()> {
         Arc::new(DynamoApiKeyRepository::with_client(&dynamo_client).await?);
     let audit_repository: Arc<dyn AuditRepository> =
         Arc::new(DynamoAuditRepository::with_client(&dynamo_client).await?);
+    let messaging_repository: Arc<dyn MessagingRepository> =
+        Arc::new(DynamoMessagingRepository::with_client(&dynamo_client).await?);
 
     // Signing keys behind a repository: env-backed for now, AWS-backed (with periodic refresh for
     // rotation) later — the issuer and JWKS route depend only on the trait.
@@ -275,6 +283,23 @@ async fn app() -> anyhow::Result<()> {
         create_my_pat_route(api_key_repository.clone(), authenticator.clone()),
         list_my_pats_route(api_key_repository.clone(), authenticator.clone()),
         delete_my_pat_route(api_key_repository, authenticator.clone()),
+        // messaging links (self-service code + own links)
+        my_code_route(messaging_repository.clone(), authenticator.clone()),
+        regenerate_code_route(messaging_repository.clone(), authenticator.clone()),
+        my_links_route(messaging_repository.clone(), authenticator.clone()),
+        delete_my_link_route(messaging_repository.clone(), authenticator.clone()),
+        // messaging links (machine: link via code + resolve identity)
+        create_link_route(messaging_repository.clone(), authenticator.clone()),
+        resolve_route(
+            ResolveDeps {
+                messaging: messaging_repository,
+                users: user_repository.clone(),
+                tenants: tenant_repository.clone(),
+                config: config_repository.clone(),
+                tokens: token_issuer.clone(),
+            },
+            authenticator.clone()
+        ),
         // downstream token exchange (authenticated user → product API)
         user_exchange_route(
             ExchangeDeps {

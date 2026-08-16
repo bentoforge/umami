@@ -349,6 +349,29 @@ export interface CreateApiKeyResponse {
   name: string;
 }
 
+// ── Messaging links ───────────────────────────────────────────────────────────
+
+/** An external messaging identity mapped to a user. */
+export interface MessagingLink {
+  linkKey: string;
+  userId: string;
+  tenantId: string;
+  /** `"telegram"` | `"whatsapp"`. */
+  platform: string;
+  externalId: string;
+  created: string;
+}
+
+/** Resolve output (default): compact user info for a messaging identity. */
+export interface ResolvedMessagingUser {
+  userId: string;
+  tenantId: string;
+  name: string;
+  email?: string | null;
+  locale: string;
+  roles: string[];
+}
+
 // ── Audit log ───────────────────────────────────────────────────────────────
 
 /** Outcome flavour of an audited event. */

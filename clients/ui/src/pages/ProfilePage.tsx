@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { ApiKeyView } from "umami-client";
+import type { ApiKeyView, MessagingLink } from "umami-client";
 import { useUmami } from "../auth/UmamiProvider";
 import { Banner, Field, errMsg } from "../components";
 import { card, dangerButton, ghostButton, input, primaryButton } from "../ui";
@@ -75,7 +75,101 @@ export function ProfilePage() {
 
       <ChangePasswordPanel />
       <PatsPanel />
+      <MessagingPanel />
     </div>
+  );
+}
+
+/** Messaging links: show the user's link code (regenerable) and their connected identities. */
+function MessagingPanel() {
+  const { client } = useUmami();
+  const [code, setCode] = useState<string | null>(null);
+  const [links, setLinks] = useState<MessagingLink[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    setError(null);
+    try {
+      const [c, l] = await Promise.all([client.getMessagingCode(), client.listMessagingLinks()]);
+      setCode(c.code);
+      setLinks(l.links);
+    } catch (err) {
+      setError(errMsg(err));
+    }
+  }, [client]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const regenerate = async () => {
+    if (!window.confirm("Generate a new code? The old one stops working immediately.")) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await client.regenerateMessagingCode();
+      setCode(res.code);
+    } catch (err) {
+      setError(errMsg(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const unlink = async (link: MessagingLink) => {
+    if (!window.confirm(`Unlink ${link.platform} identity "${link.externalId}"?`)) return;
+    setError(null);
+    try {
+      await client.deleteMessagingLink(link.platform, link.externalId);
+      await load();
+    } catch (err) {
+      setError(errMsg(err));
+    }
+  };
+
+  return (
+    <section className={card + " space-y-4"}>
+      <div>
+        <h2 className="font-medium text-slate-800 dark:text-slate-200">Messaging</h2>
+        <p className="text-sm text-slate-500">
+          Give this code to the Telegram/WhatsApp bot (deep link or first message) to connect your
+          account. It stays valid and can link several chats.
+        </p>
+      </div>
+
+      <Banner tone="error">{error}</Banner>
+
+      <div className="flex items-center gap-3">
+        <code className="rounded-lg bg-slate-100 dark:bg-slate-900 px-3 py-2 text-lg font-mono tracking-widest text-slate-900 dark:text-white">
+          {code ?? "…"}
+        </code>
+        <button className={ghostButton} disabled={busy} onClick={() => void regenerate()}>
+          Regenerate
+        </button>
+      </div>
+
+      <div>
+        <div className="text-xs text-slate-500 mb-1">Connected identities</div>
+        {links.length === 0 ? (
+          <span className="text-xs text-slate-400">none yet</span>
+        ) : (
+          <ul className="divide-y divide-slate-100 dark:divide-slate-700/50">
+            {links.map((link) => (
+              <li key={link.linkKey} className="flex items-center justify-between py-2">
+                <div className="text-sm text-slate-800 dark:text-slate-200">
+                  <span className="font-medium capitalize">{link.platform}</span>
+                  <span className="text-slate-400"> · {link.externalId}</span>
+                </div>
+                <button className={dangerButton} onClick={() => void unlink(link)}>
+                  Unlink
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </section>
   );
 }
 

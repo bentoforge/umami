@@ -16,8 +16,10 @@ import type {
   FeatureToggle,
   LoginResponse,
   MeResponse,
+  MessagingLink,
   MetricUsage,
   MfaStatus,
+  ResolvedMessagingUser,
   PatchUserRequest,
   ResetPasswordResponse,
   Tenant,
@@ -435,6 +437,55 @@ export class UmamiClient {
       `/tenants/${enc(tenantId)}/audit${qs}`,
     );
     return data.entries;
+  }
+
+  // ── messaging links ─────────────────────────────────────────────────────────
+
+  /** The caller's stable messaging link code (created on first read). */
+  getMessagingCode(): Promise<{ code: string }> {
+    return this.request<{ code: string }>("/auth/me/messaging-code");
+  }
+  /** Replace the caller's link code (invalidates the old). */
+  regenerateMessagingCode(): Promise<{ code: string }> {
+    return this.request<{ code: string }>("/auth/me/messaging-code/regenerate", { method: "POST" });
+  }
+  /** The caller's linked external identities. */
+  listMessagingLinks(): Promise<{ links: MessagingLink[] }> {
+    return this.request<{ links: MessagingLink[] }>("/auth/me/messaging-links");
+  }
+  /** Remove one of the caller's linked identities. */
+  deleteMessagingLink(platform: string, externalId: string): Promise<{ status: string }> {
+    return this.request<{ status: string }>(
+      `/auth/me/messaging-links/${enc(platform)}/${enc(externalId)}`,
+      { method: "DELETE" },
+    );
+  }
+  /** Machine (`messaging:link`): claim a `(platform, externalId)` mapping from a link code. */
+  createMessagingLink(
+    code: string,
+    platform: string,
+    externalId: string,
+  ): Promise<{ userId: string; tenantId: string }> {
+    return this.request<{ userId: string; tenantId: string }>("/messaging/links", {
+      method: "POST",
+      body: JSON.stringify({ code, platform, externalId }),
+    });
+  }
+  /** Machine (`messaging:resolve`): resolve an identity to user info. */
+  resolveMessaging(platform: string, externalId: string): Promise<ResolvedMessagingUser> {
+    const qs = `?platform=${encodeURIComponent(platform)}&externalId=${encodeURIComponent(externalId)}`;
+    return this.request<ResolvedMessagingUser>(`/messaging/resolve${qs}`);
+  }
+  /** Machine (`messaging:resolve`): resolve an identity to a minted token for `api`. */
+  resolveMessagingToken(
+    platform: string,
+    externalId: string,
+    api: string,
+  ): Promise<{ accessToken: string; expiresIn: number }> {
+    const qs =
+      `?platform=${encodeURIComponent(platform)}&externalId=${encodeURIComponent(externalId)}` +
+      `&format=jwt&api=${encodeURIComponent(api)}`;
+    return this.request<{ accessToken: string; expiresIn: number }>(`/messaging/resolve${qs}`);
   }
 
   // ── config ────────────────────────────────────────────────────────────────────

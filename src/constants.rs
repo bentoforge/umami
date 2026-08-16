@@ -38,6 +38,14 @@ pub const WRITE_USAGE_PERMISSION: &str = "write:usage";
 /// `is:system-tenant` marker, so it only ever lands in tokens of system-tenant members.
 pub const ADMIN_SYSTEM_PERMISSION: &str = "admin:system";
 
+/// Claim a `(platform, externalId) → user` messaging mapping via a link code. Held by a bot backend
+/// (a system-tenant service key carrying `scope:messaging-linker`).
+pub const MESSAGING_LINK_PERMISSION: &str = "messaging:link";
+
+/// Resolve a messaging identity back to a user. Held by a system-tenant service key carrying
+/// `scope:messaging-resolver`.
+pub const MESSAGING_RESOLVE_PERMISSION: &str = "messaging:resolve";
+
 // ── Synthetic subject markers (computed at mint time, never stored) ────────────
 
 /// Added to the subject set when the token's tenant is the configured `UMAMI_SYSTEM_TENANT_ID`.

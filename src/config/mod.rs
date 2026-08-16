@@ -9,8 +9,9 @@ pub mod service;
 
 use crate::constants::{
     ADMIN_SYSTEM_PERMISSION, ADMIN_TENANT_PERMISSION, DEFAULT_ACCESS_TTL_SECS,
-    DEFAULT_REFRESH_TTL_SECS, MANAGE_CONFIG_PERMISSION, ROLE_MEMBER, ROLE_OWNER,
-    SYSTEM_TENANT_MARKER, WRITE_MEMBERS_PERMISSION, WRITE_USAGE_PERMISSION,
+    DEFAULT_REFRESH_TTL_SECS, MANAGE_CONFIG_PERMISSION, MESSAGING_LINK_PERMISSION,
+    MESSAGING_RESOLVE_PERMISSION, ROLE_MEMBER, ROLE_OWNER, SYSTEM_TENANT_MARKER,
+    WRITE_MEMBERS_PERMISSION, WRITE_USAGE_PERMISSION,
 };
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
@@ -487,6 +488,11 @@ impl Default for Config {
             when: when.to_owned(),
             grant: grant.iter().map(|p| (*p).to_owned()).collect(),
         };
+        let scope = |code: &str, name: &str| ScopeDef {
+            code: code.to_owned(),
+            name: name.to_owned(),
+            assignable_if: None,
+        };
         Config {
             version: 1,
             roles: vec![
@@ -495,7 +501,10 @@ impl Default for Config {
                 role(ROLE_MEMBER, "Member"),
                 role("role:viewer", "Viewer"),
             ],
-            scopes: Vec::new(),
+            scopes: vec![
+                scope("scope:messaging-linker", "Messaging linker (bot backend)"),
+                scope("scope:messaging-resolver", "Messaging resolver"),
+            ],
             features: Vec::new(),
             limits: Vec::new(),
             packages: Vec::new(),
@@ -528,6 +537,16 @@ impl Default for Config {
                     ),
                     rule(ROLE_MEMBER, &[WRITE_USAGE_PERMISSION]),
                     rule(SYSTEM_TENANT_MARKER, &[ADMIN_SYSTEM_PERMISSION]),
+                    // Messaging M2M: only system-tenant service keys carrying the scope get the
+                    // cross-tenant link/resolve permissions.
+                    rule(
+                        &format!("scope:messaging-linker + {SYSTEM_TENANT_MARKER}"),
+                        &[MESSAGING_LINK_PERMISSION],
+                    ),
+                    rule(
+                        &format!("scope:messaging-resolver + {SYSTEM_TENANT_MARKER}"),
+                        &[MESSAGING_RESOLVE_PERMISSION],
+                    ),
                 ],
                 claims: BTreeMap::new(),
             }],
