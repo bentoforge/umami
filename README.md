@@ -99,4 +99,4 @@ access tokens **offline** — no DB hit, no shared secret.
 
 ## License
 
-Intended for open-source release. License TBD.
+MIT — see [LICENSE](LICENSE).
