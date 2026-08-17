@@ -1,5 +1,5 @@
+import type { CustomFieldDef } from "@bentoforge/umami-iam";
 import type { ReactNode } from "react";
-import type { CustomFieldDef } from "umami-client";
 import { input } from "./ui";
 
 /** Extracts a human-readable message from a thrown value (UmamiError, Error, or anything). */

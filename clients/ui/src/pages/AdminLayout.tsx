@@ -1,7 +1,7 @@
+import type { Tenant } from "@bentoforge/umami-iam";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { NavLink, Outlet } from "react-router-dom";
-import type { Tenant } from "umami-client";
 import { useUmami } from "../auth/UmamiProvider";
 import { errMsg } from "../components";
 import { card, ghostButton, input, primaryButton } from "../ui";
@@ -142,9 +142,7 @@ function TenantSwitcher() {
       </button>
       {open && (
         <div
-          className={
-            card + " absolute right-0 mt-2 w-80 z-20 p-3 space-y-2 shadow-lg max-h-96 overflow-auto"
-          }
+          className={`${card} absolute right-0 mt-2 w-80 z-20 p-3 space-y-2 shadow-lg max-h-96 overflow-auto`}
         >
           <input
             autoFocus

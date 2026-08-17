@@ -1,6 +1,6 @@
+import type { ApiKeyView, MessagingCodeResponse, MessagingLink } from "@bentoforge/umami-iam";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { ApiKeyView, MessagingCodeResponse, MessagingLink } from "umami-client";
 import { useUmami } from "../auth/UmamiProvider";
 import { Banner, errMsg, Field } from "../components";
 import { card, dangerButton, ghostButton, input, primaryButton } from "../ui";
@@ -106,7 +106,7 @@ function EditProfilePanel() {
   };
 
   return (
-    <section className={card + " space-y-3"}>
+    <section className={`${card} space-y-3`}>
       <h2 className="font-medium text-slate-800 dark:text-slate-200">Edit profile</h2>
       <Banner tone="error">{error}</Banner>
       {notice && <p className="text-sm text-emerald-600 dark:text-emerald-400">{notice}</p>}
@@ -173,7 +173,7 @@ function MessagingPanel() {
   };
 
   return (
-    <section className={card + " space-y-4"}>
+    <section className={`${card} space-y-4`}>
       <div>
         <h2 className="font-medium text-slate-800 dark:text-slate-200">Messaging</h2>
         <p className="text-sm text-slate-500">
@@ -259,7 +259,7 @@ function ChangePasswordPanel() {
   };
 
   return (
-    <section className={card + " space-y-3"}>
+    <section className={`${card} space-y-3`}>
       <h2 className="font-medium text-slate-800 dark:text-slate-200">Change password</h2>
       {error && <Banner tone="error">{error}</Banner>}
       {ok && <Banner tone="ok">Password changed. Other sessions have been logged out.</Banner>}
@@ -359,7 +359,7 @@ function PatsPanel() {
   };
 
   return (
-    <section className={card + " space-y-4"}>
+    <section className={`${card} space-y-4`}>
       <div>
         <h2 className="font-medium text-slate-800 dark:text-slate-200">Personal access tokens</h2>
         <p className="text-sm text-slate-500">

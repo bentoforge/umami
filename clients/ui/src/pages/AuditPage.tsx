@@ -1,5 +1,5 @@
+import type { AuditEntry, AuditSeverity } from "@bentoforge/umami-iam";
 import { useCallback, useEffect, useState } from "react";
-import type { AuditEntry, AuditSeverity } from "umami-client";
 import { useUmami } from "../auth/UmamiProvider";
 import { Banner, errMsg } from "../components";
 import { card, ghostButton, td, th } from "../ui";
@@ -44,7 +44,7 @@ export function AuditPage() {
 
       <Banner tone="error">{error}</Banner>
 
-      <section className={card + " overflow-x-auto"}>
+      <section className={`${card} overflow-x-auto`}>
         {entries === null ? (
           <p className="text-slate-500">Loading…</p>
         ) : entries.length === 0 ? (
@@ -62,7 +62,7 @@ export function AuditPage() {
             <tbody>
               {entries.map((e) => (
                 <tr key={e.id} className="border-b border-slate-100 dark:border-slate-700/50">
-                  <td className={td + " whitespace-nowrap text-slate-500"}>
+                  <td className={`${td} whitespace-nowrap text-slate-500`}>
                     {new Date(e.timestamp).toLocaleString()}
                   </td>
                   <td className={td}>
@@ -72,7 +72,7 @@ export function AuditPage() {
                       {e.severity}
                     </span>
                   </td>
-                  <td className={td + " font-mono text-xs text-slate-400"}>
+                  <td className={`${td} font-mono text-xs text-slate-400`}>
                     {e.user ? e.user.slice(0, 10) : "—"}
                   </td>
                   <td className={td}>{e.message}</td>

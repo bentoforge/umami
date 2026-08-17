@@ -1,5 +1,5 @@
+import type { Config } from "@bentoforge/umami-iam";
 import { useCallback, useEffect, useState } from "react";
-import type { Config } from "umami-client";
 import { useUmami } from "../auth/UmamiProvider";
 import { Banner, errMsg } from "../components";
 import { card, ghostButton, primaryButton } from "../ui";

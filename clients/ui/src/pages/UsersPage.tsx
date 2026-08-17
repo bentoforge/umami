@@ -1,5 +1,5 @@
+import type { CustomFieldDef, UserStatus, UserView } from "@bentoforge/umami-iam";
 import { Fragment, useCallback, useEffect, useState } from "react";
-import type { CustomFieldDef, UserStatus, UserView } from "umami-client";
 import { useUmami } from "../auth/UmamiProvider";
 import {
   Banner,
@@ -98,7 +98,7 @@ export function UsersPage() {
       <div className="flex items-center justify-between gap-4">
         <h1 className="text-xl font-semibold text-slate-900 dark:text-white">Users</h1>
         <input
-          className={input + " max-w-xs"}
+          className={`${input} max-w-xs`}
           placeholder="Search username, email, name…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
@@ -138,7 +138,7 @@ export function UsersPage() {
         />
       )}
 
-      <section className={card + " overflow-x-auto"}>
+      <section className={`${card} overflow-x-auto`}>
         {users === null ? (
           <p className="text-slate-500">Loading…</p>
         ) : users.length === 0 ? (
@@ -189,7 +189,7 @@ export function UsersPage() {
                         {formatFieldValue(user.customFields[def.key])}
                       </td>
                     ))}
-                    <td className={td + " text-right whitespace-nowrap"}>
+                    <td className={`${td} text-right whitespace-nowrap`}>
                       <button
                         className={ghostButton}
                         onClick={() =>
@@ -385,7 +385,7 @@ function CreateUser({
   };
 
   return (
-    <section className={card + " space-y-3"}>
+    <section className={`${card} space-y-3`}>
       <h2 className="font-medium text-slate-800 dark:text-slate-200">New user</h2>
       <div className="grid grid-cols-2 gap-3">
         <Field label="Name">

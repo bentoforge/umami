@@ -1,5 +1,5 @@
+import { type MeResponse, UmamiClient } from "@bentoforge/umami-iam";
 import { createContext, type ReactNode, useContext, useEffect, useMemo, useState } from "react";
-import { type MeResponse, UmamiClient } from "umami-client";
 
 interface AuthContextValue {
   client: UmamiClient;
@@ -62,6 +62,9 @@ export function UmamiProvider({ baseUrl, children }: { baseUrl: string; children
     setActiveTenantName(null);
   };
 
+  // Mount-once bootstrap: refreshMe is intentionally omitted from the deps — it is recreated
+  // every render, so including it would re-run this effect in a loop.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional run-once bootstrap
   useEffect(() => {
     let cancelled = false;
     void (async () => {

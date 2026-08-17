@@ -1,5 +1,5 @@
 {
-  "name": "umami-client",
+  "name": "@bentoforge/umami-iam",
   "version": "0.1.0",
   "description": "Typed client SDK for the umami micro-IAM service",
   "type": "module",
@@ -17,6 +17,24 @@
     "src",
     "README.md"
   ],
+  "keywords": [
+    "iam",
+    "auth",
+    "jwt",
+    "oidc",
+    "multi-tenant",
+    "umami"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bentoforge/umami.git",
+    "directory": "clients/typescript"
+  },
+  "homepage": "https://github.com/bentoforge/umami#readme",
+  "bugs": "https://github.com/bentoforge/umami/issues",
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",

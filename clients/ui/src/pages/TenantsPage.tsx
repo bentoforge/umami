@@ -1,5 +1,5 @@
+import type { CustomFieldDef, Tenant, TenantStatus } from "@bentoforge/umami-iam";
 import { Fragment, useCallback, useEffect, useState } from "react";
-import type { CustomFieldDef, Tenant, TenantStatus } from "umami-client";
 import { useUmami } from "../auth/UmamiProvider";
 import { Banner, CustomFieldsForm, errMsg, Field, formatFieldValue } from "../components";
 import { card, dangerButton, ghostButton, input, primaryButton, td, th } from "../ui";
@@ -74,7 +74,7 @@ export function TenantsPage() {
       <div className="flex items-center justify-between gap-4">
         <h1 className="text-xl font-semibold text-slate-900 dark:text-white">Tenants</h1>
         <input
-          className={input + " max-w-xs"}
+          className={`${input} max-w-xs`}
           placeholder="Search name, customer no., address…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
@@ -104,7 +104,7 @@ export function TenantsPage() {
         />
       )}
 
-      <section className={card + " overflow-x-auto"}>
+      <section className={`${card} overflow-x-auto`}>
         {tenants === null ? (
           <p className="text-slate-500">Loading…</p>
         ) : tenants.length === 0 ? (
@@ -148,7 +148,7 @@ export function TenantsPage() {
                         {formatFieldValue(tenant.customFields[def.key])}
                       </td>
                     ))}
-                    <td className={td + " text-right whitespace-nowrap"}>
+                    <td className={`${td} text-right whitespace-nowrap`}>
                       <button
                         className={ghostButton}
                         onClick={() => void switchTenant(tenant.tenantId, tenant.name)}
@@ -426,7 +426,7 @@ function CreateTenant({
   };
 
   return (
-    <section className={card + " space-y-3"}>
+    <section className={`${card} space-y-3`}>
       <h2 className="font-medium text-slate-800 dark:text-slate-200">New tenant + owner</h2>
       <div className="grid grid-cols-2 gap-3">
         <Field label="Tenant name">

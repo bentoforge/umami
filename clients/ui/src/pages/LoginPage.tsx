@@ -1,6 +1,6 @@
+import { UmamiError } from "@bentoforge/umami-iam";
 import { type FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { UmamiError } from "umami-client";
 import { useUmami } from "../auth/UmamiProvider";
 
 export function LoginPage() {

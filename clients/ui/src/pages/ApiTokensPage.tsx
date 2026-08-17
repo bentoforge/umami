@@ -1,5 +1,5 @@
+import type { ApiKeyView } from "@bentoforge/umami-iam";
 import { useCallback, useEffect, useState } from "react";
-import type { ApiKeyView } from "umami-client";
 import { useUmami } from "../auth/UmamiProvider";
 import { Banner, CheckboxTags, errMsg, Field } from "../components";
 import { card, dangerButton, input, primaryButton, td, th } from "../ui";
@@ -79,7 +79,7 @@ export function ApiTokensPage() {
         />
       )}
 
-      <section className={card + " overflow-x-auto"}>
+      <section className={`${card} overflow-x-auto`}>
         {keys === null ? (
           <p className="text-slate-500">Loading…</p>
         ) : keys.length === 0 ? (
@@ -109,7 +109,7 @@ export function ApiTokensPage() {
                   <td className={td}>
                     {key.lastUsedAt ? new Date(key.lastUsedAt).toLocaleString() : "never"}
                   </td>
-                  <td className={td + " text-right whitespace-nowrap"}>
+                  <td className={`${td} text-right whitespace-nowrap`}>
                     <button className={dangerButton} onClick={() => void onDelete(key)}>
                       Revoke
                     </button>
@@ -180,7 +180,7 @@ function CreateKey({
   };
 
   return (
-    <section className={card + " space-y-3"}>
+    <section className={`${card} space-y-3`}>
       <h2 className="font-medium text-slate-800 dark:text-slate-200">New service key</h2>
       <div className="grid grid-cols-2 gap-3">
         <Field label="Name">

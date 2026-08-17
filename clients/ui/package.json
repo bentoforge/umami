@@ -17,7 +17,7 @@
     "react-dom": "^18.3.1",
     "react-i18next": "^15.5.1",
     "react-router-dom": "^6.28.0",
-    "umami-client": "file:../typescript"
+    "@bentoforge/umami-iam": "file:../typescript"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.8",

@@ -1,15 +1,15 @@
-# umami-client
+# @bentoforge/umami-iam
 
 Typed TypeScript client SDK for the [umami](../../README.md) micro-IAM service. It holds the access
 token **in memory only** and silently refreshes it via the `HttpOnly` cookie on a 401 — the refresh
 token's value is never touched by JS.
 
 ```bash
-npm install umami-client
+npm install @bentoforge/umami-iam
 ```
 
 ```ts
-import { UmamiClient } from "umami-client";
+import { UmamiClient } from "@bentoforge/umami-iam";
 
 const umami = new UmamiClient({
   baseUrl: "https://umami.example.com",
