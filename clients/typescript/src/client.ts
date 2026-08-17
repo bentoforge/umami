@@ -180,6 +180,14 @@ export class UmamiClient {
   getMe(): Promise<MeResponse> {
     return this.request<MeResponse>("/auth/me");
   }
+  /** Self-service edit of the caller's own `selfEditable` custom fields. Blocked for `self:readonly`
+   * users; setting a non-self-editable field is rejected. */
+  patchMe(customFields: Record<string, unknown>): Promise<MeResponse> {
+    return this.request<MeResponse>("/auth/me", {
+      method: "PATCH",
+      body: JSON.stringify({ customFields }),
+    });
+  }
   /** Re-scope the access token to another tenant (requires `admin:system`). Access-token only —
    * a later silent refresh returns to the home tenant. Returns the active tenant id. */
   async switchTenant(tenantId: string): Promise<string> {

@@ -175,6 +175,8 @@ export interface CustomFieldDef {
   required: boolean;
   /** Whether admin list tables surface this field as a column. */
   showInTable?: boolean;
+  /** Whether the user may edit this field on themselves via `PATCH /auth/me`. */
+  selfEditable?: boolean;
 }
 
 /** The custom-field schemas for rendering user/tenant forms (`GET /config/custom-fields`). */

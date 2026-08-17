@@ -7,6 +7,7 @@
 use crate::audit::repository::{AuditRepository, record_best_effort};
 use crate::audit::{AuditSeverity, NewAuditEntry};
 use crate::auth::password;
+use crate::config::Config;
 use crate::config::repository::ConfigRepository;
 use crate::constants::MAX_TEXT_BODY_SIZE;
 use crate::tenants::Tenant;
@@ -14,16 +15,17 @@ use crate::tenants::repository::TenantRepository;
 use crate::users::User;
 use crate::users::repository::UserRepository;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use warp::Filter;
 use warp::filters::BoxedFilter;
 use warp::http::StatusCode;
-use wasabi::status_bail;
 use wasabi::web::auth::authenticator::Authenticator;
 use wasabi::web::auth::user::User as AuthUser;
 use wasabi::web::auth::{with_user, with_user_with};
 use wasabi::web::warp::{into_response, with_body_as_json, with_cloneable};
+use wasabi::{client_bail, status_bail};
 
 /// Current user, without the password hash.
 #[derive(Serialize, Debug)]
@@ -98,6 +100,15 @@ struct ChangePasswordRequest {
     new_password: String,
 }
 
+/// Request body for a self-service profile update: the custom-field values to change. Only fields
+/// the config marks `selfEditable` may be set; everything else stays admin-managed.
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct PatchMeRequest {
+    #[serde(default)]
+    custom_fields: BTreeMap<String, Value>,
+}
+
 /// `POST /auth/me/password` — change the caller's own password (verifies the current one, then
 /// bumps `tokenVersion` so other sessions are logged out).
 pub fn change_password_route(
@@ -116,6 +127,26 @@ pub fn change_password_route(
         .and(with_cloneable(audit))
         .and(with_user_with(authenticator, DENY_READONLY))
         .and_then(handle_change_password_route)
+        .boxed()
+}
+
+/// `PATCH /auth/me` — self-service edit of the caller's own `selfEditable` custom fields (this is
+/// how a user updates profile-ish data now that name/locale live in custom fields). Blocked for
+/// `self:readonly`.
+pub fn patch_me_route(
+    users: Arc<dyn UserRepository>,
+    tenants: Arc<dyn TenantRepository>,
+    config: Arc<dyn ConfigRepository>,
+    authenticator: Arc<Authenticator>,
+) -> BoxedFilter<(impl warp::Reply,)> {
+    warp::path!("auth" / "me")
+        .and(warp::patch())
+        .and(with_body_as_json::<PatchMeRequest>(MAX_TEXT_BODY_SIZE))
+        .and(with_cloneable(users))
+        .and(with_cloneable(tenants))
+        .and(with_cloneable(config))
+        .and(with_user_with(authenticator, DENY_READONLY))
+        .and_then(handle_patch_me_route)
         .boxed()
 }
 
@@ -152,6 +183,54 @@ async fn me(
 
     Ok(MeResponse {
         user: user.into(),
+        tenant,
+    })
+}
+
+#[tracing::instrument(level = "debug", name = "PATCH /auth/me", skip_all)]
+async fn handle_patch_me_route(
+    request: PatchMeRequest,
+    users: Arc<dyn UserRepository>,
+    tenants: Arc<dyn TenantRepository>,
+    config: Arc<dyn ConfigRepository>,
+    caller: AuthUser,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    into_response(patch_me(request, users, tenants, config, caller).await)
+}
+
+async fn patch_me(
+    request: PatchMeRequest,
+    users: Arc<dyn UserRepository>,
+    tenants: Arc<dyn TenantRepository>,
+    config: Arc<dyn ConfigRepository>,
+    caller: AuthUser,
+) -> anyhow::Result<MeResponse> {
+    let user_id = caller.user_id()?;
+    let mut user = match users.get_user(user_id).await? {
+        Some(user) => user,
+        None => status_bail!(StatusCode::UNAUTHORIZED, "User no longer exists"),
+    };
+
+    let config = config.current().await?;
+    // A user may only touch fields the config explicitly marks self-editable; everything else is
+    // admin-managed and rejected outright.
+    for key in request.custom_fields.keys() {
+        match config.custom_user_fields.iter().find(|def| &def.key == key) {
+            Some(def) if def.self_editable => {}
+            Some(_) => client_bail!("Custom field '{key}' is not self-editable"),
+            None => client_bail!("Unknown custom field '{key}'"),
+        }
+    }
+
+    // Merge the allowed changes onto the existing set, then validate the whole set (types + the
+    // required-field rule) so a self-edit can't leave the record invalid.
+    user.custom_fields.extend(request.custom_fields);
+    Config::validate_custom_fields(&config.custom_user_fields, &user.custom_fields)?;
+
+    let updated = users.put_user(user).await?;
+    let tenant = tenants.get_tenant(&updated.tenant_id).await?;
+    Ok(MeResponse {
+        user: updated.into(),
         tenant,
     })
 }

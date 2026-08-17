@@ -1,8 +1,13 @@
-import type { ApiKeyView, MessagingCodeResponse, MessagingLink } from "@bentoforge/umami-iam";
+import type {
+  ApiKeyView,
+  CustomFieldDef,
+  MessagingCodeResponse,
+  MessagingLink,
+} from "@bentoforge/umami-iam";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useUmami } from "../auth/UmamiProvider";
-import { Banner, errMsg, Field } from "../components";
+import { Banner, CustomFieldsForm, errMsg, Field } from "../components";
 import { card, dangerButton, ghostButton, input, primaryButton } from "../ui";
 
 /** Profile tab: signed-in user, tenant, decoded permissions, passkey enrolment. */
@@ -73,6 +78,7 @@ export function ProfilePage() {
         {notice && <p className="mt-3 text-sm text-slate-600 dark:text-slate-300">{notice}</p>}
       </section>
 
+      {!client.hasPermission("self:readonly") && <ProfileFieldsPanel />}
       {!client.hasPermission("self:readonly") && <ChangePasswordPanel />}
       {client.hasPermission("manage:pat") && <PatsPanel />}
       {client.hasPermission("messaging:self") && <MessagingPanel />}
@@ -178,6 +184,69 @@ function MessagingPanel() {
           </ul>
         )}
       </div>
+    </section>
+  );
+}
+
+/** Self-service edit of the caller's own `selfEditable` custom fields (profile). Hidden entirely
+ * when the deployment marks no user field self-editable. */
+function ProfileFieldsPanel() {
+  const { client, me, refreshMe } = useUmami();
+  const [defs, setDefs] = useState<CustomFieldDef[]>([]);
+  const [values, setValues] = useState<Record<string, unknown>>({});
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [ok, setOk] = useState(false);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const schema = await client.getCustomFields();
+        setDefs(schema.user.filter((def) => def.selfEditable));
+      } catch (err) {
+        setError(errMsg(err));
+      }
+    })();
+  }, [client]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: seed the form once from the fetched profile
+  useEffect(() => {
+    setValues((me?.user.customFields ?? {}) as Record<string, unknown>);
+  }, [me?.user.customFields]);
+
+  if (defs.length === 0) {
+    return null;
+  }
+
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    setOk(false);
+    try {
+      // Send only the self-editable keys — the server rejects anything else anyway.
+      const patch: Record<string, unknown> = {};
+      for (const def of defs) {
+        patch[def.key] = values[def.key];
+      }
+      await client.patchMe(patch);
+      await refreshMe();
+      setOk(true);
+    } catch (err) {
+      setError(errMsg(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className={`${card} space-y-3`}>
+      <h2 className="font-medium text-slate-800 dark:text-slate-200">Profile</h2>
+      {error && <Banner tone="error">{error}</Banner>}
+      {ok && <Banner tone="ok">Profile updated.</Banner>}
+      <CustomFieldsForm defs={defs} values={values} onChange={setValues} />
+      <button className={primaryButton} disabled={busy} onClick={() => void save()}>
+        Save
+      </button>
     </section>
   );
 }

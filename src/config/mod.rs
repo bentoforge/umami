@@ -188,6 +188,10 @@ pub struct CustomFieldDef {
     /// Whether admin list tables should surface this field as a column.
     #[serde(default)]
     pub show_in_table: bool,
+    /// Whether a user may edit this field on themselves via `PATCH /auth/me` (self-service). Off by
+    /// default — admin-managed fields stay admin-only; opt profile-ish fields in explicitly.
+    #[serde(default)]
+    pub self_editable: bool,
 }
 
 /// Messaging integration settings. When either endpoint is set, umami can hand out ready-made
@@ -598,6 +602,7 @@ mod tests {
             options: s(options),
             required,
             show_in_table: false,
+            self_editable: false,
         }
     }
 
