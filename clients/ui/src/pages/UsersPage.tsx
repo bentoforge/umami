@@ -1,4 +1,4 @@
-import type { CustomFieldDef, UserStatus, UserView } from "@bentoforge/umami-iam";
+import type { CustomFieldDef, UserView } from "@bentoforge/umami-iam";
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { useUmami } from "../auth/UmamiProvider";
 import {
@@ -10,8 +10,6 @@ import {
   formatFieldValue,
 } from "../components";
 import { card, dangerButton, ghostButton, input, primaryButton, td, th } from "../ui";
-
-const STATUSES: UserStatus[] = ["Active", "Locked", "Invited"];
 
 /** Own-tenant screen: list / create / edit / suspend / delete users. */
 export function UsersPage() {
@@ -28,7 +26,7 @@ export function UsersPage() {
 
   const myId = me?.user.userId;
   const tableDefs = defs.filter((d) => d.showInTable);
-  const colCount = 5 + tableDefs.length;
+  const colCount = 4 + tableDefs.length;
 
   useEffect(() => {
     client
@@ -70,10 +68,10 @@ export function UsersPage() {
     return () => clearTimeout(handle);
   }, [load]);
 
-  const setStatus = async (user: UserView, status: UserStatus) => {
+  const setLocked = async (user: UserView, locked: boolean) => {
     setError(null);
     try {
-      await client.patchUser(user.userId, { status });
+      await client.patchUser(user.userId, { locked });
       await load();
     } catch (err) {
       setError(errMsg(err));
@@ -149,7 +147,7 @@ export function UsersPage() {
               <tr className="border-b border-slate-200 dark:border-slate-700">
                 <th className={th}>User</th>
                 <th className={th}>Roles</th>
-                <th className={th}>Status</th>
+                <th className={th}>Locked</th>
                 <th className={th}>Last seen</th>
                 {tableDefs.map((def) => (
                   <th key={def.key} className={th}>
@@ -165,20 +163,17 @@ export function UsersPage() {
                   <tr className="border-b border-slate-100 dark:border-slate-700/50">
                     <td className={td}>
                       <div className="font-medium text-slate-900 dark:text-white">
-                        {user.name}
+                        {user.username}
                         {user.userId === myId && (
                           <span className="ml-2 rounded bg-brand/10 text-brand px-1.5 py-0.5 text-[10px] align-middle">
                             you
                           </span>
                         )}
                       </div>
-                      <div className="text-xs text-slate-400">
-                        {user.username}
-                        {user.email ? ` · ${user.email}` : ""}
-                      </div>
+                      <div className="text-xs text-slate-400">{user.email ?? "—"}</div>
                     </td>
                     <td className={td}>{user.roles.join(", ") || "—"}</td>
-                    <td className={td}>{user.status}</td>
+                    <td className={td}>{user.locked ? "Locked" : "—"}</td>
                     <td className={td}>
                       {new Date(user.lastSeen).getTime() > 0
                         ? new Date(user.lastSeen).toLocaleString()
@@ -201,18 +196,12 @@ export function UsersPage() {
                       <button className={ghostButton} onClick={() => void resetPassword(user)}>
                         Reset pw
                       </button>{" "}
-                      {user.status === "Locked" ? (
-                        <button
-                          className={ghostButton}
-                          onClick={() => void setStatus(user, "Active")}
-                        >
+                      {user.locked ? (
+                        <button className={ghostButton} onClick={() => void setLocked(user, false)}>
                           Unlock
                         </button>
                       ) : (
-                        <button
-                          className={ghostButton}
-                          onClick={() => void setStatus(user, "Locked")}
-                        >
+                        <button className={ghostButton} onClick={() => void setLocked(user, true)}>
                           Suspend
                         </button>
                       )}{" "}
@@ -268,7 +257,7 @@ function EditUserPanel({
   const { client } = useUmami();
   const [roles, setRoles] = useState<string[]>(user.roles);
   const [assignable, setAssignable] = useState<string[]>([]);
-  const [status, setStatus] = useState<UserStatus>(user.status);
+  const [locked, setLocked] = useState<boolean>(user.locked);
   const [fields, setFields] = useState<Record<string, unknown>>({ ...user.customFields });
   const [saving, setSaving] = useState(false);
 
@@ -283,7 +272,7 @@ function EditUserPanel({
     setSaving(true);
     onError("");
     try {
-      await client.patchUser(user.userId, { roles, status, customFields: fields });
+      await client.patchUser(user.userId, { roles, locked, customFields: fields });
       await onSaved();
     } catch (err) {
       onError(errMsg(err));
@@ -303,18 +292,11 @@ function EditUserPanel({
             empty="no roles assignable"
           />
         </Field>
-        <Field label="Status">
-          <select
-            className={input}
-            value={status}
-            onChange={(e) => setStatus(e.target.value as UserStatus)}
-          >
-            {STATUSES.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
+        <Field label="Locked">
+          <label className="inline-flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={locked} onChange={(e) => setLocked(e.target.checked)} />
+            Locked
+          </label>
         </Field>
         <CustomFieldsForm defs={defs} values={fields} onChange={setFields} />
       </div>
@@ -340,7 +322,6 @@ function CreateUser({
   onError: (msg: string) => void;
 }) {
   const { client, me } = useUmami();
-  const [name, setName] = useState("");
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -363,14 +344,12 @@ function CreateUser({
     onError("");
     try {
       await client.createUser({
-        name,
         username: username.trim() || undefined,
         email: email.trim() || undefined,
         password,
         roles,
         customFields: fields,
       });
-      setName("");
       setUsername("");
       setEmail("");
       setPassword("");
@@ -388,9 +367,6 @@ function CreateUser({
     <section className={`${card} space-y-3`}>
       <h2 className="font-medium text-slate-800 dark:text-slate-200">New user</h2>
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Name">
-          <input className={input} value={name} onChange={(e) => setName(e.target.value)} />
-        </Field>
         <Field label="Username (defaults to email)">
           <input className={input} value={username} onChange={(e) => setUsername(e.target.value)} />
         </Field>

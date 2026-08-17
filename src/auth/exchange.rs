@@ -13,7 +13,6 @@ use crate::auth::tokens::TokenIssuer;
 use crate::config::repository::ConfigRepository;
 use crate::constants::MAX_TEXT_BODY_SIZE;
 use crate::tenants::repository::TenantRepository;
-use crate::users::UserStatus;
 use crate::users::repository::UserRepository;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -88,7 +87,7 @@ async fn exchange(
     caller: AuthUser,
 ) -> anyhow::Result<ExchangeResponse> {
     let user = match deps.users.get_user(caller.user_id()?).await? {
-        Some(user) if user.status == UserStatus::Active => user,
+        Some(user) if !user.locked => user,
         _ => status_bail!(StatusCode::UNAUTHORIZED, "Account not active"),
     };
 
@@ -112,9 +111,7 @@ async fn exchange(
         MintParams {
             api_code: &request.api,
             subject: &user.user_id,
-            name: &user.name,
             email: user.email.as_deref().unwrap_or_default(),
-            locale: &user.locale,
             tenant_id: &user.tenant_id,
             token_version: user.token_version,
             subjects: &user.roles,

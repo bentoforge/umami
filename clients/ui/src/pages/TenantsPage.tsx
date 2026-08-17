@@ -1,17 +1,8 @@
-import type { CustomFieldDef, Tenant, TenantStatus } from "@bentoforge/umami-iam";
+import type { CustomFieldDef, Tenant } from "@bentoforge/umami-iam";
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { useUmami } from "../auth/UmamiProvider";
 import { Banner, CustomFieldsForm, errMsg, Field, formatFieldValue } from "../components";
 import { card, dangerButton, ghostButton, input, primaryButton, td, th } from "../ui";
-
-const STATUSES: TenantStatus[] = [
-  "Lead",
-  "Testing",
-  "Onboarding",
-  "Active",
-  "Suspended",
-  "Churned",
-];
 
 /** System-admin screen: list / create / edit / delete tenants. */
 export function TenantsPage() {
@@ -27,7 +18,7 @@ export function TenantsPage() {
   const [featuresFor, setFeaturesFor] = useState<string | null>(null);
 
   const tableDefs = defs.filter((d) => d.showInTable);
-  const colCount = 5 + tableDefs.length;
+  const colCount = 3 + tableDefs.length;
 
   useEffect(() => {
     client
@@ -114,8 +105,6 @@ export function TenantsPage() {
             <thead>
               <tr className="border-b border-slate-200 dark:border-slate-700">
                 <th className={th}>Name</th>
-                <th className={th}>Status</th>
-                <th className={th}>Plan</th>
                 <th className={th}>Updated</th>
                 {tableDefs.map((def) => (
                   <th key={def.key} className={th}>
@@ -140,8 +129,6 @@ export function TenantsPage() {
                       </div>
                       <div className="text-xs text-slate-400 font-mono">{tenant.tenantId}</div>
                     </td>
-                    <td className={td}>{tenant.status}</td>
-                    <td className={td}>{tenant.plan}</td>
                     <td className={td}>{new Date(tenant.lastUpdated).toLocaleString()}</td>
                     {tableDefs.map((def) => (
                       <td key={def.key} className={td}>
@@ -224,8 +211,6 @@ function EditTenantPanel({
 }) {
   const { client } = useUmami();
   const [name, setName] = useState(tenant.name);
-  const [plan, setPlan] = useState(tenant.plan);
-  const [status, setStatus] = useState<TenantStatus>(tenant.status);
   const [fields, setFields] = useState<Record<string, unknown>>({ ...tenant.customFields });
   const [saving, setSaving] = useState(false);
 
@@ -233,10 +218,7 @@ function EditTenantPanel({
     setSaving(true);
     onError("");
     try {
-      await client.patchTenant(tenant.tenantId, { name, plan, customFields: fields });
-      if (status !== tenant.status) {
-        await client.patchStatus(tenant.tenantId, status);
-      }
+      await client.patchTenant(tenant.tenantId, { name, customFields: fields });
       await onSaved();
     } catch (err) {
       onError(errMsg(err));
@@ -250,22 +232,6 @@ function EditTenantPanel({
       <div className="grid grid-cols-2 gap-3">
         <Field label="Name">
           <input className={input} value={name} onChange={(e) => setName(e.target.value)} />
-        </Field>
-        <Field label="Plan">
-          <input className={input} value={plan} onChange={(e) => setPlan(e.target.value)} />
-        </Field>
-        <Field label="Status">
-          <select
-            className={input}
-            value={status}
-            onChange={(e) => setStatus(e.target.value as TenantStatus)}
-          >
-            {STATUSES.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
         </Field>
         <CustomFieldsForm defs={defs} values={fields} onChange={setFields} />
       </div>
@@ -390,7 +356,6 @@ function CreateTenant({
 }) {
   const { client } = useUmami();
   const [name, setName] = useState("");
-  const [ownerName, setOwnerName] = useState("");
   const [ownerUsername, setOwnerUsername] = useState("");
   const [ownerEmail, setOwnerEmail] = useState("");
   const [ownerPassword, setOwnerPassword] = useState("");
@@ -404,7 +369,6 @@ function CreateTenant({
       await client.createTenant({
         name,
         owner: {
-          name: ownerName,
           username: ownerUsername.trim() || undefined,
           email: ownerEmail.trim() || undefined,
           password: ownerPassword,
@@ -412,7 +376,6 @@ function CreateTenant({
         customFields: fields,
       });
       setName("");
-      setOwnerName("");
       setOwnerUsername("");
       setOwnerEmail("");
       setOwnerPassword("");
@@ -431,13 +394,6 @@ function CreateTenant({
       <div className="grid grid-cols-2 gap-3">
         <Field label="Tenant name">
           <input className={input} value={name} onChange={(e) => setName(e.target.value)} />
-        </Field>
-        <Field label="Owner name">
-          <input
-            className={input}
-            value={ownerName}
-            onChange={(e) => setOwnerName(e.target.value)}
-          />
         </Field>
         <Field label="Owner username (defaults to email)">
           <input

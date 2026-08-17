@@ -9,9 +9,7 @@ export interface AccessClaims {
   aud?: string;
   /** The active tenant this token is scoped to. */
   tenant: string;
-  name: string;
   email: string;
-  locale: string;
   permissions: string[];
   iat: number;
   exp: number;
@@ -65,8 +63,6 @@ export interface TotpSetup {
 
 // ── Users ───────────────────────────────────────────────────────────────────
 
-export type UserStatus = "Active" | "Locked" | "Invited";
-
 export interface UserView {
   userId: string;
   tenantId: string;
@@ -75,9 +71,8 @@ export interface UserView {
   username: string;
   /** Optional contact email — not unique, may be null/absent. */
   email: string | null;
-  name: string;
-  locale: string;
-  status: UserStatus;
+  /** Admin lock — a locked user cannot log in. */
+  locked: boolean;
   customFields: Record<string, unknown>;
   /** RFC3339 creation timestamp. */
   created: string;
@@ -91,15 +86,13 @@ export interface CreateUserRequest {
   /** Optional contact email (not unique). */
   email?: string;
   password: string;
-  name: string;
-  locale?: string;
   roles?: string[];
   customFields?: Record<string, unknown>;
 }
 
 export interface PatchUserRequest {
   roles?: string[];
-  status?: UserStatus;
+  locked?: boolean;
   customFields?: Record<string, unknown>;
 }
 
@@ -112,44 +105,22 @@ export interface MeResponse {
     roles: string[];
     username: string;
     email: string | null;
-    name: string;
-    locale: string;
-    status: UserStatus;
+    locked: boolean;
+    customFields: Record<string, unknown>;
   };
   tenant: Tenant | null;
 }
 
 // ── Tenants ──────────────────────────────────────────────────────────────────
 
-export type TenantStatus = "Lead" | "Testing" | "Onboarding" | "Active" | "Suspended" | "Churned";
-
-export type FeatureToggle = "standard" | "on" | "off";
-
-export interface PackageAssignment {
-  id: string;
-  code: string;
-  assignedAt: string;
-  accountedUntil?: string | null;
-  monthlyPrice?: string | null;
-  priceFixedUntil?: string | null;
-  active: boolean;
-}
-
 export interface Tenant {
   tenantId: string;
   version: number;
-  packages: PackageAssignment[];
-  limitOverrides: Record<string, string>;
-  featureOverrides: Record<string, FeatureToggle>;
   /** Authorization features granted to the tenant (`feature:*`), fed to the token broker. */
   features: string[];
   customFields: Record<string, unknown>;
   name: string;
   slug: string;
-  status: TenantStatus;
-  plan: string;
-  billedUntil?: string | null;
-  seatsLimit?: number | null;
   created: string;
   lastUpdated: string;
 }
@@ -162,8 +133,6 @@ export interface CreateTenantRequest {
     /** Optional contact email (not unique). */
     email?: string;
     password: string;
-    name: string;
-    locale?: string;
   };
   /** Custom-field values, validated against `customTenantFields`. */
   customFields?: Record<string, unknown>;
@@ -172,25 +141,6 @@ export interface CreateTenantRequest {
 export interface CreateTenantResponse {
   tenantId: string;
   ownerUserId: string;
-}
-
-export interface EntitlementsResponse {
-  limits: Record<string, string>;
-  features: string[];
-  monthlyTotal: string;
-  packages: PackageAssignment[];
-}
-
-export interface MetricUsage {
-  metric: string;
-  used: number;
-  limit?: string;
-  overQuota: boolean;
-}
-
-export interface UsageResponse {
-  period: string;
-  metrics: MetricUsage[];
 }
 
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -214,27 +164,6 @@ export interface FeatureDef {
   name: string;
   /** Boolean expression over the tenant's current features gating whether it may be granted. */
   assignableIf?: string | null;
-}
-export interface LimitDef {
-  code: string;
-  name: string;
-  unit?: string;
-  default?: string;
-}
-export interface PackageLimit {
-  code: string;
-  value: string;
-}
-export interface PriceEntry {
-  validFrom: string;
-  price: string;
-}
-export interface PackageDef {
-  code: string;
-  name: string;
-  features: string[];
-  limits: PackageLimit[];
-  prices: PriceEntry[];
 }
 export interface CustomFieldDef {
   key: string;
@@ -285,8 +214,6 @@ export interface Config {
   /** Scopes assignable to M2M service keys. */
   scopes: ScopeDef[];
   features: FeatureDef[];
-  limits: LimitDef[];
-  packages: PackageDef[];
   customTenantFields: CustomFieldDef[];
   customUserFields: CustomFieldDef[];
   security: SecuritySettings;
@@ -394,9 +321,7 @@ export interface MessagingLink {
 export interface ResolvedMessagingUser {
   userId: string;
   tenantId: string;
-  name: string;
   email?: string | null;
-  locale: string;
   roles: string[];
 }
 

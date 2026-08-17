@@ -20,7 +20,6 @@ use crate::constants::{
 use crate::messaging::repository::MessagingRepository;
 use crate::messaging::{MessagingLink, normalize_platform};
 use crate::tenants::repository::TenantRepository;
-use crate::users::UserStatus;
 use crate::users::repository::UserRepository;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -103,9 +102,7 @@ struct ResolveQuery {
 struct ResolvedUser {
     user_id: String,
     tenant_id: String,
-    name: String,
     email: Option<String>,
-    locale: String,
     roles: Vec<String>,
 }
 
@@ -428,7 +425,7 @@ async fn resolve(query: ResolveQuery, deps: ResolveDeps) -> anyhow::Result<Value
     };
 
     let user = match deps.users.get_user(&subject.user_id).await? {
-        Some(user) if user.status == UserStatus::Active => user,
+        Some(user) if !user.locked => user,
         _ => status_bail!(StatusCode::NOT_FOUND, "Linked user is not active"),
     };
 
@@ -453,9 +450,7 @@ async fn resolve(query: ResolveQuery, deps: ResolveDeps) -> anyhow::Result<Value
             MintParams {
                 api_code: api,
                 subject: &user.user_id,
-                name: &user.name,
                 email: user.email.as_deref().unwrap_or_default(),
-                locale: &user.locale,
                 tenant_id: &user.tenant_id,
                 token_version: user.token_version,
                 subjects: &user.roles,
@@ -476,9 +471,7 @@ async fn resolve(query: ResolveQuery, deps: ResolveDeps) -> anyhow::Result<Value
     Ok(serde_json::to_value(ResolvedUser {
         user_id: user.user_id,
         tenant_id: user.tenant_id,
-        name: user.name,
         email: user.email,
-        locale: user.locale,
         roles: user.roles,
     })?)
 }

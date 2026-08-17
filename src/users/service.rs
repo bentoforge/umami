@@ -9,12 +9,12 @@ use crate::audit::{AuditSeverity, NewAuditEntry};
 use crate::config::Config;
 use crate::config::repository::ConfigRepository;
 use crate::constants::{
-    DEFAULT_LOCALE, MANAGE_USERS_PERMISSION, MAX_LIST_RESULTS, MAX_TEXT_BODY_SIZE, ROLE_MEMBER,
+    MANAGE_USERS_PERMISSION, MAX_LIST_RESULTS, MAX_TEXT_BODY_SIZE, ROLE_MEMBER,
 };
 use crate::search::{query_matches, value_search_text};
 use crate::tenants::repository::TenantRepository;
+use crate::users::User;
 use crate::users::repository::{NewUser, UserRepository};
-use crate::users::{User, UserStatus};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -42,18 +42,16 @@ struct CreateUserRequest {
     /// Optional contact email (not unique, may be absent).
     email: Option<String>,
     password: String,
-    name: String,
-    locale: Option<String>,
     roles: Option<Vec<String>>,
     custom_fields: Option<BTreeMap<String, Value>>,
 }
 
-/// Request body for patching a user's roles, status and/or custom fields.
+/// Request body for patching a user's roles, lock state and/or custom fields.
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct PatchUserRequest {
     roles: Option<Vec<String>>,
-    status: Option<UserStatus>,
+    locked: Option<bool>,
     custom_fields: Option<BTreeMap<String, Value>>,
 }
 
@@ -82,9 +80,7 @@ struct UserView {
     roles: Vec<String>,
     username: String,
     email: Option<String>,
-    name: String,
-    locale: String,
-    status: UserStatus,
+    locked: bool,
     custom_fields: BTreeMap<String, Value>,
     created: DateTime<Utc>,
     last_seen: DateTime<Utc>,
@@ -98,9 +94,7 @@ impl From<User> for UserView {
             roles: user.roles,
             username: user.username,
             email: user.email,
-            name: user.name,
-            locale: user.locale,
-            status: user.status,
+            locked: user.locked,
             custom_fields: user.custom_fields,
             created: user.created,
             last_seen: user.last_seen,
@@ -325,8 +319,6 @@ async fn create_user(
             roles,
             username,
             email,
-            name: request.name,
-            locale: request.locale.unwrap_or_else(|| DEFAULT_LOCALE.to_owned()),
             password_hash: Some(password_hash),
             custom_fields,
         })
@@ -383,12 +375,7 @@ async fn list_users(
 /// Concatenates a user's searchable text: username, email, display name, and every custom-field
 /// value (which is where first/last name would live).
 fn user_haystack(user: &User) -> String {
-    let mut haystack = format!(
-        "{} {} {}",
-        user.username,
-        user.email.as_deref().unwrap_or(""),
-        user.name
-    );
+    let mut haystack = format!("{} {}", user.username, user.email.as_deref().unwrap_or(""));
     for value in user.custom_fields.values() {
         haystack.push(' ');
         haystack.push_str(&value_search_text(value));
@@ -417,8 +404,8 @@ async fn patch_user(
         validate_roles(&config, &tenants, tenant_id, &roles).await?;
         user.roles = roles;
     }
-    if let Some(status) = request.status {
-        user.status = status;
+    if let Some(locked) = request.locked {
+        user.locked = locked;
     }
     if let Some(custom_fields) = request.custom_fields {
         Config::validate_custom_fields(&config.custom_user_fields, &custom_fields)?;

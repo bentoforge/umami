@@ -10,7 +10,6 @@ use crate::auth::AuthContext;
 use crate::auth::login::issue_session;
 use crate::auth::webauthn::repository::WebauthnRepository;
 use crate::constants::MAX_TEXT_BODY_SIZE;
-use crate::users::UserStatus;
 use crate::users::repository::UserRepository;
 use anyhow::{Context, anyhow};
 use base64::Engine;
@@ -344,7 +343,7 @@ async fn register_start(
         .collect();
 
     let (options, state) =
-        service.start_registration(&user.user_id, &user.username, &user.name, exclude)?;
+        service.start_registration(&user.user_id, &user.username, &user.username, exclude)?;
 
     let ceremony_id = generate_id();
     webauthn
@@ -399,7 +398,7 @@ async fn login_start(
     webauthn: Arc<dyn WebauthnRepository>,
 ) -> anyhow::Result<LoginStartResponse> {
     let user = match context.users.find_by_username(&request.username).await? {
-        Some(user) if user.status == UserStatus::Active => user,
+        Some(user) if !user.locked => user,
         _ => status_bail!(StatusCode::UNAUTHORIZED, "No passkey login available"),
     };
 
@@ -460,7 +459,7 @@ async fn login_finish(
     }
 
     let user = match context.users.get_user(&ceremony.user_id).await? {
-        Some(user) if user.status == UserStatus::Active => user,
+        Some(user) if !user.locked => user,
         _ => status_bail!(StatusCode::UNAUTHORIZED, "Account not active"),
     };
 

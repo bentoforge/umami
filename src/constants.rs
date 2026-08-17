@@ -5,9 +5,6 @@
 
 // ── Defaults ──────────────────────────────────────────────────────────────────
 
-/// Default BCP-47 locale for users created without an explicit one.
-pub const DEFAULT_LOCALE: &str = "en-US";
-
 /// Hard cap on entries returned by the admin list endpoints (`GET /tenants`, `GET /users`). At the
 /// target scale (< ~10k tenants, 1–10 users/tenant) results are read wholesale and filtered in
 /// memory, so a cap replaces cursor pagination; the caller narrows results with the `q` search.
@@ -33,9 +30,6 @@ pub const MANAGE_PAT_PERMISSION: &str = "manage:pat";
 
 /// Read/write the global config document. **Global scope** — restrict to platform admins.
 pub const MANAGE_CONFIG_PERMISSION: &str = "manage:config";
-
-/// Read and increment a tenant's usage counters (metering).
-pub const WRITE_USAGE_PERMISSION: &str = "write:usage";
 
 /// Cross-tenant administration: create/list/delete tenants + grant/revoke tenant features. Mapped
 /// (in the config `apis`) from `is:system-tenant`, so it only lands in system-tenant tokens.

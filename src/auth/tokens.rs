@@ -104,9 +104,7 @@ struct AccessClaims<'a> {
     aud: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tenant: Option<&'a str>,
-    name: &'a str,
     email: &'a str,
-    locale: &'a str,
     permissions: &'a [String],
     iat: i64,
     exp: i64,
@@ -120,12 +118,9 @@ struct AccessClaims<'a> {
 pub struct AccessTokenClaims<'a> {
     /// User id → `sub`.
     pub subject: &'a str,
-    /// Display name → `name`.
-    pub name: &'a str,
-    /// Email → `email`.
+    /// Email → `email`. (name/locale and other profile claims will be config-mapped from custom
+    /// fields via `extra` in a later step; they are no longer hardcoded on the user.)
     pub email: &'a str,
-    /// BCP-47 locale → `locale`.
-    pub locale: &'a str,
     /// Active tenant → `tenant` (omitted when `None`).
     pub tenant: Option<&'a str>,
     /// Target audience → `aud` (falls back to the issuer's default when `None`).
@@ -179,9 +174,7 @@ impl TokenIssuer {
             sub: request.subject,
             aud: request.audience.or(self.default_audience.as_deref()),
             tenant: request.tenant,
-            name: request.name,
             email: request.email,
-            locale: request.locale,
             permissions: request.permissions,
             iat,
             exp,
@@ -262,9 +255,7 @@ mod tests {
             .issue_access_token(
                 &AccessTokenClaims {
                     subject: "u1",
-                    name: "Jane",
                     email: "jane@test",
-                    locale: "en-US",
                     tenant: Some("t1"),
                     audience: None,
                     permissions: &perms,

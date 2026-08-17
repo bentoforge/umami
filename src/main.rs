@@ -61,7 +61,7 @@ use crate::auth::apikeys::{
 };
 use crate::auth::exchange::{ExchangeDeps, exchange_route as user_exchange_route};
 use crate::auth::login::{login_route, logout_route, refresh_route};
-use crate::auth::me::{change_password_route, logout_all_route, me_route, patch_me_route};
+use crate::auth::me::{change_password_route, logout_all_route, me_route};
 use crate::auth::secretbox::SecretBox;
 use crate::auth::session::DynamoSessionRepository;
 use crate::auth::switch_tenant::switch_tenant_route;
@@ -80,22 +80,16 @@ use crate::authz::{
 };
 use crate::config::repository::{ConfigRepository, S3ConfigRepository, StaticConfigRepository};
 use crate::config::service::{custom_fields_route, get_config_route, put_config_route};
-use crate::constants::{DEFAULT_LOCALE, ROLE_OWNER};
+use crate::constants::ROLE_OWNER;
 use crate::messaging::repository::{DynamoMessagingRepository, MessagingRepository};
 use crate::messaging::service::{
     ResolveDeps, create_link_route, delete_my_link_route, my_code_route, my_links_route,
     regenerate_code_route, resolve_route,
 };
-use crate::tenants::packages::{
-    assign_package_route, entitlements_route, remove_package_route, set_feature_route,
-};
 use crate::tenants::repository::{DynamoTenantRepository, TenantRepository};
 use crate::tenants::service::{
     create_tenant_route, delete_tenant_route, get_tenant_route, list_tenants_route,
-    patch_license_route, patch_status_route, patch_tenant_route,
-};
-use crate::tenants::usage::{
-    DynamoUsageRepository, UsageRepository, get_usage_route, increment_usage_route,
+    patch_tenant_route,
 };
 use crate::users::repository::{DynamoUserRepository, NewUser, UserRepository};
 use crate::users::service::{
@@ -168,8 +162,6 @@ async fn app() -> anyhow::Result<()> {
         Arc::new(DynamoSessionRepository::with_client(&dynamo_client).await?);
     let tenant_repository: Arc<dyn TenantRepository> =
         Arc::new(DynamoTenantRepository::with_client(&dynamo_client).await?);
-    let usage_repository: Arc<dyn UsageRepository> =
-        Arc::new(DynamoUsageRepository::with_client(&dynamo_client).await?);
     let api_key_repository: Arc<dyn ApiKeyRepository> =
         Arc::new(DynamoApiKeyRepository::with_client(&dynamo_client).await?);
     let audit_repository: Arc<dyn AuditRepository> =
@@ -237,11 +229,6 @@ async fn app() -> anyhow::Result<()> {
             authenticator.clone()
         ),
         logout_all_route(user_repository.clone(), authenticator.clone()),
-        patch_me_route(
-            user_repository.clone(),
-            tenant_repository.clone(),
-            authenticator.clone()
-        ),
         switch_tenant_route(auth_context.clone(), authenticator.clone()),
         change_password_route(
             user_repository.clone(),
@@ -354,38 +341,6 @@ async fn app() -> anyhow::Result<()> {
         ),
         get_tenant_route(tenant_repository.clone(), authenticator.clone()),
         patch_tenant_route(
-            tenant_repository.clone(),
-            config_repository.clone(),
-            authenticator.clone()
-        ),
-        // tenant CRM/licensing + usage metering
-        patch_status_route(tenant_repository.clone(), authenticator.clone()),
-        patch_license_route(tenant_repository.clone(), authenticator.clone()),
-        increment_usage_route(
-            usage_repository.clone(),
-            tenant_repository.clone(),
-            config_repository.clone(),
-            authenticator.clone()
-        ),
-        get_usage_route(
-            usage_repository,
-            tenant_repository.clone(),
-            config_repository.clone(),
-            authenticator.clone()
-        ),
-        // tenant packages, features + entitlements (accounting)
-        assign_package_route(
-            tenant_repository.clone(),
-            config_repository.clone(),
-            authenticator.clone()
-        ),
-        remove_package_route(tenant_repository.clone(), authenticator.clone()),
-        set_feature_route(
-            tenant_repository.clone(),
-            config_repository.clone(),
-            authenticator.clone()
-        ),
-        entitlements_route(
             tenant_repository.clone(),
             config_repository.clone(),
             authenticator.clone()
@@ -504,8 +459,6 @@ async fn maybe_auto_init(
             roles: vec![ROLE_OWNER.to_owned()],
             username: username.clone(),
             email: None,
-            name: "Root Admin".to_owned(),
-            locale: DEFAULT_LOCALE.to_owned(),
             password_hash: Some(password_hash),
             custom_fields: std::collections::BTreeMap::new(),
         })

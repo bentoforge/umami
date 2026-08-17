@@ -23,7 +23,6 @@ use crate::auth::tokens::TokenIssuer;
 use crate::config::repository::ConfigRepository;
 use crate::constants::{MANAGE_PAT_PERMISSION, MANAGE_SERVICE_KEYS_PERMISSION, MAX_TEXT_BODY_SIZE};
 use crate::tenants::repository::TenantRepository;
-use crate::users::UserStatus;
 use crate::users::repository::UserRepository;
 use anyhow::Context;
 use chrono::{DateTime, Utc};
@@ -492,7 +491,7 @@ async fn exchange(
         Some(user_id) => {
             // Personal access token — load the user fresh so deactivation/lock stops new tokens.
             let user = match users.get_user(user_id).await? {
-                Some(user) if user.status == UserStatus::Active => user,
+                Some(user) if !user.locked => user,
                 _ => status_bail!(StatusCode::UNAUTHORIZED, "Invalid API key"),
             };
             // Effective roles = user roles ∩ the key's restriction (empty restriction = all roles).
@@ -513,9 +512,7 @@ async fn exchange(
                 MintParams {
                     api_code: &api_code,
                     subject: &user.user_id,
-                    name: &user.name,
                     email: &synthetic,
-                    locale: &user.locale,
                     tenant_id: &user.tenant_id,
                     token_version: user.token_version,
                     subjects: &subjects,
@@ -539,9 +536,7 @@ async fn exchange(
                 MintParams {
                     api_code: &api_code,
                     subject: &key.key_id,
-                    name: &key.name,
                     email: &synthetic_email,
-                    locale: "en-US",
                     tenant_id: &key.tenant_id,
                     token_version: 0,
                     subjects: &key.scopes,

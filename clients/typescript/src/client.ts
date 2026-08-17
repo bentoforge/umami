@@ -11,23 +11,18 @@ import type {
   CreateTenantResponse,
   CreateUserRequest,
   CustomFieldsSchema,
-  EntitlementsResponse,
   ExchangeResponse,
-  FeatureToggle,
   LoginResponse,
   MeResponse,
   MessagingCodeResponse,
   MessagingLink,
-  MetricUsage,
   MfaStatus,
   PatchUserRequest,
   ResetPasswordResponse,
   ResolvedMessagingUser,
   Tenant,
-  TenantStatus,
   TokenResponse,
   TotpSetup,
-  UsageResponse,
   UserView,
 } from "./types.js";
 import {
@@ -185,11 +180,6 @@ export class UmamiClient {
   getMe(): Promise<MeResponse> {
     return this.request<MeResponse>("/auth/me");
   }
-  /** Update the caller's own profile (name/locale). Blocked for `self:readonly` users. */
-  patchMe(body: { name?: string; locale?: string }): Promise<MeResponse> {
-    return this.request<MeResponse>("/auth/me", { method: "PATCH", body: JSON.stringify(body) });
-  }
-
   /** Re-scope the access token to another tenant (requires `admin:system`). Access-token only —
    * a later silent refresh returns to the home tenant. Returns the active tenant id. */
   async switchTenant(tenantId: string): Promise<string> {
@@ -320,49 +310,11 @@ export class UmamiClient {
   }
   patchTenant(
     tenantId: string,
-    body: Partial<Pick<Tenant, "name" | "plan" | "customFields">>,
+    body: Partial<Pick<Tenant, "name" | "customFields">>,
   ): Promise<Tenant> {
     return this.request<Tenant>(`/tenants/${enc(tenantId)}`, {
       method: "PATCH",
       body: JSON.stringify(body),
-    });
-  }
-  patchStatus(tenantId: string, status: TenantStatus): Promise<Tenant> {
-    return this.request<Tenant>(`/tenants/${enc(tenantId)}/status`, {
-      method: "PATCH",
-      body: JSON.stringify({ status }),
-    });
-  }
-  patchLicense(
-    tenantId: string,
-    body: { plan?: string; billedUntil?: string; seatsLimit?: number },
-  ): Promise<Tenant> {
-    return this.request<Tenant>(`/tenants/${enc(tenantId)}/license`, {
-      method: "PATCH",
-      body: JSON.stringify(body),
-    });
-  }
-  getEntitlements(tenantId: string): Promise<EntitlementsResponse> {
-    return this.request<EntitlementsResponse>(`/tenants/${enc(tenantId)}/entitlements`);
-  }
-  assignPackage(
-    tenantId: string,
-    request: { code: string; monthlyPrice?: string },
-  ): Promise<Tenant> {
-    return this.request<Tenant>(`/tenants/${enc(tenantId)}/packages`, {
-      method: "POST",
-      body: JSON.stringify(request),
-    });
-  }
-  removePackage(tenantId: string, assignmentId: string): Promise<Tenant> {
-    return this.request<Tenant>(`/tenants/${enc(tenantId)}/packages/${enc(assignmentId)}`, {
-      method: "DELETE",
-    });
-  }
-  setFeature(tenantId: string, code: string, value: FeatureToggle): Promise<Tenant> {
-    return this.request<Tenant>(`/tenants/${enc(tenantId)}/features/${enc(code)}`, {
-      method: "PUT",
-      body: JSON.stringify({ value }),
     });
   }
 
@@ -390,15 +342,6 @@ export class UmamiClient {
   revokeFeature(tenantId: string, code: string): Promise<{ status: string }> {
     return this.request<{ status: string }>(`/tenants/${enc(tenantId)}/features/${enc(code)}`, {
       method: "DELETE",
-    });
-  }
-  getUsage(tenantId: string): Promise<UsageResponse> {
-    return this.request<UsageResponse>(`/tenants/${enc(tenantId)}/usage`);
-  }
-  incrementUsage(tenantId: string, metric: string, amount = 1): Promise<MetricUsage> {
-    return this.request<MetricUsage>(`/tenants/${enc(tenantId)}/usage/${enc(metric)}`, {
-      method: "POST",
-      body: JSON.stringify({ amount }),
     });
   }
 

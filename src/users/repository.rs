@@ -5,7 +5,7 @@
 //! uniqueness via a conditional put and serves the strongly-consistent username→user login lookup.
 //! Email is optional contact info and is not indexed.
 
-use crate::users::{User, UserStatus, normalize_email, normalize_username};
+use crate::users::{User, normalize_email, normalize_username};
 use anyhow::Context;
 use async_trait::async_trait;
 use aws_sdk_dynamodb::types::{
@@ -72,10 +72,6 @@ pub struct NewUser {
     pub username: String,
     /// Optional contact email (normalized when present).
     pub email: Option<String>,
-    /// Display name.
-    pub name: String,
-    /// BCP-47 locale.
-    pub locale: String,
     /// argon2id hash, or `None` for invite/SSO-only users.
     pub password_hash: Option<String>,
     /// Values for the config-defined custom user fields.
@@ -192,10 +188,8 @@ impl UserRepository for DynamoUserRepository {
             roles: new_user.roles,
             username,
             email,
-            name: new_user.name,
-            locale: new_user.locale,
             password_hash: new_user.password_hash,
-            status: UserStatus::Active,
+            locked: false,
             token_version: 0,
             totp_secret: None,
             totp_pending: None,

@@ -13,10 +13,8 @@ use crate::constants::{
     MANAGE_SERVICE_KEYS_PERMISSION, MANAGE_TENANTS_PERMISSION, MANAGE_USERS_PERMISSION,
     MESSAGING_CONFIGURED_MARKER, MESSAGING_LINK_PERMISSION, MESSAGING_RESOLVE_PERMISSION,
     MESSAGING_SELF_PERMISSION, ROLE_MEMBER, ROLE_OWNER, SELF_READONLY_PERMISSION,
-    SWITCH_TENANT_PERMISSION, SYSTEM_TENANT_MARKER, WRITE_USAGE_PERMISSION,
+    SWITCH_TENANT_PERMISSION, SYSTEM_TENANT_MARKER,
 };
-use chrono::NaiveDate;
-use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -170,61 +168,6 @@ pub struct FeatureDef {
     pub assignable_if: Option<String>,
 }
 
-/// A quantitative limit definition (e.g. "AI Tokens", "Max Items").
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct LimitDef {
-    /// Stable code.
-    pub code: String,
-    /// Human-readable name.
-    pub name: String,
-    /// Optional unit label.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub unit: Option<String>,
-    /// Baseline value when no package raises it.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub default: Option<Decimal>,
-}
-
-/// A limit raised by a package.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct PackageLimit {
-    /// Limit code being raised.
-    pub code: String,
-    /// The value the package grants.
-    pub value: Decimal,
-}
-
-/// A dated list price for a package.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct PriceEntry {
-    /// Date from which this price applies.
-    pub valid_from: NaiveDate,
-    /// Monthly list price (exact decimal, never a float).
-    pub price: Decimal,
-}
-
-/// A package: bundles features + raised limits, with a dated price schedule.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct PackageDef {
-    /// Stable code referenced by a tenant's package assignments.
-    pub code: String,
-    /// Human-readable name.
-    pub name: String,
-    /// Feature codes this package turns on.
-    #[serde(default)]
-    pub features: Vec<String>,
-    /// Limits this package raises.
-    #[serde(default)]
-    pub limits: Vec<PackageLimit>,
-    /// Dated list-price schedule.
-    #[serde(default)]
-    pub prices: Vec<PriceEntry>,
-}
-
 /// A custom-field schema entry (tenant- or user-level).
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -330,12 +273,6 @@ pub struct Config {
     /// Feature catalog (granted to tenants).
     #[serde(default)]
     pub features: Vec<FeatureDef>,
-    /// Limit catalog.
-    #[serde(default)]
-    pub limits: Vec<LimitDef>,
-    /// Package catalog.
-    #[serde(default)]
-    pub packages: Vec<PackageDef>,
     /// Custom tenant field schemas.
     #[serde(default)]
     pub custom_tenant_fields: Vec<CustomFieldDef>,
@@ -583,8 +520,6 @@ impl Default for Config {
                 ),
             ],
             features: Vec::new(),
-            limits: Vec::new(),
-            packages: Vec::new(),
             custom_tenant_fields: Vec::new(),
             custom_user_fields: Vec::new(),
             security: SecuritySettings {
@@ -614,7 +549,6 @@ impl Default for Config {
                             MANAGE_SERVICE_KEYS_PERMISSION,
                             MANAGE_PAT_PERMISSION,
                             MANAGE_CONFIG_PERMISSION,
-                            WRITE_USAGE_PERMISSION,
                         ],
                     ),
                     // Cross-tenant admin comes only from the system tenant.

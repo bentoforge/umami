@@ -15,7 +15,7 @@ use crate::auth::session::{
 };
 use crate::config::Config;
 use crate::constants::MAX_TEXT_BODY_SIZE;
-use crate::users::{User, UserStatus};
+use crate::users::User;
 use anyhow::Context;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -206,9 +206,7 @@ async fn mint_access_token(
         MintParams {
             api_code,
             subject: &user.user_id,
-            name: &user.name,
             email: user.email.as_deref().unwrap_or_default(),
-            locale: &user.locale,
             tenant_id,
             token_version: user.token_version,
             subjects: &user.roles,
@@ -234,7 +232,7 @@ async fn login(
     // Uniform "invalid credentials" for unknown username / wrong password / inactive account, so we
     // don't reveal which users exist.
     let user = match context.users.find_by_username(&request.username).await? {
-        Some(user) if user.status == UserStatus::Active => user,
+        Some(user) if !user.locked => user,
         _ => {
             record_best_effort(
                 &context.audit,
@@ -422,7 +420,7 @@ async fn refresh(
     }
 
     let user = match context.users.get_user(&session.user_id).await? {
-        Some(user) if user.status == UserStatus::Active => user,
+        Some(user) if !user.locked => user,
         _ => {
             context.sessions.delete_session(&session_id).await?;
             status_bail!(StatusCode::UNAUTHORIZED, "Account not active");

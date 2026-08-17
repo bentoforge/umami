@@ -16,9 +16,7 @@ pub struct MintParams<'a> {
     pub api_code: &'a str,
     /// `sub` (user id or key id).
     pub subject: &'a str,
-    pub name: &'a str,
     pub email: &'a str,
-    pub locale: &'a str,
     pub tenant_id: &'a str,
     pub token_version: u32,
     /// The principal's **namespaced subject labels** — a user/PAT's `role:*` (already intersected
@@ -83,9 +81,7 @@ pub async fn mint_for_api(
         .issue_access_token(
             &AccessTokenClaims {
                 subject: params.subject,
-                name: params.name,
                 email: params.email,
-                locale: params.locale,
                 tenant: Some(params.tenant_id),
                 audience: Some(&api.audience),
                 permissions: &permissions,

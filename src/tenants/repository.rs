@@ -1,6 +1,6 @@
 //! DynamoDB persistence for tenants.
 
-use crate::tenants::{Tenant, TenantStatus};
+use crate::tenants::Tenant;
 use anyhow::Context;
 use async_trait::async_trait;
 use aws_sdk_dynamodb::types::{
@@ -40,9 +40,6 @@ const INDEX_BY_LAST_UPDATED: &str = "ByLastUpdatedIndex";
 
 /// Page size for the listing query (paginated internally by `find_all`).
 const LIST_PAGE_SIZE: i32 = 100;
-
-/// Default plan assigned to a freshly created tenant.
-const DEFAULT_PLAN: &str = "free";
 
 /// Persistence interface for tenants.
 #[async_trait]
@@ -140,17 +137,10 @@ impl TenantRepository for DynamoTenantRepository {
         let tenant = Tenant {
             tenant_id: tenant_id.to_owned(),
             version: 0,
-            packages: Vec::new(),
-            limit_overrides: BTreeMap::new(),
-            feature_overrides: BTreeMap::new(),
             features: Vec::new(),
             custom_fields: BTreeMap::new(),
             name: name.to_owned(),
             slug: slug.to_owned(),
-            status: TenantStatus::Active,
-            plan: DEFAULT_PLAN.to_owned(),
-            billed_until: None,
-            seats_limit: None,
             created: now,
             last_updated: now,
         };

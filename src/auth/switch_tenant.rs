@@ -12,7 +12,6 @@ use crate::audit::{AuditSeverity, NewAuditEntry};
 use crate::auth::AuthContext;
 use crate::auth::broker::{MintParams, mint_for_api};
 use crate::constants::{MAX_TEXT_BODY_SIZE, SWITCH_TENANT_PERMISSION};
-use crate::users::UserStatus;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use warp::Filter;
@@ -78,7 +77,7 @@ async fn switch_tenant(
 ) -> anyhow::Result<SwitchResponse> {
     // The acting admin, loaded fresh (deactivation/lock stops switching).
     let user = match context.users.get_user(caller.user_id()?).await? {
-        Some(user) if user.status == UserStatus::Active => user,
+        Some(user) if !user.locked => user,
         _ => status_bail!(StatusCode::UNAUTHORIZED, "Account not active"),
     };
 
@@ -96,9 +95,7 @@ async fn switch_tenant(
         MintParams {
             api_code: UMAMI_API_CODE,
             subject: &user.user_id,
-            name: &user.name,
             email: user.email.as_deref().unwrap_or_default(),
-            locale: &user.locale,
             tenant_id: &target.tenant_id,
             token_version: user.token_version,
             subjects: &user.roles,
