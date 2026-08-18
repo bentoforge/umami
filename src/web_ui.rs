@@ -30,10 +30,13 @@ const CACHE_IMMUTABLE: &str = "public, max-age=31536000, immutable";
 /// The HTML shell + branding are config-driven → revalidate so a new deploy/edit is picked up.
 const CACHE_REVALIDATE: &str = "no-cache";
 
-/// Neutral default favicon (indigo rounded square) when `branding.favicon` is empty.
-const DEFAULT_FAVICON_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#4f46e5"/><text x="16" y="23" font-family="system-ui,sans-serif" font-size="20" font-weight="700" fill="#fff" text-anchor="middle">u</text></svg>"##;
-/// Neutral default wordmark when `branding.logo` is empty.
-const DEFAULT_LOGO_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 32"><text x="0" y="24" font-family="system-ui,sans-serif" font-size="24" font-weight="700" fill="#4f46e5">umami</text></svg>"##;
+/// Built-in default brand assets (the `ci/` corporate-identity SVGs), embedded at compile time and
+/// served when the config `branding` block leaves the corresponding field empty.
+const DEFAULT_FAVICON_SVG: &str = include_str!("../ci/favicon.svg");
+/// Wordmark for light backgrounds.
+const DEFAULT_LOGO_LIGHT_SVG: &str = include_str!("../ci/logo_light.svg");
+/// Wordmark for dark backgrounds.
+const DEFAULT_LOGO_DARK_SVG: &str = include_str!("../ci/logo_dark.svg");
 
 /// Builds the UI routes serving the SPA + branding from `ui_dir`, reading white-labeling from
 /// `config`. Returns `None` when `ui_dir` has no `index.html`. The `use<>` bound makes the returned
@@ -79,7 +82,7 @@ pub fn ui_routes(
             let brand = branding(&config).await;
             Ok::<_, Rejection>(asset_response(
                 brand.logo_light.or(brand.logo_dark),
-                DEFAULT_LOGO_SVG,
+                DEFAULT_LOGO_LIGHT_SVG,
             ))
         });
     let logo_dark = warp::path!("app" / "logo" / "dark")
@@ -89,7 +92,7 @@ pub fn ui_routes(
             let brand = branding(&config).await;
             Ok::<_, Rejection>(asset_response(
                 brand.logo_dark.or(brand.logo_light),
-                DEFAULT_LOGO_SVG,
+                DEFAULT_LOGO_DARK_SVG,
             ))
         });
 

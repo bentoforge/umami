@@ -14,6 +14,8 @@ FROM rust:1.97 AS builder
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
+# Brand SVGs embedded into the binary via include_str! (src/web_ui.rs).
+COPY ci ./ci
 RUN cargo build --release --features open_telemetry
 
 # ── Stage 3: runtime ───────────────────────────────────────────────────────────
