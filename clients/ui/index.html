@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/app/favicon" />
+    <link rel="icon" type="image/svg+xml" href="%BASE_URL%favicon" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>umami</title>
     <!-- Default accent (space-separated RGB channels). Declared first so /app/branding.css, linked
@@ -19,6 +19,6 @@
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
     <!-- Runtime white-labeling served by umami from the config `branding` block (empty by default). -->
-    <link rel="stylesheet" href="/app/branding.css" />
+    <link rel="stylesheet" href="%BASE_URL%branding.css" />
   </body>
 </html>
