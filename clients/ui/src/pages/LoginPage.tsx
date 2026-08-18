@@ -47,6 +47,11 @@ export function LoginPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-100 dark:bg-slate-900 px-4">
       <div className="w-full max-w-sm rounded-2xl bg-white dark:bg-slate-800 shadow-xl p-8">
+        {/* Theme-aware branding logo (config `branding.logoLight`/`logoDark`, else built-in). */}
+        <picture className="flex justify-center p-4">
+          <source srcSet="/app/logo/dark" media="(prefers-color-scheme: dark)" />
+          <img src="/app/logo/light" alt={t("app.title")} className="h-32 w-auto max-w-full" />
+        </picture>
         <h1 className="text-2xl font-semibold text-slate-900 dark:text-white mb-6">
           {t("login.heading")}
         </h1>
