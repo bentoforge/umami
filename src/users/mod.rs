@@ -26,6 +26,17 @@ pub enum Salutation {
     Madam,
 }
 
+impl Salutation {
+    /// The stable wire code (`""` / `"SIR"` / `"MADAM"`), used for the `$user.salutation` claim.
+    pub fn code(self) -> &'static str {
+        match self {
+            Salutation::Unspecified => "",
+            Salutation::Sir => "SIR",
+            Salutation::Madam => "MADAM",
+        }
+    }
+}
+
 /// A global user identity as stored in DynamoDB.
 ///
 /// Credentials (`password_hash`) and the revocation counter (`token_version`) live here. The login

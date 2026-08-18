@@ -46,8 +46,9 @@ pub struct ApiDef {
     /// Ordered permission mapping: rules fire top-to-bottom, later rules seeing earlier grants.
     #[serde(default)]
     pub permissions: Vec<PermissionRule>,
-    /// Claim mapping `claimName → source` (`"features"`, `"customUser:<k>"`, `"customTenant:<k>"`,
-    /// or a literal).
+    /// Claim mapping `claimName → source`, where `source` is a literal string, a `$user.<field>` /
+    /// `$tenant.<field>` reference, or `$user.custom.<key>` / `$tenant.custom.<key>` (see
+    /// [`resolve_claim_source`]).
     #[serde(default)]
     pub claims: BTreeMap<String, String>,
 }
@@ -97,42 +98,77 @@ impl ApiDef {
         Some(granted.into_iter().collect())
     }
 
-    /// Builds the configured extra claims for a token minted for this API. Sources: `features`,
-    /// the composed `name`/`fullName`/`addressableName`, `customUser:<k>`, `customTenant:<k>`, or a
-    /// literal.
-    pub fn build_claims(
-        &self,
-        features: &[String],
-        display_names: &crate::users::DisplayNames,
-        user_custom_fields: &BTreeMap<String, Value>,
-        tenant_custom_fields: &BTreeMap<String, Value>,
-    ) -> BTreeMap<String, Value> {
+    /// Builds the configured extra claims for a token, resolving each source via the single
+    /// [`resolve_claim_source`] interpreter against `ctx`. Sources that resolve to nothing (unknown
+    /// `$…` reference, or an absent field/custom value) are omitted.
+    pub fn build_claims(&self, ctx: &ClaimContext<'_>) -> BTreeMap<String, Value> {
         let mut out = BTreeMap::new();
         for (name, source) in &self.claims {
-            let value = if source == "features" {
-                json!(features)
-            } else if source == "name" {
-                json!(display_names.name)
-            } else if source == "fullName" {
-                json!(display_names.full_name)
-            } else if source == "addressableName" {
-                json!(display_names.addressable_name)
-            } else if let Some(key) = source.strip_prefix("customUser:") {
-                match user_custom_fields.get(key) {
-                    Some(value) => value.clone(),
-                    None => continue,
-                }
-            } else if let Some(key) = source.strip_prefix("customTenant:") {
-                match tenant_custom_fields.get(key) {
-                    Some(value) => value.clone(),
-                    None => continue,
-                }
-            } else {
-                json!(source)
-            };
-            let _ = out.insert(name.clone(), value);
+            if let Some(value) = resolve_claim_source(source, ctx) {
+                let _ = out.insert(name.clone(), value);
+            }
         }
         out
+    }
+}
+
+/// Everything a claim mapping can reference: the principal (user, or a machine key with empty user
+/// fields) and its tenant. Assembled once by the token broker; the single input to
+/// [`resolve_claim_source`].
+pub struct ClaimContext<'a> {
+    pub user_id: &'a str,
+    pub username: &'a str,
+    pub email: &'a str,
+    pub display_names: &'a crate::users::DisplayNames,
+    pub title: Option<&'a str>,
+    pub salutation: &'a str,
+    pub firstname: Option<&'a str>,
+    pub lastname: Option<&'a str>,
+    pub roles: &'a [String],
+    pub user_custom: &'a BTreeMap<String, Value>,
+    pub tenant_id: &'a str,
+    pub tenant_name: &'a str,
+    pub tenant_slug: &'a str,
+    pub tenant_features: &'a [String],
+    pub tenant_custom: &'a BTreeMap<String, Value>,
+}
+
+/// The **single** place a claim-mapping *source* string is interpreted:
+/// - a plain string is used **literally** (e.g. `"dbx-core"` → `"dbx-core"`);
+/// - `$user.<field>` — one of `id`, `username`, `email`, `title`, `salutation`, `firstname`,
+///   `lastname`, `name`, `fullName`, `addressableName`, `roles`;
+/// - `$tenant.<field>` — one of `id`, `name`, `slug`, `features`;
+/// - `$user.custom.<key>` / `$tenant.custom.<key>` — the named custom field's value.
+///
+/// An unknown `$…` reference, or an absent optional field / custom value, yields `None` so the
+/// claim is simply omitted.
+pub fn resolve_claim_source(source: &str, ctx: &ClaimContext<'_>) -> Option<Value> {
+    let Some(reference) = source.strip_prefix('$') else {
+        return Some(Value::String(source.to_owned()));
+    };
+    if let Some(key) = reference.strip_prefix("user.custom.") {
+        return ctx.user_custom.get(key).cloned();
+    }
+    if let Some(key) = reference.strip_prefix("tenant.custom.") {
+        return ctx.tenant_custom.get(key).cloned();
+    }
+    match reference {
+        "user.id" => Some(json!(ctx.user_id)),
+        "user.username" => Some(json!(ctx.username)),
+        "user.email" => Some(json!(ctx.email)),
+        "user.title" => ctx.title.map(|value| json!(value)),
+        "user.salutation" => Some(json!(ctx.salutation)),
+        "user.firstname" => ctx.firstname.map(|value| json!(value)),
+        "user.lastname" => ctx.lastname.map(|value| json!(value)),
+        "user.name" => Some(json!(ctx.display_names.name)),
+        "user.fullName" => Some(json!(ctx.display_names.full_name)),
+        "user.addressableName" => Some(json!(ctx.display_names.addressable_name)),
+        "user.roles" => Some(json!(ctx.roles)),
+        "tenant.id" => Some(json!(ctx.tenant_id)),
+        "tenant.name" => Some(json!(ctx.tenant_name)),
+        "tenant.slug" => Some(json!(ctx.tenant_slug)),
+        "tenant.features" => Some(json!(ctx.tenant_features)),
+        _ => None,
     }
 }
 
@@ -791,14 +827,45 @@ mod tests {
 
     #[test]
     fn claim_mapping_resolves_sources() {
-        let api = dbx_api();
+        let mut api = dbx_api();
+        api.claims = BTreeMap::from([
+            ("svc".to_owned(), "dbx-core".to_owned()), // literal
+            ("uname".to_owned(), "$user.username".to_owned()),
+            ("dept".to_owned(), "$user.custom.department".to_owned()),
+            ("tid".to_owned(), "$tenant.id".to_owned()),
+            ("feats".to_owned(), "$tenant.features".to_owned()),
+            ("missing".to_owned(), "$user.custom.nope".to_owned()),
+            ("bogus".to_owned(), "$user.nope".to_owned()),
+        ]);
+        let names = crate::users::DisplayNames::default();
         let user_cf = BTreeMap::from([("department".to_owned(), json!("engineering"))]);
-        let claims = api.build_claims(
-            &["feature:ai".to_owned()],
-            &crate::users::DisplayNames::default(),
-            &user_cf,
-            &BTreeMap::new(),
-        );
+        let tenant_cf = BTreeMap::new();
+        let features = vec!["feature:ai".to_owned()];
+        let ctx = ClaimContext {
+            user_id: "u1",
+            username: "jane",
+            email: "jane@x",
+            display_names: &names,
+            title: None,
+            salutation: "",
+            firstname: None,
+            lastname: None,
+            roles: &[],
+            user_custom: &user_cf,
+            tenant_id: "t1",
+            tenant_name: "Acme",
+            tenant_slug: "acme",
+            tenant_features: &features,
+            tenant_custom: &tenant_cf,
+        };
+        let claims = api.build_claims(&ctx);
         assert_eq!(claims.get("svc"), Some(&json!("dbx-core")));
+        assert_eq!(claims.get("uname"), Some(&json!("jane")));
+        assert_eq!(claims.get("dept"), Some(&json!("engineering")));
+        assert_eq!(claims.get("tid"), Some(&json!("t1")));
+        assert_eq!(claims.get("feats"), Some(&json!(["feature:ai"])));
+        // Absent custom value and unknown reference are omitted entirely.
+        assert_eq!(claims.get("missing"), None);
+        assert_eq!(claims.get("bogus"), None);
     }
 }

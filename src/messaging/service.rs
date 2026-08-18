@@ -442,8 +442,6 @@ async fn resolve(query: ResolveQuery, deps: ResolveDeps) -> anyhow::Result<Value
             .as_ref()
             .map(|tenant| tenant.features.clone())
             .unwrap_or_default();
-        let empty = std::collections::BTreeMap::new();
-        let tenant_custom_fields = tenant.as_ref().map(|t| &t.custom_fields).unwrap_or(&empty);
         let (access_token, _exp) = mint_for_api(
             &deps.tokens,
             &config,
@@ -451,18 +449,14 @@ async fn resolve(query: ResolveQuery, deps: ResolveDeps) -> anyhow::Result<Value
                 api_code: api,
                 subject: &user.user_id,
                 email: user.email.as_deref().unwrap_or_default(),
-                title: user.title.as_deref(),
-                salutation: user.salutation,
-                firstname: user.firstname.as_deref(),
-                lastname: user.lastname.as_deref(),
                 tenant_id: &user.tenant_id,
                 token_version: user.token_version,
                 subjects: &user.roles,
                 features: &features,
                 // A messaging-resolved token never carries system-admin rights.
                 system_tenant: false,
-                user_custom_fields: &user.custom_fields,
-                tenant_custom_fields,
+                user: Some(&user),
+                tenant: tenant.as_ref(),
                 kind: Some("messaging"),
                 access_ttl_secs,
             },

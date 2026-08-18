@@ -233,7 +233,9 @@ export interface ApiDef {
   eligibility?: string | null;
   /** Ordered rules mapping subjects → granted permissions (accumulated top-to-bottom). */
   permissions: PermissionRule[];
-  /** Claim mapping: claimName → source (`customUser:<k>`, `customTenant:<k>`, or a literal). */
+  /** Claim mapping: claimName → source. A source is a literal string, a `$user.<field>` /
+   * `$tenant.<field>` reference (`id`, `username`, `email`, `name`, `fullName`, `addressableName`,
+   * `roles`, `name`/`slug`/`features`, …), or `$user.custom.<key>` / `$tenant.custom.<key>`. */
   claims?: Record<string, string>;
 }
 

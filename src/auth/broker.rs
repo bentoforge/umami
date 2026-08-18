@@ -5,7 +5,7 @@
 use crate::auth::tokens::{AccessTokenClaims, TokenIssuer};
 use crate::config::Config;
 use crate::constants::{MESSAGING_CONFIGURED_MARKER, SYSTEM_TENANT_MARKER};
-use serde_json::{Value, json};
+use serde_json::json;
 use std::collections::BTreeMap;
 use warp::http::StatusCode;
 use wasabi::{client_bail, status_bail};
@@ -17,12 +17,6 @@ pub struct MintParams<'a> {
     /// `sub` (user id or key id).
     pub subject: &'a str,
     pub email: &'a str,
-    /// Structured name parts — the broker composes `name`/`fullName`/`addressableName` from these
-    /// (via config salutation labels) so the claim mapping can emit them. Absent for M2M keys.
-    pub title: Option<&'a str>,
-    pub salutation: crate::users::Salutation,
-    pub firstname: Option<&'a str>,
-    pub lastname: Option<&'a str>,
     pub tenant_id: &'a str,
     pub token_version: u32,
     /// The principal's **namespaced subject labels** — a user/PAT's `role:*` (already intersected
@@ -33,8 +27,12 @@ pub struct MintParams<'a> {
     /// Whether the token's tenant is the configured system tenant (adds the `is:system-tenant`
     /// synthetic marker to the subject set).
     pub system_tenant: bool,
-    pub user_custom_fields: &'a BTreeMap<String, Value>,
-    pub tenant_custom_fields: &'a BTreeMap<String, Value>,
+    /// The user principal, when the token acts as a user (`None` for an M2M service key). Source of
+    /// the `$user.*` claim references and the composed display names.
+    pub user: Option<&'a crate::users::User>,
+    /// The token's tenant record, when available. Source of the `$tenant.name`/`slug`/`custom.*`
+    /// claim references (`$tenant.id`/`features` come from `tenant_id`/`features` regardless).
+    pub tenant: Option<&'a crate::tenants::Tenant>,
     /// Extra `kind` claim (e.g. `"api_key"`), if any.
     pub kind: Option<&'a str>,
     pub access_ttl_secs: i64,
@@ -74,19 +72,35 @@ pub async fn mint_for_api(
         ),
     };
 
-    let display_names = crate::users::compose_display_names(
-        params.title,
-        params.salutation,
-        params.firstname,
-        params.lastname,
-        &config.salutations,
-    );
-    let mut extra = api.build_claims(
-        params.features,
-        &display_names,
-        params.user_custom_fields,
-        params.tenant_custom_fields,
-    );
+    // Assemble the claim context once, then let the config-driven mapping resolve `$…` references
+    // against it (the single interpretation point lives in `config::resolve_claim_source`).
+    let display_names = match params.user {
+        Some(user) => user.display_names(&config.salutations),
+        None => crate::users::DisplayNames::default(),
+    };
+    let empty_fields = BTreeMap::new();
+    let ctx = crate::config::ClaimContext {
+        user_id: params.subject,
+        username: params.user.map_or("", |user| user.username.as_str()),
+        email: params.email,
+        display_names: &display_names,
+        title: params.user.and_then(|user| user.title.as_deref()),
+        salutation: params.user.map_or("", |user| user.salutation.code()),
+        firstname: params.user.and_then(|user| user.firstname.as_deref()),
+        lastname: params.user.and_then(|user| user.lastname.as_deref()),
+        roles: params.user.map_or(&[][..], |user| user.roles.as_slice()),
+        user_custom: params
+            .user
+            .map_or(&empty_fields, |user| &user.custom_fields),
+        tenant_id: params.tenant_id,
+        tenant_name: params.tenant.map_or("", |tenant| tenant.name.as_str()),
+        tenant_slug: params.tenant.map_or("", |tenant| tenant.slug.as_str()),
+        tenant_features: params.features,
+        tenant_custom: params
+            .tenant
+            .map_or(&empty_fields, |tenant| &tenant.custom_fields),
+    };
+    let mut extra = api.build_claims(&ctx);
     if let Some(kind) = params.kind {
         let _ = extra.insert("kind".to_owned(), json!(kind));
     }

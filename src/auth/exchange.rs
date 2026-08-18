@@ -15,7 +15,6 @@ use crate::constants::MAX_TEXT_BODY_SIZE;
 use crate::tenants::repository::TenantRepository;
 use crate::users::repository::UserRepository;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use std::sync::Arc;
 use warp::Filter;
 use warp::filters::BoxedFilter;
@@ -99,12 +98,6 @@ async fn exchange(
         .as_ref()
         .map(|tenant| tenant.features.clone())
         .unwrap_or_default();
-    let empty_fields = BTreeMap::new();
-    let tenant_custom_fields = tenant
-        .as_ref()
-        .map(|tenant| &tenant.custom_fields)
-        .unwrap_or(&empty_fields);
-
     let minted = mint_for_api(
         &deps.tokens,
         &config,
@@ -112,17 +105,13 @@ async fn exchange(
             api_code: &request.api,
             subject: &user.user_id,
             email: user.email.as_deref().unwrap_or_default(),
-            title: user.title.as_deref(),
-            salutation: user.salutation,
-            firstname: user.firstname.as_deref(),
-            lastname: user.lastname.as_deref(),
             tenant_id: &user.tenant_id,
             token_version: user.token_version,
             subjects: &user.roles,
             features: &features,
             system_tenant: deps.system_tenant_id.as_deref() == Some(user.tenant_id.as_str()),
-            user_custom_fields: &user.custom_fields,
-            tenant_custom_fields,
+            user: Some(&user),
+            tenant: tenant.as_ref(),
             kind: None,
             access_ttl_secs,
         },

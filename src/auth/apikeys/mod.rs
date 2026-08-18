@@ -29,7 +29,6 @@ use chrono::{DateTime, Utc};
 use repository::{ApiKey, ApiKeyRepository, ApiKeyStatus, NewApiKey};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::collections::BTreeMap;
 use std::sync::Arc;
 use warp::Filter;
 use warp::filters::BoxedFilter;
@@ -481,7 +480,6 @@ async fn exchange(
 
     let config = config.current().await?;
     let access_ttl_secs = config.security.access_ttl_secs as i64;
-    let empty_fields = BTreeMap::new();
 
     let is_system = |tenant: &str| system_tenant_id.as_deref() == Some(tenant);
 
@@ -513,17 +511,13 @@ async fn exchange(
                     api_code: &api_code,
                     subject: &user.user_id,
                     email: &synthetic,
-                    title: user.title.as_deref(),
-                    salutation: user.salutation,
-                    firstname: user.firstname.as_deref(),
-                    lastname: user.lastname.as_deref(),
                     tenant_id: &user.tenant_id,
                     token_version: user.token_version,
                     subjects: &subjects,
                     features: &features,
                     system_tenant: is_system(&user.tenant_id),
-                    user_custom_fields: &user.custom_fields,
-                    tenant_custom_fields: &empty_fields,
+                    user: Some(&user),
+                    tenant: None,
                     kind: Some("api_key"),
                     access_ttl_secs,
                 },
@@ -541,17 +535,13 @@ async fn exchange(
                     api_code: &api_code,
                     subject: &key.key_id,
                     email: &synthetic_email,
-                    title: None,
-                    salutation: Default::default(),
-                    firstname: None,
-                    lastname: None,
                     tenant_id: &key.tenant_id,
                     token_version: 0,
                     subjects: &key.scopes,
                     features: &features,
                     system_tenant: is_system(&key.tenant_id),
-                    user_custom_fields: &empty_fields,
-                    tenant_custom_fields: &empty_fields,
+                    user: None,
+                    tenant: None,
                     kind: Some("api_key"),
                     access_ttl_secs,
                 },
