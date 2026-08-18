@@ -64,6 +64,13 @@ pub fn ui_routes(
         .and_then(|config: Arc<dyn ConfigRepository>| async move {
             Ok::<_, Rejection>(css_response(config).await)
         });
+    // Public branding info the SPA reads at runtime (currently the document title).
+    let branding_json = warp::path!("app" / "branding.json")
+        .and(warp::get())
+        .and(with_cloneable(config.clone()))
+        .and_then(|config: Arc<dyn ConfigRepository>| async move {
+            Ok::<_, Rejection>(branding_json_response(config).await)
+        });
     let favicon = warp::path!("app" / "favicon")
         .and(warp::get())
         .and(with_cloneable(config.clone()))
@@ -118,6 +125,7 @@ pub fn ui_routes(
     Some(
         assets
             .or(branding_css)
+            .or(branding_json)
             .or(favicon)
             .or(logo_light)
             .or(logo_dark)
@@ -141,6 +149,17 @@ async fn branding(config: &Arc<dyn ConfigRepository>) -> crate::config::Branding
 async fn css_response(config: Arc<dyn ConfigRepository>) -> Response {
     let css = branding(&config).await.custom_css.unwrap_or_default();
     let reply = warp::reply::with_header(css, "content-type", "text/css; charset=utf-8");
+    warp::reply::with_header(reply, "cache-control", CACHE_REVALIDATE).into_response()
+}
+
+/// `/app/branding.json` — public branding the SPA reads at runtime; currently the document title
+/// (`branding.title`, defaulting to `"umami"`). No auth: it is read before login.
+async fn branding_json_response(config: Arc<dyn ConfigRepository>) -> Response {
+    let title = branding(&config)
+        .await
+        .title
+        .unwrap_or_else(|| "umami".to_owned());
+    let reply = warp::reply::json(&serde_json::json!({ "title": title }));
     warp::reply::with_header(reply, "cache-control", CACHE_REVALIDATE).into_response()
 }
 

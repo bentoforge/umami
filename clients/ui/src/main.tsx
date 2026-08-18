@@ -31,6 +31,18 @@ for (const [rel, file, type] of [
   document.head.appendChild(link);
 }
 
+// Document title from umami's public branding (`branding.title`), applied at runtime.
+fetch(`${import.meta.env.BASE_URL}branding.json`)
+  .then((response) => (response.ok ? response.json() : null))
+  .then((branding: { title?: string } | null) => {
+    if (branding?.title) {
+      document.title = branding.title;
+    }
+  })
+  .catch(() => {
+    // Keep the static <title> on any failure.
+  });
+
 const root = document.getElementById("root");
 if (!root) throw new Error("missing #root");
 

@@ -320,6 +320,9 @@ export interface BrandingConfig {
   /** Logo for dark backgrounds; falls back to logoLight, then default. */
   logoDark?: string;
   favicon?: string;
+  /** Browser tab title (document `<title>`); served at /app/branding.json, applied at runtime.
+   * Empty → "umami". */
+  title?: string;
 }
 
 /** Messaging integration settings (Telegram/WhatsApp). */
