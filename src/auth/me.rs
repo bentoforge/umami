@@ -12,8 +12,8 @@ use crate::config::repository::ConfigRepository;
 use crate::constants::MAX_TEXT_BODY_SIZE;
 use crate::tenants::Tenant;
 use crate::tenants::repository::TenantRepository;
-use crate::users::User;
 use crate::users::repository::UserRepository;
+use crate::users::{DisplayNames, Salutation, User, normalize_name};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -36,18 +36,31 @@ struct MeUser {
     roles: Vec<String>,
     username: String,
     email: Option<String>,
+    title: Option<String>,
+    salutation: Salutation,
+    firstname: Option<String>,
+    lastname: Option<String>,
+    /// Server-composed display names (`name` / `fullName` / `addressableName`), flattened in.
+    #[serde(flatten)]
+    names: DisplayNames,
     locked: bool,
-    custom_fields: std::collections::BTreeMap<String, serde_json::Value>,
+    custom_fields: BTreeMap<String, Value>,
 }
 
-impl From<User> for MeUser {
-    fn from(user: User) -> Self {
+impl MeUser {
+    fn build(user: User, salutations: &BTreeMap<String, String>) -> Self {
+        let names = user.display_names(salutations);
         MeUser {
             user_id: user.user_id,
             tenant_id: user.tenant_id,
             roles: user.roles,
             username: user.username,
             email: user.email,
+            title: user.title,
+            salutation: user.salutation,
+            firstname: user.firstname,
+            lastname: user.lastname,
+            names,
             locked: user.locked,
             custom_fields: user.custom_fields,
         }
@@ -65,12 +78,14 @@ struct MeResponse {
 pub fn me_route(
     users: Arc<dyn UserRepository>,
     tenants: Arc<dyn TenantRepository>,
+    config: Arc<dyn ConfigRepository>,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("auth" / "me")
         .and(warp::get())
         .and(with_cloneable(users))
         .and(with_cloneable(tenants))
+        .and(with_cloneable(config))
         .and(with_user(authenticator))
         .and_then(handle_me_route)
         .boxed()
@@ -100,11 +115,16 @@ struct ChangePasswordRequest {
     new_password: String,
 }
 
-/// Request body for a self-service profile update: the custom-field values to change. Only fields
-/// the config marks `selfEditable` may be set; everything else stays admin-managed.
+/// Request body for a self-service profile update. The structured name parts are always self-
+/// editable; custom fields may be set only when the config marks them `selfEditable`. Absent fields
+/// are left unchanged; an empty string clears a name part.
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct PatchMeRequest {
+    title: Option<String>,
+    salutation: Option<Salutation>,
+    firstname: Option<String>,
+    lastname: Option<String>,
     #[serde(default)]
     custom_fields: BTreeMap<String, Value>,
 }
@@ -130,9 +150,8 @@ pub fn change_password_route(
         .boxed()
 }
 
-/// `PATCH /auth/me` — self-service edit of the caller's own `selfEditable` custom fields (this is
-/// how a user updates profile-ish data now that name/locale live in custom fields). Blocked for
-/// `self:readonly`.
+/// `PATCH /auth/me` — self-service profile edit: the caller's structured name parts (always) plus
+/// any custom fields the config marks `selfEditable`. Blocked for `self:readonly`.
 pub fn patch_me_route(
     users: Arc<dyn UserRepository>,
     tenants: Arc<dyn TenantRepository>,
@@ -154,9 +173,10 @@ pub fn patch_me_route(
 async fn handle_me_route(
     users: Arc<dyn UserRepository>,
     tenants: Arc<dyn TenantRepository>,
+    config: Arc<dyn ConfigRepository>,
     caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(me(users, tenants, caller).await)
+    into_response(me(users, tenants, config, caller).await)
 }
 
 #[tracing::instrument(level = "debug", name = "POST /auth/logout-all", skip_all)]
@@ -170,6 +190,7 @@ async fn handle_logout_all_route(
 async fn me(
     users: Arc<dyn UserRepository>,
     tenants: Arc<dyn TenantRepository>,
+    config: Arc<dyn ConfigRepository>,
     caller: AuthUser,
 ) -> anyhow::Result<MeResponse> {
     let user_id = caller.user_id()?;
@@ -179,10 +200,11 @@ async fn me(
         None => status_bail!(StatusCode::UNAUTHORIZED, "User no longer exists"),
     };
 
+    let salutations = config.current().await?.salutations.clone();
     let tenant = tenants.get_tenant(&user.tenant_id).await?;
 
     Ok(MeResponse {
-        user: user.into(),
+        user: MeUser::build(user, &salutations),
         tenant,
     })
 }
@@ -227,10 +249,24 @@ async fn patch_me(
     user.custom_fields.extend(request.custom_fields);
     Config::validate_custom_fields(&config.custom_user_fields, &user.custom_fields)?;
 
+    // Structured name parts are always the user's own to edit.
+    if let Some(title) = request.title {
+        user.title = normalize_name(Some(title));
+    }
+    if let Some(salutation) = request.salutation {
+        user.salutation = salutation;
+    }
+    if let Some(firstname) = request.firstname {
+        user.firstname = normalize_name(Some(firstname));
+    }
+    if let Some(lastname) = request.lastname {
+        user.lastname = normalize_name(Some(lastname));
+    }
+
     let updated = users.put_user(user).await?;
     let tenant = tenants.get_tenant(&updated.tenant_id).await?;
     Ok(MeResponse {
-        user: updated.into(),
+        user: MeUser::build(updated, &config.salutations),
         tenant,
     })
 }

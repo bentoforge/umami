@@ -17,6 +17,12 @@ pub struct MintParams<'a> {
     /// `sub` (user id or key id).
     pub subject: &'a str,
     pub email: &'a str,
+    /// Structured name parts — the broker composes `name`/`fullName`/`addressableName` from these
+    /// (via config salutation labels) so the claim mapping can emit them. Absent for M2M keys.
+    pub title: Option<&'a str>,
+    pub salutation: crate::users::Salutation,
+    pub firstname: Option<&'a str>,
+    pub lastname: Option<&'a str>,
     pub tenant_id: &'a str,
     pub token_version: u32,
     /// The principal's **namespaced subject labels** — a user/PAT's `role:*` (already intersected
@@ -68,8 +74,16 @@ pub async fn mint_for_api(
         ),
     };
 
+    let display_names = crate::users::compose_display_names(
+        params.title,
+        params.salutation,
+        params.firstname,
+        params.lastname,
+        &config.salutations,
+    );
     let mut extra = api.build_claims(
         params.features,
+        &display_names,
         params.user_custom_fields,
         params.tenant_custom_fields,
     );

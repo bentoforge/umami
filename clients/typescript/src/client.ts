@@ -17,6 +17,7 @@ import type {
   MessagingCodeResponse,
   MessagingLink,
   MfaStatus,
+  NameInput,
   PatchUserRequest,
   ResetPasswordResponse,
   ResolvedMessagingUser,
@@ -180,12 +181,12 @@ export class UmamiClient {
   getMe(): Promise<MeResponse> {
     return this.request<MeResponse>("/auth/me");
   }
-  /** Self-service edit of the caller's own `selfEditable` custom fields. Blocked for `self:readonly`
-   * users; setting a non-self-editable field is rejected. */
-  patchMe(customFields: Record<string, unknown>): Promise<MeResponse> {
+  /** Self-service profile edit: the structured name parts are always editable; custom fields only
+   * when marked `selfEditable`. Blocked for `self:readonly` users. */
+  patchMe(body: NameInput & { customFields?: Record<string, unknown> }): Promise<MeResponse> {
     return this.request<MeResponse>("/auth/me", {
       method: "PATCH",
-      body: JSON.stringify({ customFields }),
+      body: JSON.stringify(body),
     });
   }
   /** Re-scope the access token to another tenant (requires `admin:system`). Access-token only —

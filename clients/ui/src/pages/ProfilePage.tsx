@@ -3,6 +3,7 @@ import type {
   CustomFieldDef,
   MessagingCodeResponse,
   MessagingLink,
+  Salutation,
 } from "@bentoforge/umami-iam";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -194,6 +195,10 @@ function ProfileFieldsPanel() {
   const { client, me, refreshMe } = useUmami();
   const [defs, setDefs] = useState<CustomFieldDef[]>([]);
   const [values, setValues] = useState<Record<string, unknown>>({});
+  const [title, setTitle] = useState("");
+  const [salutation, setSalutation] = useState<Salutation>("");
+  const [firstname, setFirstname] = useState("");
+  const [lastname, setLastname] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState(false);
@@ -212,11 +217,11 @@ function ProfileFieldsPanel() {
   // biome-ignore lint/correctness/useExhaustiveDependencies: seed the form once from the fetched profile
   useEffect(() => {
     setValues((me?.user.customFields ?? {}) as Record<string, unknown>);
+    setTitle(me?.user.title ?? "");
+    setSalutation(me?.user.salutation ?? "");
+    setFirstname(me?.user.firstname ?? "");
+    setLastname(me?.user.lastname ?? "");
   }, [me?.user.customFields]);
-
-  if (defs.length === 0) {
-    return null;
-  }
 
   const save = async () => {
     setBusy(true);
@@ -224,11 +229,11 @@ function ProfileFieldsPanel() {
     setOk(false);
     try {
       // Send only the self-editable keys — the server rejects anything else anyway.
-      const patch: Record<string, unknown> = {};
+      const customFields: Record<string, unknown> = {};
       for (const def of defs) {
-        patch[def.key] = values[def.key];
+        customFields[def.key] = values[def.key];
       }
-      await client.patchMe(patch);
+      await client.patchMe({ title, salutation, firstname, lastname, customFields });
       await refreshMe();
       setOk(true);
     } catch (err) {
@@ -241,9 +246,44 @@ function ProfileFieldsPanel() {
   return (
     <section className={`${card} space-y-3`}>
       <h2 className="font-medium text-slate-800 dark:text-slate-200">Profile</h2>
+      {me?.user.fullName && (
+        <p className="text-sm text-slate-500">
+          Name: <span className="text-slate-800 dark:text-slate-200">{me.user.fullName}</span>
+        </p>
+      )}
       {error && <Banner tone="error">{error}</Banner>}
       {ok && <Banner tone="ok">Profile updated.</Banner>}
-      <CustomFieldsForm defs={defs} values={values} onChange={setValues} />
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Salutation">
+          <select
+            className={input}
+            value={salutation}
+            onChange={(e) => setSalutation(e.target.value as Salutation)}
+          >
+            <option value="">(none)</option>
+            <option value="SIR">Sir</option>
+            <option value="MADAM">Madam</option>
+          </select>
+        </Field>
+        <Field label="Title">
+          <input className={input} value={title} onChange={(e) => setTitle(e.target.value)} />
+        </Field>
+        <Field label="First name">
+          <input
+            className={input}
+            value={firstname}
+            onChange={(e) => setFirstname(e.target.value)}
+          />
+        </Field>
+        <Field label="Last name">
+          <input className={input} value={lastname} onChange={(e) => setLastname(e.target.value)} />
+        </Field>
+      </div>
+      {defs.length > 0 && (
+        <div className="grid grid-cols-2 gap-3">
+          <CustomFieldsForm defs={defs} values={values} onChange={setValues} />
+        </div>
+      )}
       <button className={primaryButton} disabled={busy} onClick={() => void save()}>
         Save
       </button>

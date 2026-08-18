@@ -13,8 +13,8 @@ use crate::constants::{
 };
 use crate::search::{query_matches, value_search_text};
 use crate::tenants::repository::TenantRepository;
-use crate::users::User;
 use crate::users::repository::{NewUser, UserRepository};
+use crate::users::{DisplayNames, Salutation, User, normalize_name};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -42,16 +42,29 @@ struct CreateUserRequest {
     /// Optional contact email (not unique, may be absent).
     email: Option<String>,
     password: String,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    salutation: Option<Salutation>,
+    #[serde(default)]
+    firstname: Option<String>,
+    #[serde(default)]
+    lastname: Option<String>,
     roles: Option<Vec<String>>,
     custom_fields: Option<BTreeMap<String, Value>>,
 }
 
-/// Request body for patching a user's roles, lock state and/or custom fields.
+/// Request body for patching a user. Absent fields are left unchanged; an empty string clears a
+/// name part.
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct PatchUserRequest {
     roles: Option<Vec<String>>,
     locked: Option<bool>,
+    title: Option<String>,
+    salutation: Option<Salutation>,
+    firstname: Option<String>,
+    lastname: Option<String>,
     custom_fields: Option<BTreeMap<String, Value>>,
 }
 
@@ -80,20 +93,35 @@ struct UserView {
     roles: Vec<String>,
     username: String,
     email: Option<String>,
+    /// Structured name parts (the editable source of truth).
+    title: Option<String>,
+    salutation: Salutation,
+    firstname: Option<String>,
+    lastname: Option<String>,
+    /// Server-composed display names (`name` / `fullName` / `addressableName`), flattened in.
+    #[serde(flatten)]
+    names: DisplayNames,
     locked: bool,
     custom_fields: BTreeMap<String, Value>,
     created: DateTime<Utc>,
     last_seen: DateTime<Utc>,
 }
 
-impl From<User> for UserView {
-    fn from(user: User) -> Self {
+impl UserView {
+    /// Builds a view, composing the derived display names with the config salutation labels.
+    fn build(user: User, salutations: &BTreeMap<String, String>) -> Self {
+        let names = user.display_names(salutations);
         UserView {
             user_id: user.user_id,
             tenant_id: user.tenant_id,
             roles: user.roles,
             username: user.username,
             email: user.email,
+            title: user.title,
+            salutation: user.salutation,
+            firstname: user.firstname,
+            lastname: user.lastname,
+            names,
             locked: user.locked,
             custom_fields: user.custom_fields,
             created: user.created,
@@ -144,12 +172,14 @@ pub fn create_user_route(
 /// username/email/name/custom fields.
 pub fn list_users_route(
     users: Arc<dyn UserRepository>,
+    config: Arc<dyn ConfigRepository>,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("users")
         .and(warp::get())
         .and(warp::query::<ListQuery>())
         .and(with_cloneable(users))
+        .and(with_cloneable(config))
         .and(with_user_with_any_permission(
             authenticator,
             REQUIRE_MANAGE_USERS,
@@ -158,7 +188,7 @@ pub fn list_users_route(
         .boxed()
 }
 
-/// `PATCH /users/{id}` — update a user's roles/status/custom fields within the caller's tenant.
+/// `PATCH /users/{id}` — update a user's roles/lock/name/custom fields within the caller's tenant.
 pub fn patch_user_route(
     users: Arc<dyn UserRepository>,
     tenants: Arc<dyn TenantRepository>,
@@ -237,9 +267,10 @@ async fn handle_create_user_route(
 async fn handle_list_users_route(
     query: ListQuery,
     users: Arc<dyn UserRepository>,
+    config: Arc<dyn ConfigRepository>,
     caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(list_users(query, users, caller).await)
+    into_response(list_users(query, users, config, caller).await)
 }
 
 #[tracing::instrument(level = "debug", name = "PATCH /users/{id}", skip_all)]
@@ -319,12 +350,16 @@ async fn create_user(
             roles,
             username,
             email,
+            title: request.title,
+            salutation: request.salutation.unwrap_or_default(),
+            firstname: request.firstname,
+            lastname: request.lastname,
             password_hash: Some(password_hash),
             custom_fields,
         })
         .await?;
 
-    Ok(user.into())
+    Ok(UserView::build(user, &config.salutations))
 }
 
 /// Rejects any requested role that isn't assignable given the tenant's authorization features (or
@@ -351,17 +386,19 @@ async fn validate_roles(
 async fn list_users(
     query: ListQuery,
     users: Arc<dyn UserRepository>,
+    config: Arc<dyn ConfigRepository>,
     caller: AuthUser,
 ) -> anyhow::Result<UserListResponse> {
     let tenant_id = caller.tenant_id()?;
     let search = query.q.unwrap_or_default();
+    let salutations = config.current().await?.salutations.clone();
 
     let mut matched: Vec<UserView> = users
         .list_by_tenant(tenant_id)
         .await?
         .into_iter()
         .filter(|user| query_matches(&user_haystack(user), &search))
-        .map(UserView::from)
+        .map(|user| UserView::build(user, &salutations))
         .collect();
 
     let truncated = matched.len() > MAX_LIST_RESULTS;
@@ -375,7 +412,14 @@ async fn list_users(
 /// Concatenates a user's searchable text: username, email, display name, and every custom-field
 /// value (which is where first/last name would live).
 fn user_haystack(user: &User) -> String {
-    let mut haystack = format!("{} {}", user.username, user.email.as_deref().unwrap_or(""));
+    let mut haystack = format!(
+        "{} {} {} {} {}",
+        user.username,
+        user.email.as_deref().unwrap_or(""),
+        user.title.as_deref().unwrap_or(""),
+        user.firstname.as_deref().unwrap_or(""),
+        user.lastname.as_deref().unwrap_or("")
+    );
     for value in user.custom_fields.values() {
         haystack.push(' ');
         haystack.push_str(&value_search_text(value));
@@ -407,13 +451,25 @@ async fn patch_user(
     if let Some(locked) = request.locked {
         user.locked = locked;
     }
+    if let Some(title) = request.title {
+        user.title = normalize_name(Some(title));
+    }
+    if let Some(salutation) = request.salutation {
+        user.salutation = salutation;
+    }
+    if let Some(firstname) = request.firstname {
+        user.firstname = normalize_name(Some(firstname));
+    }
+    if let Some(lastname) = request.lastname {
+        user.lastname = normalize_name(Some(lastname));
+    }
     if let Some(custom_fields) = request.custom_fields {
         Config::validate_custom_fields(&config.custom_user_fields, &custom_fields)?;
         user.custom_fields = custom_fields;
     }
 
     let updated = users.put_user(user).await?;
-    Ok(updated.into())
+    Ok(UserView::build(updated, &config.salutations))
 }
 
 async fn delete_user(

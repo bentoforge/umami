@@ -226,6 +226,7 @@ async fn app() -> anyhow::Result<()> {
         me_route(
             user_repository.clone(),
             tenant_repository.clone(),
+            config_repository.clone(),
             authenticator.clone()
         ),
         logout_all_route(user_repository.clone(), authenticator.clone()),
@@ -358,7 +359,11 @@ async fn app() -> anyhow::Result<()> {
             config_repository.clone(),
             authenticator.clone()
         ),
-        list_users_route(user_repository.clone(), authenticator.clone()),
+        list_users_route(
+            user_repository.clone(),
+            config_repository.clone(),
+            authenticator.clone()
+        ),
         patch_user_route(
             user_repository.clone(),
             tenant_repository.clone(),
@@ -465,6 +470,10 @@ async fn maybe_auto_init(
             roles: vec![ROLE_OWNER.to_owned()],
             username: username.clone(),
             email: None,
+            title: None,
+            salutation: users::Salutation::default(),
+            firstname: None,
+            lastname: Some("Root Admin".to_owned()),
             password_hash: Some(password_hash),
             custom_fields: std::collections::BTreeMap::new(),
         })

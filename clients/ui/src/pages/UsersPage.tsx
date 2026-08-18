@@ -1,4 +1,4 @@
-import type { CustomFieldDef, UserView } from "@bentoforge/umami-iam";
+import type { CustomFieldDef, Salutation, UserView } from "@bentoforge/umami-iam";
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { useUmami } from "../auth/UmamiProvider";
 import {
@@ -163,14 +163,16 @@ export function UsersPage() {
                   <tr className="border-b border-slate-100 dark:border-slate-700/50">
                     <td className={td}>
                       <div className="font-medium text-slate-900 dark:text-white">
-                        {user.username}
+                        {user.fullName || user.username}
                         {user.userId === myId && (
                           <span className="ml-2 rounded bg-brand/10 text-brand px-1.5 py-0.5 text-[10px] align-middle">
                             you
                           </span>
                         )}
                       </div>
-                      <div className="text-xs text-slate-400">{user.email ?? "—"}</div>
+                      <div className="text-xs text-slate-400">
+                        {user.fullName ? user.username : (user.email ?? "—")}
+                      </div>
                     </td>
                     <td className={td}>{user.roles.join(", ") || "—"}</td>
                     <td className={td}>{user.locked ? "Locked" : "—"}</td>
@@ -259,6 +261,10 @@ function EditUserPanel({
   const [assignable, setAssignable] = useState<string[]>([]);
   const [locked, setLocked] = useState<boolean>(user.locked);
   const [fields, setFields] = useState<Record<string, unknown>>({ ...user.customFields });
+  const [title, setTitle] = useState(user.title ?? "");
+  const [salutation, setSalutation] = useState<Salutation>(user.salutation);
+  const [firstname, setFirstname] = useState(user.firstname ?? "");
+  const [lastname, setLastname] = useState(user.lastname ?? "");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -272,7 +278,15 @@ function EditUserPanel({
     setSaving(true);
     onError("");
     try {
-      await client.patchUser(user.userId, { roles, locked, customFields: fields });
+      await client.patchUser(user.userId, {
+        roles,
+        locked,
+        title,
+        salutation,
+        firstname,
+        lastname,
+        customFields: fields,
+      });
       await onSaved();
     } catch (err) {
       onError(errMsg(err));
@@ -284,6 +298,30 @@ function EditUserPanel({
   return (
     <div className="space-y-3 py-1">
       <div className="grid grid-cols-2 gap-3">
+        <Field label="Salutation">
+          <select
+            className={input}
+            value={salutation}
+            onChange={(e) => setSalutation(e.target.value as Salutation)}
+          >
+            <option value="">(none)</option>
+            <option value="SIR">Sir</option>
+            <option value="MADAM">Madam</option>
+          </select>
+        </Field>
+        <Field label="Title">
+          <input className={input} value={title} onChange={(e) => setTitle(e.target.value)} />
+        </Field>
+        <Field label="First name">
+          <input
+            className={input}
+            value={firstname}
+            onChange={(e) => setFirstname(e.target.value)}
+          />
+        </Field>
+        <Field label="Last name">
+          <input className={input} value={lastname} onChange={(e) => setLastname(e.target.value)} />
+        </Field>
         <Field label="Roles">
           <CheckboxTags
             options={assignable}
@@ -328,6 +366,10 @@ function CreateUser({
   const [roles, setRoles] = useState<string[]>(["role:member"]);
   const [assignable, setAssignable] = useState<string[]>([]);
   const [fields, setFields] = useState<Record<string, unknown>>({});
+  const [title, setTitle] = useState("");
+  const [salutation, setSalutation] = useState<Salutation>("");
+  const [firstname, setFirstname] = useState("");
+  const [lastname, setLastname] = useState("");
   const [busy, setBusy] = useState(false);
 
   // Assignable roles are per-tenant; resolve via the caller's own id (same tenant as new users).
@@ -348,12 +390,20 @@ function CreateUser({
         email: email.trim() || undefined,
         password,
         roles,
+        title,
+        salutation,
+        firstname,
+        lastname,
         customFields: fields,
       });
       setUsername("");
       setEmail("");
       setPassword("");
       setRoles(["role:member"]);
+      setTitle("");
+      setSalutation("");
+      setFirstname("");
+      setLastname("");
       setFields({});
       await onDone();
     } catch (err) {
@@ -367,6 +417,30 @@ function CreateUser({
     <section className={`${card} space-y-3`}>
       <h2 className="font-medium text-slate-800 dark:text-slate-200">New user</h2>
       <div className="grid grid-cols-2 gap-3">
+        <Field label="Salutation">
+          <select
+            className={input}
+            value={salutation}
+            onChange={(e) => setSalutation(e.target.value as Salutation)}
+          >
+            <option value="">(none)</option>
+            <option value="SIR">Sir</option>
+            <option value="MADAM">Madam</option>
+          </select>
+        </Field>
+        <Field label="Title">
+          <input className={input} value={title} onChange={(e) => setTitle(e.target.value)} />
+        </Field>
+        <Field label="First name">
+          <input
+            className={input}
+            value={firstname}
+            onChange={(e) => setFirstname(e.target.value)}
+          />
+        </Field>
+        <Field label="Last name">
+          <input className={input} value={lastname} onChange={(e) => setLastname(e.target.value)} />
+        </Field>
         <Field label="Username (defaults to email)">
           <input className={input} value={username} onChange={(e) => setUsername(e.target.value)} />
         </Field>

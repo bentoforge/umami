@@ -43,6 +43,14 @@ struct OwnerSpec {
     /// Optional contact email (not unique).
     email: Option<String>,
     password: String,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    salutation: Option<crate::users::Salutation>,
+    #[serde(default)]
+    firstname: Option<String>,
+    #[serde(default)]
+    lastname: Option<String>,
 }
 
 /// Request body for self-serve tenant creation.
@@ -281,6 +289,10 @@ async fn create_tenant(
             roles: vec![ROLE_OWNER.to_owned()],
             username: owner_username,
             email: owner_email,
+            title: request.owner.title,
+            salutation: request.owner.salutation.unwrap_or_default(),
+            firstname: request.owner.firstname,
+            lastname: request.owner.lastname,
             password_hash: Some(password_hash),
             custom_fields: BTreeMap::new(),
         })

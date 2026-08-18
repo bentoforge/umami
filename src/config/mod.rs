@@ -97,10 +97,13 @@ impl ApiDef {
         Some(granted.into_iter().collect())
     }
 
-    /// Builds the configured extra claims for a token minted for this API.
+    /// Builds the configured extra claims for a token minted for this API. Sources: `features`,
+    /// the composed `name`/`fullName`/`addressableName`, `customUser:<k>`, `customTenant:<k>`, or a
+    /// literal.
     pub fn build_claims(
         &self,
         features: &[String],
+        display_names: &crate::users::DisplayNames,
         user_custom_fields: &BTreeMap<String, Value>,
         tenant_custom_fields: &BTreeMap<String, Value>,
     ) -> BTreeMap<String, Value> {
@@ -108,6 +111,12 @@ impl ApiDef {
         for (name, source) in &self.claims {
             let value = if source == "features" {
                 json!(features)
+            } else if source == "name" {
+                json!(display_names.name)
+            } else if source == "fullName" {
+                json!(display_names.full_name)
+            } else if source == "addressableName" {
+                json!(display_names.addressable_name)
             } else if let Some(key) = source.strip_prefix("customUser:") {
                 match user_custom_fields.get(key) {
                     Some(value) => value.clone(),
@@ -283,6 +292,10 @@ pub struct Config {
     /// Custom user field schemas.
     #[serde(default)]
     pub custom_user_fields: Vec<CustomFieldDef>,
+    /// Salutation labels (`salutationCode → word`, e.g. `SIR → "Mr"`) in the deployment's language.
+    /// The server uses these to compose `fullName`/`addressableName` for API responses and claims.
+    #[serde(default)]
+    pub salutations: BTreeMap<String, String>,
     /// Security/token settings.
     pub security: SecuritySettings,
     /// Messaging integration (Telegram/WhatsApp) settings.
@@ -526,6 +539,10 @@ impl Default for Config {
             features: Vec::new(),
             custom_tenant_fields: Vec::new(),
             custom_user_fields: Vec::new(),
+            salutations: BTreeMap::from([
+                ("SIR".to_owned(), "Mr".to_owned()),
+                ("MADAM".to_owned(), "Ms".to_owned()),
+            ]),
             security: SecuritySettings {
                 min_password_length: 8,
                 access_ttl_secs: DEFAULT_ACCESS_TTL_SECS,
@@ -776,7 +793,12 @@ mod tests {
     fn claim_mapping_resolves_sources() {
         let api = dbx_api();
         let user_cf = BTreeMap::from([("department".to_owned(), json!("engineering"))]);
-        let claims = api.build_claims(&["feature:ai".to_owned()], &user_cf, &BTreeMap::new());
+        let claims = api.build_claims(
+            &["feature:ai".to_owned()],
+            &crate::users::DisplayNames::default(),
+            &user_cf,
+            &BTreeMap::new(),
+        );
         assert_eq!(claims.get("svc"), Some(&json!("dbx-core")));
     }
 }

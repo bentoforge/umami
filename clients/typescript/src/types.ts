@@ -63,7 +63,24 @@ export interface TotpSetup {
 
 // ── Users ───────────────────────────────────────────────────────────────────
 
-export interface UserView {
+/** How to address a user; the rendered word is composed server-side from the config labels. */
+export type Salutation = "" | "SIR" | "MADAM";
+
+/** Structured name parts (editable) plus the server-composed display names (read-only). */
+export interface NameParts {
+  title: string | null;
+  salutation: Salutation;
+  firstname: string | null;
+  lastname: string | null;
+  /** `title firstname lastname`. */
+  name: string;
+  /** `salutation title firstname lastname`. */
+  fullName: string;
+  /** `salutation title lastname`. */
+  addressableName: string;
+}
+
+export interface UserView extends NameParts {
   userId: string;
   tenantId: string;
   roles: string[];
@@ -80,7 +97,15 @@ export interface UserView {
   lastSeen: string;
 }
 
-export interface CreateUserRequest {
+/** The editable structured name parts (all optional; omitted = unset, `""` clears). */
+export interface NameInput {
+  title?: string;
+  salutation?: Salutation;
+  firstname?: string;
+  lastname?: string;
+}
+
+export interface CreateUserRequest extends NameInput {
   /** Login username (unique). If omitted, `email` is used as the username. */
   username?: string;
   /** Optional contact email (not unique). */
@@ -90,7 +115,7 @@ export interface CreateUserRequest {
   customFields?: Record<string, unknown>;
 }
 
-export interface PatchUserRequest {
+export interface PatchUserRequest extends NameInput {
   roles?: string[];
   locked?: boolean;
   customFields?: Record<string, unknown>;
@@ -98,16 +123,18 @@ export interface PatchUserRequest {
 
 // ── Me ──────────────────────────────────────────────────────────────────────
 
+export interface MeUser extends NameParts {
+  userId: string;
+  tenantId: string;
+  roles: string[];
+  username: string;
+  email: string | null;
+  locked: boolean;
+  customFields: Record<string, unknown>;
+}
+
 export interface MeResponse {
-  user: {
-    userId: string;
-    tenantId: string;
-    roles: string[];
-    username: string;
-    email: string | null;
-    locked: boolean;
-    customFields: Record<string, unknown>;
-  };
+  user: MeUser;
   tenant: Tenant | null;
 }
 
@@ -218,6 +245,8 @@ export interface Config {
   features: FeatureDef[];
   customTenantFields: CustomFieldDef[];
   customUserFields: CustomFieldDef[];
+  /** Salutation labels (`salutationCode → word`) in the deployment's language. */
+  salutations: Record<string, string>;
   security: SecuritySettings;
   /** Messaging integration (Telegram/WhatsApp) settings. */
   messaging?: MessagingConfig;
