@@ -2,7 +2,6 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="%BASE_URL%favicon" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>umami</title>
     <!-- Default accent (space-separated RGB channels). Declared first so /app/branding.css, linked
@@ -17,8 +16,9 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- The favicon + branding stylesheet (umami's config `branding` block) are wired at runtime in
+         main.tsx with an absolute BASE_URL path — a static <link> here would be doubled to
+         /app/app/… by Vite's dev server. -->
     <script type="module" src="/src/main.tsx"></script>
-    <!-- Runtime white-labeling served by umami from the config `branding` block (empty by default). -->
-    <link rel="stylesheet" href="%BASE_URL%branding.css" />
   </body>
 </html>

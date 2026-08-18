@@ -14,6 +14,23 @@ const baseUrl = import.meta.env.VITE_UMAMI_URL ?? "";
 // same path the app is served from (/ui/umami).
 const basename = import.meta.env.BASE_URL.replace(/\/$/, "");
 
+// Branding assets are served by umami under the app base (favicon, operator custom CSS). Wire them
+// at runtime with an absolute `BASE_URL` path: a `<link>` in index.html would be base-rewritten by
+// Vite's dev server into a doubled `/app/app/…`, and a relative href would break on a deep-route
+// reload. `import.meta.env.BASE_URL` (e.g. `/app/`) is correct in dev and build.
+for (const [rel, file, type] of [
+  ["icon", "favicon", "image/svg+xml"],
+  ["stylesheet", "branding.css", ""],
+] as const) {
+  const link = document.createElement("link");
+  link.rel = rel;
+  if (type) {
+    link.type = type;
+  }
+  link.href = `${import.meta.env.BASE_URL}${file}`;
+  document.head.appendChild(link);
+}
+
 const root = document.getElementById("root");
 if (!root) throw new Error("missing #root");
 
