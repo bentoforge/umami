@@ -81,7 +81,7 @@ export function ConfigPage() {
       <section className={card}>
         <textarea
           spellCheck={false}
-          className="w-full h-[70vh] font-mono text-xs rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 p-3 focus:outline-none focus:ring-2 focus:ring-brand"
+          className="w-full h-[70vh] font-mono text-xs rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 p-3 focus:outline-none focus:ring-2 focus:ring-primary"
           value={text}
           onChange={(e) => setText(e.target.value)}
         />

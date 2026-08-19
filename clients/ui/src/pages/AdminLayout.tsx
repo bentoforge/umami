@@ -62,7 +62,7 @@ export function AdminLayout() {
                 className={({ isActive }) =>
                   `px-4 py-2 text-sm font-medium border-b-2 -mb-px ${
                     isActive
-                      ? "border-brand text-brand dark:text-indigo-300"
+                      ? "border-brand text-brand"
                       : "border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
                   }`
                 }

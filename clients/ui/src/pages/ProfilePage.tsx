@@ -64,7 +64,7 @@ export function ProfilePage() {
           {(claims?.permissions ?? []).map((p) => (
             <span
               key={p}
-              className="rounded-full bg-brand/10 text-brand dark:text-indigo-300 px-3 py-1 text-xs font-medium"
+              className="rounded-full bg-brand/10 text-brand px-3 py-1 text-xs font-medium"
             >
               {p}
             </span>

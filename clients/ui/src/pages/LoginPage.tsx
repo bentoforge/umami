@@ -118,8 +118,8 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 const inputClass =
-  "w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 px-3 py-2 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-brand";
+  "w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 px-3 py-2 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary";
 const primaryButtonClass =
-  "w-full rounded-lg bg-brand hover:bg-brand-dark text-white font-medium py-2 transition disabled:opacity-50";
+  "w-full rounded-lg bg-primary hover:bg-primary-dark text-white font-medium py-2 transition disabled:opacity-50";
 const secondaryButtonClass =
   "mt-3 w-full rounded-lg border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 font-medium py-2 transition hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50";

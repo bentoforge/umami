@@ -50,7 +50,7 @@ export function CustomFieldsForm({
             ) : def.type === "bool" || def.type === "boolean" ? (
               <input
                 type="checkbox"
-                className="h-4 w-4 accent-brand"
+                className="h-4 w-4 accent-primary"
                 checked={value === true}
                 onChange={(e) => set(def.key, e.target.checked)}
               />
@@ -115,7 +115,7 @@ export function CheckboxTags({
             key={code}
             className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs cursor-pointer select-none ${
               on
-                ? "border-brand bg-brand/10 text-brand"
+                ? "border-primary bg-primary/10 text-primary"
                 : "border-slate-300 dark:border-slate-600 text-slate-500"
             }`}
           >

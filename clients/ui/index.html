@@ -8,10 +8,14 @@
          last, can override it at runtime. -->
     <style>
       :root {
-        /* CI accent #AD1E6B (see /ci/CI.md); overridable via config branding.customCss. */
+        /* Primary = functional action color (buttons/focus/selection): a serious blue (#2563EB). */
+        --primary: 37 99 235;
+        --primary-dark: 29 78 216;
+        /* Brand = identity accent, used sparingly (CI #AD1E6B, see /ci/CI.md). */
         --brand: 173 30 107;
         --brand-dark: 138 24 86;
       }
+      /* Both are overridable at runtime via config branding.customCss (loaded last). */
     </style>
   </head>
   <body>
