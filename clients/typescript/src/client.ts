@@ -21,6 +21,7 @@ import type {
   PatchUserRequest,
   ResetPasswordResponse,
   ResolvedMessagingUser,
+  SessionView,
   Tenant,
   TokenResponse,
   TotpSetup,
@@ -175,6 +176,16 @@ export class UmamiClient {
   /** Revokes all of the user's sessions (bumps `tokenVersion`). */
   async logoutAll(): Promise<void> {
     await this.request("/auth/logout-all", { method: "POST" }, true);
+  }
+
+  /** Lists the caller's active login sessions (the current one is flagged). */
+  listSessions(): Promise<SessionView[]> {
+    return this.request<SessionView[]>("/auth/sessions");
+  }
+
+  /** Revokes one of the caller's own sessions (single-device logout). */
+  async deleteSession(sessionId: string): Promise<void> {
+    await this.request(`/auth/sessions/${enc(sessionId)}`, { method: "DELETE" });
   }
 
   /** Current profile (user + tenant). */

@@ -61,7 +61,10 @@ use crate::auth::apikeys::{
 };
 use crate::auth::exchange::{ExchangeDeps, exchange_route as user_exchange_route};
 use crate::auth::login::{login_route, logout_route, refresh_route};
-use crate::auth::me::{change_password_route, logout_all_route, me_route, patch_me_route};
+use crate::auth::me::{
+    change_password_route, delete_session_route, logout_all_route, me_route, patch_me_route,
+    sessions_route,
+};
 use crate::auth::secretbox::SecretBox;
 use crate::auth::session::DynamoSessionRepository;
 use crate::auth::switch_tenant::switch_tenant_route;
@@ -195,7 +198,7 @@ async fn app() -> anyhow::Result<()> {
     let auth_context = AuthContext::from_env(
         user_repository.clone(),
         tenant_repository.clone(),
-        session_repository,
+        session_repository.clone(),
         token_issuer.clone(),
         config_repository.clone(),
         mfa.clone(),
@@ -230,6 +233,8 @@ async fn app() -> anyhow::Result<()> {
             authenticator.clone()
         ),
         logout_all_route(user_repository.clone(), authenticator.clone()),
+        sessions_route(session_repository.clone(), authenticator.clone()),
+        delete_session_route(session_repository.clone(), authenticator.clone()),
         patch_me_route(
             user_repository.clone(),
             tenant_repository.clone(),

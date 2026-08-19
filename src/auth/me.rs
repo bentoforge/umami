@@ -6,7 +6,9 @@
 
 use crate::audit::repository::{AuditRepository, record_best_effort};
 use crate::audit::{AuditSeverity, NewAuditEntry};
+use crate::auth::cookies::parse_refresh_cookie;
 use crate::auth::password;
+use crate::auth::session::SessionRepository;
 use crate::config::Config;
 use crate::config::repository::ConfigRepository;
 use crate::constants::MAX_TEXT_BODY_SIZE;
@@ -14,6 +16,7 @@ use crate::tenants::Tenant;
 use crate::tenants::repository::TenantRepository;
 use crate::users::repository::UserRepository;
 use crate::users::{DisplayNames, Salutation, User, normalize_name};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -345,5 +348,109 @@ async fn change_password(
     )
     .await;
 
+    Ok(json!({ "status": "ok" }))
+}
+
+// ── Sessions (self-service device management) ────────────────────────────────────
+
+/// A login session in the caller's list — never exposes the refresh secret/hash.
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct SessionView {
+    session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    user_agent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ip: Option<String>,
+    created: DateTime<Utc>,
+    last_seen: DateTime<Utc>,
+    expires_at: DateTime<Utc>,
+    /// Whether this is the session making the request (matched via the refresh cookie).
+    current: bool,
+}
+
+/// `GET /auth/sessions` — list the caller's own active sessions (marks the current one).
+pub fn sessions_route(
+    sessions: Arc<dyn SessionRepository>,
+    authenticator: Arc<Authenticator>,
+) -> BoxedFilter<(impl warp::Reply,)> {
+    warp::path!("auth" / "sessions")
+        .and(warp::get())
+        .and(with_cloneable(sessions))
+        .and(warp::header::optional::<String>("cookie"))
+        .and(with_user(authenticator))
+        .and_then(handle_list_sessions_route)
+        .boxed()
+}
+
+/// `DELETE /auth/sessions/{id}` — revoke one of the caller's own sessions (single-device logout).
+pub fn delete_session_route(
+    sessions: Arc<dyn SessionRepository>,
+    authenticator: Arc<Authenticator>,
+) -> BoxedFilter<(impl warp::Reply,)> {
+    warp::path!("auth" / "sessions" / String)
+        .and(warp::delete())
+        .and(with_cloneable(sessions))
+        .and(with_user(authenticator))
+        .and_then(handle_delete_session_route)
+        .boxed()
+}
+
+#[tracing::instrument(level = "debug", name = "GET /auth/sessions", skip_all)]
+async fn handle_list_sessions_route(
+    sessions: Arc<dyn SessionRepository>,
+    cookie_header: Option<String>,
+    caller: AuthUser,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    into_response(list_sessions(sessions, cookie_header, caller).await)
+}
+
+#[tracing::instrument(level = "debug", name = "DELETE /auth/sessions/{id}", skip_all)]
+async fn handle_delete_session_route(
+    session_id: String,
+    sessions: Arc<dyn SessionRepository>,
+    caller: AuthUser,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    into_response(delete_session(session_id, sessions, caller).await)
+}
+
+async fn list_sessions(
+    sessions: Arc<dyn SessionRepository>,
+    cookie_header: Option<String>,
+    caller: AuthUser,
+) -> anyhow::Result<Vec<SessionView>> {
+    let user_id = caller.user_id()?;
+    let current_id = parse_refresh_cookie(cookie_header.as_deref()).map(|(id, _)| id);
+
+    let views = sessions
+        .list_by_user(user_id)
+        .await?
+        .into_iter()
+        .map(|session| SessionView {
+            current: current_id.as_deref() == Some(session.session_id.as_str()),
+            session_id: session.session_id,
+            user_agent: session.user_agent,
+            ip: session.ip,
+            created: session.created,
+            last_seen: session.last_seen,
+            expires_at: session.expires_at,
+        })
+        .collect();
+    Ok(views)
+}
+
+async fn delete_session(
+    session_id: String,
+    sessions: Arc<dyn SessionRepository>,
+    caller: AuthUser,
+) -> anyhow::Result<serde_json::Value> {
+    let user_id = caller.user_id()?;
+    // Scope strictly to the caller's own sessions — a foreign session reads as "not found".
+    match sessions.get_session(&session_id).await? {
+        Some(session) if session.user_id == user_id => {
+            sessions.delete_session(&session_id).await?;
+        }
+        _ => status_bail!(StatusCode::NOT_FOUND, "No such session"),
+    }
     Ok(json!({ "status": "ok" }))
 }

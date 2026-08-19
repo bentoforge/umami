@@ -7,7 +7,10 @@
 
 use anyhow::Context;
 use async_trait::async_trait;
-use aws_sdk_dynamodb::types::{AttributeValue, BillingMode};
+use aws_sdk_dynamodb::types::{
+    AttributeValue, BillingMode, GlobalSecondaryIndex, KeySchemaElement, KeyType, Projection,
+    ProjectionType,
+};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::{DateTime, Duration, SecondsFormat, Utc};
@@ -17,7 +20,7 @@ use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 use wasabi::aws::dynamodb::client::DynamoClient;
 use wasabi::aws::dynamodb::schema::{str_attribute, with_hash_index};
-use wasabi::aws::dynamodb::{deserialize_entity, generate_id, str};
+use wasabi::aws::dynamodb::{deserialize_entity, find_all, generate_id, str};
 
 /// Number of random bytes in a refresh secret (256 bits of entropy).
 const REFRESH_SECRET_BYTES: usize = 32;
@@ -34,6 +37,15 @@ const TABLE_SESSIONS: &str = "sessions";
 
 /// Hash key of the `sessions` table.
 const FIELD_SESSION_ID: &str = "sessionId";
+
+/// GSI hash key — the owning user, to list all of a user's sessions.
+const FIELD_USER_ID: &str = "userId";
+
+/// GSI range key — recency (`lastSeen`), so a user's sessions sort newest-first.
+const FIELD_LAST_SEEN: &str = "lastSeen";
+
+/// GSI listing a user's sessions by recent activity.
+const INDEX_BY_USER: &str = "ByUserIndex";
 
 /// A persisted login session.
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -123,6 +135,9 @@ pub trait SessionRepository: Send + Sync {
     /// Fetches a session by id. `None` if unknown or already deleted.
     async fn get_session(&self, session_id: &str) -> anyhow::Result<Option<Session>>;
 
+    /// Lists all of a user's sessions (via the `ByUserIndex` GSI), newest activity first.
+    async fn list_by_user(&self, user_id: &str) -> anyhow::Result<Vec<Session>>;
+
     /// Rotates a session's refresh secret and extends its lifetime (bumps `lastSeen`).
     async fn rotate_session(
         &self,
@@ -146,9 +161,35 @@ impl DynamoSessionRepository {
     pub async fn with_client(client: &DynamoClient) -> anyhow::Result<Self> {
         client
             .create_table(TABLE_SESSIONS, |table| {
-                let table = table.attribute_definitions(str_attribute(FIELD_SESSION_ID)?);
+                let by_user = GlobalSecondaryIndex::builder()
+                    .index_name(INDEX_BY_USER)
+                    .key_schema(
+                        KeySchemaElement::builder()
+                            .attribute_name(FIELD_USER_ID)
+                            .key_type(KeyType::Hash)
+                            .build()?,
+                    )
+                    .key_schema(
+                        KeySchemaElement::builder()
+                            .attribute_name(FIELD_LAST_SEEN)
+                            .key_type(KeyType::Range)
+                            .build()?,
+                    )
+                    .projection(
+                        Projection::builder()
+                            .projection_type(ProjectionType::All)
+                            .build(),
+                    )
+                    .build()?;
+
+                let table = table
+                    .attribute_definitions(str_attribute(FIELD_SESSION_ID)?)
+                    .attribute_definitions(str_attribute(FIELD_USER_ID)?)
+                    .attribute_definitions(str_attribute(FIELD_LAST_SEEN)?);
                 let table = with_hash_index(table, FIELD_SESSION_ID)?;
-                Ok(table.billing_mode(BillingMode::PayPerRequest))
+                Ok(table
+                    .global_secondary_indexes(by_user)
+                    .billing_mode(BillingMode::PayPerRequest))
             })
             .await?;
 
@@ -205,6 +246,23 @@ impl SessionRepository for DynamoSessionRepository {
             .context("Error searching table 'sessions'")?;
 
         deserialize_entity(result.item)
+    }
+
+    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    async fn list_by_user(&self, user_id: &str) -> anyhow::Result<Vec<Session>> {
+        let query = self
+            .client
+            .query(TABLE_SESSIONS)
+            .index_name(INDEX_BY_USER)
+            .key_condition_expression("#userId = :userId")
+            .expression_attribute_names("#userId", FIELD_USER_ID)
+            .expression_attribute_values(":userId", str(user_id))
+            .scan_index_forward(false)
+            .limit(100);
+
+        find_all(query)
+            .await
+            .context("Error listing sessions by user")
     }
 
     #[tracing::instrument(level = "debug", skip(self, new_refresh_hash), err(Display))]

@@ -138,6 +138,21 @@ export interface MeResponse {
   tenant: Tenant | null;
 }
 
+/** One of the caller's active login sessions (device). Never exposes the refresh secret. */
+export interface SessionView {
+  sessionId: string;
+  userAgent?: string;
+  ip?: string;
+  /** RFC3339 creation timestamp. */
+  created: string;
+  /** RFC3339 timestamp of the last refresh. */
+  lastSeen: string;
+  /** RFC3339 absolute expiry. */
+  expiresAt: string;
+  /** Whether this is the session making the request. */
+  current: boolean;
+}
+
 // ── Tenants ──────────────────────────────────────────────────────────────────
 
 export interface Tenant {
