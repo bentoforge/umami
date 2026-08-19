@@ -12,7 +12,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { useUmami } from "../auth/UmamiProvider";
-import { errMsg } from "../components";
+import { errMsg, Logo } from "../components";
 import { getTheme, setTheme } from "../theme";
 import { card, iconButton, input } from "../ui";
 
@@ -59,10 +59,7 @@ export function AdminLayout() {
         <div className="mx-auto max-w-6xl px-6 py-3 flex items-center gap-4">
           {/* Logo → Start. Theme-aware (config `branding.logoLight`/`logoDark`, else built-in). */}
           <NavLink to="/" className="shrink-0" onClick={() => setMobileOpen(false)}>
-            <picture>
-              <source srcSet="/app/logo/dark" media="(prefers-color-scheme: dark)" />
-              <img src="/app/logo/light" alt="Start" className="h-8 w-auto" />
-            </picture>
+            <Logo className="h-8 w-auto" />
           </NavLink>
 
           <nav className="hidden md:flex items-center gap-1">

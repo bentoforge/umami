@@ -1,9 +1,24 @@
 import type { CustomFieldDef } from "@bentoforge/umami-iam";
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect, useState } from "react";
+import { resolvedDark, subscribeTheme } from "./theme";
 import { input } from "./ui";
 
 /** Extracts a human-readable message from a thrown value (UmamiError, Error, or anything). */
 export const errMsg = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+/** Reactive "is the effective theme dark?" — re-renders on a theme switch or an OS change. */
+export function useResolvedDark(): boolean {
+  const [dark, setDark] = useState(resolvedDark());
+  useEffect(() => subscribeTheme(() => setDark(resolvedDark())), []);
+  return dark;
+}
+
+/** Branding logo that follows the *effective* theme (config `branding.logoLight`/`logoDark`, else
+ * built-in) — the resolved theme, not the OS media query, so a manual override wins. */
+export function Logo({ className, alt = "Start" }: { className?: string; alt?: string }) {
+  const dark = useResolvedDark();
+  return <img src={dark ? "/app/logo/dark" : "/app/logo/light"} alt={alt} className={className} />;
+}
 
 /** Renders a custom-field value for a read-only table cell. */
 export const formatFieldValue = (value: unknown): string => {
