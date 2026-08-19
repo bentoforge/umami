@@ -12,12 +12,13 @@
     "format": "biome check --write"
   },
   "dependencies": {
+    "@bentoforge/umami-iam": "file:../typescript",
+    "@heroicons/react": "^2.2.0",
     "i18next": "^25.6.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-i18next": "^15.5.1",
-    "react-router-dom": "^6.28.0",
-    "@bentoforge/umami-iam": "file:../typescript"
+    "react-router-dom": "^6.28.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.8",

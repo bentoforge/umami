@@ -1,88 +1,279 @@
 import type { Tenant } from "@bentoforge/umami-iam";
+import {
+  Bars3Icon,
+  BuildingOffice2Icon,
+  ChevronDownIcon,
+  ComputerDesktopIcon,
+  MoonIcon,
+  SunIcon,
+  UserCircleIcon,
+  XMarkIcon,
+} from "@heroicons/react/24/outline";
 import { useEffect, useRef, useState } from "react";
-import { useTranslation } from "react-i18next";
 import { NavLink, Outlet } from "react-router-dom";
 import { useUmami } from "../auth/UmamiProvider";
 import { errMsg } from "../components";
-import { card, ghostButton, input, primaryButton } from "../ui";
+import { getTheme, setTheme } from "../theme";
+import { card, iconButton, input } from "../ui";
 
-/** Authenticated shell: title bar, permission-gated tab nav, tenant switcher, and the active route. */
+type NavItem = { to: string; label: string; show: boolean; end?: boolean };
+
+const navLinkClass = ({ isActive }: { isActive: boolean }) =>
+  `px-3 py-2 rounded-lg text-sm font-medium ${
+    isActive
+      ? "text-brand"
+      : "text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-700"
+  }`;
+
+/** Authenticated shell: logo + nav, theme/tenant switchers, user menu (desktop) or hamburger
+ * (mobile), the impersonation banner, and the active route. */
 export function AdminLayout() {
-  const { t } = useTranslation();
-  const { client, me, signOut, activeTenantId, activeTenantName } = useUmami();
+  const { client, me, activeTenantId, activeTenantName } = useUmami();
   const can = (permission: string) => client.hasPermission(permission);
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   const homeTenantId = me?.user.tenantId;
   const switched = !!activeTenantId && activeTenantId !== homeTenantId;
 
-  const tabs: { to: string; label: string; show: boolean }[] = [
-    { to: "/", label: "Profile", show: true },
+  const navItems: NavItem[] = [
+    { to: "/", label: "Start", show: true, end: true },
     { to: "/tenants", label: "Tenants", show: can("manage:tenants") },
     { to: "/users", label: "Users", show: can("manage:users") },
     { to: "/api-tokens", label: "API Tokens", show: can("manage:service-keys") },
-    { to: "/audit", label: "Audit", show: can("admin:tenant") },
+  ].filter((item) => item.show);
+
+  // Personal/account items — the user menu (desktop) and part of the mobile menu.
+  const menuItems: NavItem[] = [
+    { to: "/profile", label: "Profil", show: true },
+    { to: "/audit", label: "Audit-Log", show: can("admin:tenant") },
+    { to: "/sessions", label: "Sitzungen", show: true },
     { to: "/config", label: "Config", show: can("manage:config") },
-  ];
+  ].filter((item) => item.show);
+
+  const fullName = me?.user.fullName?.trim() || me?.user.username || "";
+  const tenantName = activeTenantName ?? me?.tenant?.name ?? me?.user.tenantId ?? "";
 
   return (
     <div className="min-h-screen bg-slate-100 dark:bg-slate-900">
       <header className="bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700">
-        <div className="mx-auto max-w-5xl px-6 py-4 flex items-center justify-between gap-3">
-          {/* Swappable logo (config `branding.logoLight`/`logoDark`); the browser picks by theme. */}
-          <picture>
-            <source srcSet="/app/logo/dark" media="(prefers-color-scheme: dark)" />
-            <img src="/app/logo/light" alt={t("app.title")} className="h-8 w-auto" />
-          </picture>
-          <div className="flex items-center gap-2">
-            {can("switch:tenant") && <TenantSwitcher />}
-            <button onClick={() => void client.logoutAll()} className={ghostButton}>
-              {t("dashboard.logoutAll")}
-            </button>
-            <button onClick={() => void signOut()} className={primaryButton}>
-              {t("dashboard.logout")}
+        <div className="mx-auto max-w-6xl px-6 py-3 flex items-center gap-4">
+          {/* Logo → Start. Theme-aware (config `branding.logoLight`/`logoDark`, else built-in). */}
+          <NavLink to="/" className="shrink-0" onClick={() => setMobileOpen(false)}>
+            <picture>
+              <source srcSet="/app/logo/dark" media="(prefers-color-scheme: dark)" />
+              <img src="/app/logo/light" alt="Start" className="h-8 w-auto" />
+            </picture>
+          </NavLink>
+
+          <nav className="hidden md:flex items-center gap-1">
+            {navItems.map((item) => (
+              <NavLink key={item.to} to={item.to} end={item.end} className={navLinkClass}>
+                {item.label}
+              </NavLink>
+            ))}
+          </nav>
+
+          <div className="ml-auto flex items-center gap-1">
+            <ThemeSwitcher />
+            {can("switch:tenant") && (
+              <div className="hidden md:block">
+                <TenantSwitcher />
+              </div>
+            )}
+            <div className="hidden md:block">
+              <UserMenu fullName={fullName} tenantName={tenantName} items={menuItems} />
+            </div>
+            <button
+              type="button"
+              className={`${iconButton} md:hidden`}
+              aria-label="Menu"
+              onClick={() => setMobileOpen((open) => !open)}
+            >
+              {mobileOpen ? <XMarkIcon className="h-6 w-6" /> : <Bars3Icon className="h-6 w-6" />}
             </button>
           </div>
         </div>
+
         {switched && (
           <div className="bg-amber-50 dark:bg-amber-950/40 border-t border-amber-200 dark:border-amber-900">
-            <div className="mx-auto max-w-5xl px-6 py-1.5 text-xs text-amber-700 dark:text-amber-300">
-              Viewing tenant <strong>{activeTenantName ?? activeTenantId}</strong> — you are acting
-              as a system admin.
+            <div className="mx-auto max-w-6xl px-6 py-1.5 text-xs text-amber-700 dark:text-amber-300">
+              Übernahme aktiv: <strong>{activeTenantName ?? activeTenantId}</strong>
             </div>
           </div>
         )}
-        <nav className="mx-auto max-w-5xl px-6 flex gap-1">
-          {tabs
-            .filter((tab) => tab.show)
-            .map((tab) => (
-              <NavLink
-                key={tab.to}
-                to={tab.to}
-                end={tab.to === "/"}
-                className={({ isActive }) =>
-                  `px-4 py-2 text-sm font-medium border-b-2 -mb-px ${
-                    isActive
-                      ? "border-brand text-brand"
-                      : "border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
-                  }`
-                }
-              >
-                {tab.label}
-              </NavLink>
-            ))}
-        </nav>
+
+        {mobileOpen && (
+          <MobileMenu
+            navItems={navItems}
+            menuItems={menuItems}
+            onNavigate={() => setMobileOpen(false)}
+          />
+        )}
       </header>
 
       {/* Keyed on the active tenant so a switch remounts the pages → they refetch against the new
           token without a full reload (a reload would silently refresh back to the home tenant). */}
-      <main key={activeTenantId ?? "none"} className="mx-auto max-w-5xl px-6 py-8">
+      <main key={activeTenantId ?? "none"} className="mx-auto max-w-6xl px-6 py-8">
         <Outlet />
       </main>
     </div>
   );
 }
 
-/** Top-right dropdown: search tenants (5 shown, newest-updated first) and switch into one. */
+/** Icon-only theme toggle cycling light → dark → auto. */
+function ThemeSwitcher() {
+  const [theme, setThemeState] = useState(getTheme());
+  const cycle = () => {
+    const next = theme === "light" ? "dark" : theme === "dark" ? "auto" : "light";
+    setTheme(next);
+    setThemeState(next);
+  };
+  const Icon = theme === "light" ? SunIcon : theme === "dark" ? MoonIcon : ComputerDesktopIcon;
+  const label =
+    theme === "light" ? "Theme: hell" : theme === "dark" ? "Theme: dunkel" : "Theme: automatisch";
+  return (
+    <button type="button" className={iconButton} onClick={cycle} title={label} aria-label={label}>
+      <Icon className="h-5 w-5" />
+    </button>
+  );
+}
+
+/** Icon-only user menu: full name + tenant, opening Profil / Audit / Sitzungen / Config + Abmelden. */
+function UserMenu({
+  fullName,
+  tenantName,
+  items,
+}: {
+  fullName: string;
+  tenantName: string;
+  items: NavItem[];
+}) {
+  const { signOut } = useUmami();
+  const [open, setOpen] = useState(false);
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const onClick = (e: MouseEvent) => {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [open]);
+
+  return (
+    <div className="relative" ref={boxRef}>
+      <button
+        type="button"
+        className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-700"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <UserCircleIcon className="h-7 w-7 text-slate-500 shrink-0" />
+        <span className="hidden lg:flex flex-col text-left leading-tight">
+          <span className="text-sm font-medium text-slate-900 dark:text-white">{fullName}</span>
+          <span className="text-xs text-slate-500">{tenantName}</span>
+        </span>
+        <ChevronDownIcon className="h-4 w-4 text-slate-400" />
+      </button>
+      {open && (
+        <div className={`${card} absolute right-0 mt-2 w-56 z-20 p-1.5 shadow-lg`}>
+          <div className="px-3 py-2 lg:hidden">
+            <div className="text-sm font-medium text-slate-900 dark:text-white">{fullName}</div>
+            <div className="text-xs text-slate-500">{tenantName}</div>
+          </div>
+          {items.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              onClick={() => setOpen(false)}
+              className="block rounded-lg px-3 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700"
+            >
+              {item.label}
+            </NavLink>
+          ))}
+          <div className="my-1 border-t border-slate-200 dark:border-slate-700" />
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              void signOut();
+            }}
+            className="block w-full text-left rounded-lg px-3 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700"
+          >
+            Abmelden
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Collapsed nav for small screens: nav + account items + (when impersonating) end-impersonation. */
+function MobileMenu({
+  navItems,
+  menuItems,
+  onNavigate,
+}: {
+  navItems: NavItem[];
+  menuItems: NavItem[];
+  onNavigate: () => void;
+}) {
+  const { me, signOut, activeTenantId, switchTenant } = useUmami();
+  const homeTenantId = me?.user.tenantId;
+  const switched = !!activeTenantId && activeTenantId !== homeTenantId;
+
+  const linkClass =
+    "block rounded-lg px-3 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700";
+
+  return (
+    <div className="md:hidden border-t border-slate-200 dark:border-slate-700 px-4 py-2 space-y-0.5">
+      {[...navItems, ...menuItems].map((item) => (
+        <NavLink
+          key={item.to}
+          to={item.to}
+          end={item.end}
+          className={linkClass}
+          onClick={onNavigate}
+        >
+          {item.label}
+        </NavLink>
+      ))}
+      {switched && homeTenantId && (
+        <>
+          <div className="my-1 border-t border-slate-200 dark:border-slate-700" />
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-amber-700 dark:text-amber-300 hover:bg-slate-100 dark:hover:bg-slate-700"
+            onClick={() => {
+              onNavigate();
+              void switchTenant(homeTenantId, me?.tenant?.name);
+            }}
+          >
+            <XMarkIcon className="h-4 w-4" /> Übernahme beenden
+          </button>
+        </>
+      )}
+      <div className="my-1 border-t border-slate-200 dark:border-slate-700" />
+      <button
+        type="button"
+        className={`w-full text-left ${linkClass}`}
+        onClick={() => {
+          onNavigate();
+          void signOut();
+        }}
+      >
+        Abmelden
+      </button>
+    </div>
+  );
+}
+
+/** Icon dropdown: search tenants (5 shown, newest-updated first), switch into one, and — while
+ * impersonating — end the impersonation below the list. */
 function TenantSwitcher() {
   const { client, me, activeTenantId, switchTenant } = useUmami();
   const [open, setOpen] = useState(false);
@@ -95,19 +286,23 @@ function TenantSwitcher() {
   const homeTenantId = me?.user.tenantId;
   const switched = !!activeTenantId && activeTenantId !== homeTenantId;
 
-  // Close on outside click.
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      return;
+    }
     const onClick = (e: MouseEvent) => {
-      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
     };
     document.addEventListener("mousedown", onClick);
     return () => document.removeEventListener("mousedown", onClick);
   }, [open]);
 
-  // Debounced search whenever the dropdown is open.
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      return;
+    }
     const handle = setTimeout(async () => {
       setError(null);
       try {
@@ -121,11 +316,11 @@ function TenantSwitcher() {
     return () => clearTimeout(handle);
   }, [open, query, client]);
 
-  const pick = async (tenant: Tenant) => {
+  const pick = async (tenantId: string, name?: string) => {
     setBusy(true);
     setError(null);
     try {
-      await switchTenant(tenant.tenantId, tenant.name);
+      await switchTenant(tenantId, name);
       setOpen(false);
       setQuery("");
     } catch (err) {
@@ -137,39 +332,36 @@ function TenantSwitcher() {
 
   return (
     <div className="relative" ref={boxRef}>
-      <button className={ghostButton} onClick={() => setOpen((v) => !v)}>
-        Switch tenant
+      <button
+        type="button"
+        className={iconButton}
+        onClick={() => setOpen((v) => !v)}
+        title="Mandant wechseln"
+        aria-label="Mandant wechseln"
+      >
+        <BuildingOffice2Icon className="h-5 w-5" />
       </button>
       {open && (
         <div
           className={`${card} absolute right-0 mt-2 w-80 z-20 p-3 space-y-2 shadow-lg max-h-96 overflow-auto`}
         >
           <input
-            autoFocus
             className={input}
-            placeholder="Search tenants…"
+            placeholder="Mandanten suchen…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
           {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
-          {switched && homeTenantId && (
-            <button
-              disabled={busy}
-              onClick={() => void pick({ tenantId: homeTenantId, name: "home tenant" } as Tenant)}
-              className="w-full text-left rounded-lg px-3 py-2 text-sm text-brand hover:bg-slate-50 dark:hover:bg-slate-700"
-            >
-              ← Back to home tenant
-            </button>
-          )}
           {results.length === 0 ? (
-            <p className="text-xs text-slate-400 px-1">No matching tenants.</p>
+            <p className="text-xs text-slate-400 px-1">Keine passenden Mandanten.</p>
           ) : (
             <ul className="space-y-0.5">
               {results.map((tenant) => (
                 <li key={tenant.tenantId}>
                   <button
+                    type="button"
                     disabled={busy}
-                    onClick={() => void pick(tenant)}
+                    onClick={() => void pick(tenant.tenantId, tenant.name)}
                     className={`w-full text-left rounded-lg px-3 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-700 ${
                       tenant.tenantId === activeTenantId
                         ? "text-brand"
@@ -182,6 +374,19 @@ function TenantSwitcher() {
                 </li>
               ))}
             </ul>
+          )}
+          {switched && homeTenantId && (
+            <>
+              <div className="border-t border-slate-200 dark:border-slate-700" />
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void pick(homeTenantId, me?.tenant?.name)}
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-amber-700 dark:text-amber-300 hover:bg-slate-50 dark:hover:bg-slate-700"
+              >
+                <XMarkIcon className="h-4 w-4" /> Übernahme beenden
+              </button>
+            </>
           )}
         </div>
       )}

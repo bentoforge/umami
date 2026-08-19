@@ -6,6 +6,8 @@ import { AuditPage } from "./pages/AuditPage";
 import { ConfigPage } from "./pages/ConfigPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ProfilePage } from "./pages/ProfilePage";
+import { SessionsPage } from "./pages/SessionsPage";
+import { StartPage } from "./pages/StartPage";
 import { TenantsPage } from "./pages/TenantsPage";
 import { UsersPage } from "./pages/UsersPage";
 
@@ -27,7 +29,9 @@ export function App() {
   return (
     <Routes>
       <Route element={<AdminLayout />}>
-        <Route index element={<ProfilePage />} />
+        <Route index element={<StartPage />} />
+        <Route path="profile" element={<ProfilePage />} />
+        <Route path="sessions" element={<SessionsPage />} />
         <Route
           path="tenants"
           element={can("manage:tenants") ? <TenantsPage /> : <Navigate to="/" replace />}

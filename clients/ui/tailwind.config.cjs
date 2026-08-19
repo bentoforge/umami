@@ -1,6 +1,8 @@
 /** @type {import('tailwindcss').Config} */
 module.exports = {
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
+  // Dark mode is toggled by a `dark` class on <html> (see src/theme.ts): light / dark / auto.
+  darkMode: "class",
   theme: {
     extend: {
       // Sourced from CSS variables (space-separated RGB channels) so the accent is swappable at

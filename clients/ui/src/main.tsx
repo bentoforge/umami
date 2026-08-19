@@ -5,6 +5,10 @@ import "./index.css";
 import "./i18n/i18n";
 import { App } from "./App";
 import { UmamiProvider } from "./auth/UmamiProvider";
+import { initTheme } from "./theme";
+
+// Apply the stored theme (light/dark/auto) before the app renders, and keep "auto" in sync with OS.
+initTheme();
 
 // Same-origin by default (dev uses the vite proxy; prod hosts the UI on umami's origin). Override
 // with VITE_UMAMI_URL when the API lives elsewhere (then CORS with credentials must be configured).
