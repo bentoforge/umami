@@ -27,7 +27,7 @@ use warp::http::StatusCode;
 use wasabi::web::auth::authenticator::Authenticator;
 use wasabi::web::auth::user::User as AuthUser;
 use wasabi::web::auth::with_user_with_any_permission;
-use wasabi::web::warp::{into_response, with_cloneable};
+use wasabi::web::warp::{DecodedSegment, into_response, with_cloneable};
 use wasabi::{client_bail, status_bail};
 
 /// Permission required to read a user's assignable roles.
@@ -111,7 +111,7 @@ pub fn grant_feature_route(
     config: Arc<dyn ConfigRepository>,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
-    warp::path!("tenants" / String / "features" / String)
+    warp::path!("tenants" / String / "features" / DecodedSegment)
         .and(warp::post())
         .and(with_cloneable(tenants))
         .and(with_cloneable(config))
@@ -129,7 +129,7 @@ pub fn revoke_feature_route(
     config: Arc<dyn ConfigRepository>,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
-    warp::path!("tenants" / String / "features" / String)
+    warp::path!("tenants" / String / "features" / DecodedSegment)
         .and(warp::delete())
         .and(with_cloneable(tenants))
         .and(with_cloneable(config))
@@ -186,12 +186,12 @@ async fn handle_assignable_features_route(
 #[tracing::instrument(level = "debug", name = "POST /tenants/{id}/features/{code}", skip_all)]
 async fn handle_grant_feature_route(
     tenant_id: String,
-    code: String,
+    code: DecodedSegment,
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
     _caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(grant_feature(tenant_id, code, tenants, config).await)
+    into_response(grant_feature(tenant_id, code.0, tenants, config).await)
 }
 
 #[tracing::instrument(
@@ -201,12 +201,12 @@ async fn handle_grant_feature_route(
 )]
 async fn handle_revoke_feature_route(
     tenant_id: String,
-    code: String,
+    code: DecodedSegment,
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
     _caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(revoke_feature(tenant_id, code, tenants, config).await)
+    into_response(revoke_feature(tenant_id, code.0, tenants, config).await)
 }
 
 // ── Business logic ──────────────────────────────────────────────────────────────
