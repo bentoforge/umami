@@ -42,6 +42,8 @@
     "username": "Username",
     "email": "Email",
     "salutation": "Salutation",
+    "salutationSir": "Mr",
+    "salutationMadam": "Ms",
     "nameTitle": "Title",
     "firstname": "First name",
     "lastname": "Last name",

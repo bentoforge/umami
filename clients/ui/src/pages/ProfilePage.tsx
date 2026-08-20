@@ -193,6 +193,7 @@ function MessagingPanel() {
  * when the deployment marks no user field self-editable. */
 function ProfileFieldsPanel() {
   const { client, me, refreshMe } = useUmami();
+  const { t } = useTranslation();
   const [defs, setDefs] = useState<CustomFieldDef[]>([]);
   const [values, setValues] = useState<Record<string, unknown>>({});
   const [title, setTitle] = useState("");
@@ -260,9 +261,9 @@ function ProfileFieldsPanel() {
             value={salutation}
             onChange={(e) => setSalutation(e.target.value as Salutation)}
           >
-            <option value="">(none)</option>
-            <option value="SIR">Sir</option>
-            <option value="MADAM">Madam</option>
+            <option value="">—</option>
+            <option value="SIR">{t("users.salutationSir")}</option>
+            <option value="MADAM">{t("users.salutationMadam")}</option>
           </select>
         </Field>
         <Field label="Title">
