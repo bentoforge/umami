@@ -1,7 +1,7 @@
 import type { AuditEntry, AuditSeverity } from "@bentoforge/umami-iam";
 import { useCallback, useEffect, useState } from "react";
 import { useUmami } from "../auth/UmamiProvider";
-import { Banner, errMsg } from "../components";
+import { Banner, errMsg, formatDateTime } from "../components";
 import { card, ghostButton, td, th } from "../ui";
 
 const SEVERITY_STYLE: Record<AuditSeverity, string> = {
@@ -63,7 +63,7 @@ export function AuditPage() {
               {entries.map((e) => (
                 <tr key={e.id} className="border-b border-slate-100 dark:border-slate-700/50">
                   <td className={`${td} whitespace-nowrap text-slate-500`}>
-                    {new Date(e.timestamp).toLocaleString()}
+                    {formatDateTime(e.timestamp)}
                   </td>
                   <td className={td}>
                     <span

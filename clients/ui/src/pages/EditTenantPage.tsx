@@ -1,4 +1,4 @@
-import type { CustomFieldDef, Tenant } from "@bentoforge/umami-iam";
+import type { CustomFieldDef, FeatureDef, Tenant } from "@bentoforge/umami-iam";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams } from "react-router-dom";
@@ -9,7 +9,9 @@ import {
   DropdownMenu,
   errMsg,
   Field,
+  formatDateTime,
   formatFieldValue,
+  Toggle,
 } from "../components";
 import { card, ghostButton, input, primaryButton } from "../ui";
 
@@ -206,12 +208,8 @@ function DetailsCard({
       ) : (
         <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-2 text-sm">
           <DetailRow label={t("tenants.nameLabel")}>{tenant.name}</DetailRow>
-          <DetailRow label={t("tenants.createdAt")}>
-            {new Date(tenant.created).toLocaleString()}
-          </DetailRow>
-          <DetailRow label={t("tenants.updatedAt")}>
-            {new Date(tenant.lastUpdated).toLocaleString()}
-          </DetailRow>
+          <DetailRow label={t("tenants.createdAt")}>{formatDateTime(tenant.created)}</DetailRow>
+          <DetailRow label={t("tenants.updatedAt")}>{formatDateTime(tenant.lastUpdated)}</DetailRow>
           <DetailRow label={t("tenants.id")}>
             <span className="font-mono text-xs">{tenant.tenantId}</span>
           </DetailRow>
@@ -235,8 +233,9 @@ function DetailRow({ label, children }: { label: string; children: ReactNode }) 
   );
 }
 
-/** Grant/revoke a tenant's authorization features (`feature:*`). Current features are revocable
- * chips; the backend's assignable set (respecting dependencies) is offered as grantable chips. */
+/** Grant/revoke a tenant's authorization features (`feature:*`) as a toggle list: a switch on the
+ * left, the feature's name in bold, and its description (or code) muted below. A feature that is
+ * neither granted nor currently grantable (unmet prerequisite) shows as a disabled switch. */
 function FeaturesCard({
   tenant,
   onChanged,
@@ -248,8 +247,16 @@ function FeaturesCard({
 }) {
   const { client } = useUmami();
   const { t } = useTranslation();
+  const [defs, setDefs] = useState<FeatureDef[]>([]);
   const [grantable, setGrantable] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    client
+      .getConfig()
+      .then((c) => setDefs(c.features))
+      .catch(() => setDefs([]));
+  }, [client]);
 
   const loadGrantable = useCallback(() => {
     client
@@ -260,11 +267,15 @@ function FeaturesCard({
 
   useEffect(() => loadGrantable(), [loadGrantable]);
 
-  const grant = async (code: string) => {
+  const toggle = async (code: string, granted: boolean) => {
     setBusy(true);
     onError("");
     try {
-      await client.grantFeature(tenant.tenantId, code);
+      if (granted) {
+        await client.revokeFeature(tenant.tenantId, code);
+      } else {
+        await client.grantFeature(tenant.tenantId, code);
+      }
       await onChanged();
       loadGrantable();
     } catch (err) {
@@ -274,64 +285,50 @@ function FeaturesCard({
     }
   };
 
-  const revoke = async (code: string) => {
-    setBusy(true);
-    onError("");
-    try {
-      await client.revokeFeature(tenant.tenantId, code);
-      await onChanged();
-      loadGrantable();
-    } catch (err) {
-      onError(errMsg(err));
-    } finally {
-      setBusy(false);
-    }
-  };
+  // The catalog, plus any already-granted code the catalog no longer defines (never hide a grant).
+  const catalog: FeatureDef[] = [
+    ...defs,
+    ...tenant.features
+      .filter((code) => !defs.some((d) => d.code === code))
+      .map((code) => ({ code, name: code })),
+  ];
 
   return (
     <section className={`${card} space-y-3`}>
       <h2 className="font-medium text-slate-800 dark:text-slate-200">
         {t("tenants.featuresTitle")}
       </h2>
-      <div>
-        <div className="text-xs text-slate-500 mb-1">{t("tenants.featuresGranted")}</div>
-        {tenant.features.length === 0 ? (
-          <span className="text-xs text-slate-400">{t("tenants.featuresNone")}</span>
-        ) : (
-          <div className="flex flex-wrap gap-1.5">
-            {tenant.features.map((code) => (
-              <button
-                key={code}
-                disabled={busy}
-                onClick={() => void revoke(code)}
-                title={t("tenants.delete")}
-                className="inline-flex items-center gap-1 rounded-full border border-brand bg-brand/10 text-brand px-2 py-0.5 text-xs disabled:opacity-50"
-              >
-                {code} <span aria-hidden>×</span>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-      <div>
-        <div className="text-xs text-slate-500 mb-1">{t("tenants.featuresGrantable")}</div>
-        {grantable.length === 0 ? (
-          <span className="text-xs text-slate-400">{t("tenants.featuresNothing")}</span>
-        ) : (
-          <div className="flex flex-wrap gap-1.5">
-            {grantable.map((code) => (
-              <button
-                key={code}
-                disabled={busy}
-                onClick={() => void grant(code)}
-                className="inline-flex items-center gap-1 rounded-full border border-slate-300 dark:border-slate-600 text-slate-500 px-2 py-0.5 text-xs disabled:opacity-50"
-              >
-                <span aria-hidden>+</span> {code}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
+      {catalog.length === 0 ? (
+        <span className="text-xs text-slate-400">{t("tenants.featuresNone")}</span>
+      ) : (
+        <ul className="divide-y divide-slate-100 dark:divide-slate-700/50">
+          {catalog.map((def) => {
+            const granted = tenant.features.includes(def.code);
+            const canToggle = granted || grantable.includes(def.code);
+            const subtitle = def.description || def.code;
+            return (
+              <li key={def.code} className="flex items-start gap-3 py-3">
+                <div className="pt-0.5">
+                  <Toggle
+                    checked={granted}
+                    disabled={busy || !canToggle}
+                    label={def.name}
+                    onChange={() => void toggle(def.code, granted)}
+                  />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold text-slate-900 dark:text-white">
+                    {def.name}
+                  </div>
+                  {subtitle && (
+                    <div className="text-xs text-slate-400 dark:text-slate-500">{subtitle}</div>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </section>
   );
 }

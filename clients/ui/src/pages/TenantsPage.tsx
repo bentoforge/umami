@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useNavigate } from "react-router-dom";
 import { useUmami } from "../auth/UmamiProvider";
-import { Banner, DropdownMenu, errMsg, formatFieldValue } from "../components";
+import { Banner, DropdownMenu, errMsg, formatDateTime, formatFieldValue } from "../components";
 import { card, input, primaryButton, td, th } from "../ui";
 
 /** System-admin screen: search / list tenants. Create opens a dedicated view; the name links to
@@ -127,7 +127,7 @@ export function TenantsPage() {
                     )}
                     <div className="text-xs text-slate-400 font-mono">{tenant.tenantId}</div>
                   </td>
-                  <td className={td}>{new Date(tenant.lastUpdated).toLocaleString()}</td>
+                  <td className={td}>{formatDateTime(tenant.lastUpdated)}</td>
                   {tableDefs.map((def) => (
                     <td key={def.key} className={td}>
                       {formatFieldValue(tenant.customFields[def.key])}

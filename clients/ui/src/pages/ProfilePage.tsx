@@ -8,7 +8,7 @@ import type {
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useUmami } from "../auth/UmamiProvider";
-import { Banner, CustomFieldsForm, errMsg, Field } from "../components";
+import { Banner, CustomFieldsForm, errMsg, Field, formatDateTime } from "../components";
 import { card, dangerButton, ghostButton, input, primaryButton } from "../ui";
 
 /** Profile tab: signed-in user, tenant, decoded permissions, passkey enrolment. */
@@ -475,10 +475,8 @@ function PatsPanel() {
                 <div className="text-sm font-medium text-slate-900 dark:text-white">{pat.name}</div>
                 <div className="text-xs text-slate-400">
                   {pat.roles.length ? `roles: ${pat.roles.join(", ")}` : "all your roles"} · created{" "}
-                  {new Date(pat.created).toLocaleDateString()}
-                  {pat.lastUsedAt
-                    ? ` · last used ${new Date(pat.lastUsedAt).toLocaleDateString()}`
-                    : ""}
+                  {formatDateTime(pat.created)}
+                  {pat.lastUsedAt ? ` · last used ${formatDateTime(pat.lastUsedAt)}` : ""}
                 </div>
               </div>
               <button className={dangerButton} onClick={() => void revoke(pat)}>

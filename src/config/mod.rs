@@ -207,6 +207,9 @@ pub struct FeatureDef {
     pub code: String,
     /// Human-readable name.
     pub name: String,
+    /// Optional human-readable description (shown muted under the name in the admin UI).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     /// DSL over the tenant's **current** features — the feature is grantable only when this holds
     /// (encodes prerequisites). `None` = always grantable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -805,11 +808,13 @@ mod tests {
                 FeatureDef {
                     code: "feature:base".to_owned(),
                     name: "Base".to_owned(),
+                    description: None,
                     assignable_if: None,
                 },
                 FeatureDef {
                     code: "feature:ai".to_owned(),
                     name: "AI".to_owned(),
+                    description: None,
                     assignable_if: Some("feature:base".to_owned()),
                 },
             ],

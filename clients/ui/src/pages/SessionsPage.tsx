@@ -1,7 +1,7 @@
 import type { SessionView } from "@bentoforge/umami-iam";
 import { useCallback, useEffect, useState } from "react";
 import { useUmami } from "../auth/UmamiProvider";
-import { Banner, errMsg } from "../components";
+import { Banner, errMsg, formatDateTime } from "../components";
 import { card, dangerButton, ghostButton } from "../ui";
 
 /** Sessions: list the caller's active login sessions (devices), revoke one, or log out everywhere. */
@@ -87,7 +87,7 @@ export function SessionsPage() {
                   </div>
                   <div className="text-xs text-slate-400">
                     {session.ip ? `${session.ip} · ` : ""}zuletzt aktiv{" "}
-                    {new Date(session.lastSeen).toLocaleString()}
+                    {formatDateTime(session.lastSeen)}
                   </div>
                 </div>
                 {!session.current && (

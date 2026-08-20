@@ -1,7 +1,7 @@
 import type { ApiKeyView } from "@bentoforge/umami-iam";
 import { useCallback, useEffect, useState } from "react";
 import { useUmami } from "../auth/UmamiProvider";
-import { Banner, CheckboxTags, errMsg, Field } from "../components";
+import { Banner, CheckboxTags, errMsg, Field, formatDateTime } from "../components";
 import { card, dangerButton, input, primaryButton, td, th } from "../ui";
 
 /** Own-tenant screen: manage service keys (M2M machine principals). Personal access tokens live in
@@ -107,7 +107,7 @@ export function ApiTokensPage() {
                   <td className={td}>{key.apis.join(", ") || "—"}</td>
                   <td className={td}>{key.allowedOrigins.join(", ") || "any"}</td>
                   <td className={td}>
-                    {key.lastUsedAt ? new Date(key.lastUsedAt).toLocaleString() : "never"}
+                    {key.lastUsedAt ? formatDateTime(key.lastUsedAt) : "never"}
                   </td>
                   <td className={`${td} text-right whitespace-nowrap`}>
                     <button className={dangerButton} onClick={() => void onDelete(key)}>

@@ -1,11 +1,60 @@
 import type { CustomFieldDef } from "@bentoforge/umami-iam";
 import { EllipsisVerticalIcon } from "@heroicons/react/24/outline";
 import { type ReactNode, useEffect, useRef, useState } from "react";
+import i18n from "./i18n/i18n";
 import { resolvedDark, subscribeTheme } from "./theme";
 import { iconButton, input } from "./ui";
 
 /** Extracts a human-readable message from a thrown value (UmamiError, Error, or anything). */
 export const errMsg = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+/** Date+time in the active language: German uses the DIN 5008 shape `TT.MM.JJJJ HH:MM:SS`; other
+ * languages get an unambiguous ISO-like `YYYY-MM-DD HH:MM:SS`. Both render in local time. */
+export function formatDateTime(value: string | number | Date): string {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) {
+    return "—";
+  }
+  const p = (n: number) => String(n).padStart(2, "0");
+  const time = `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  if (i18n.language.startsWith("de")) {
+    return `${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()} ${time}`;
+  }
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${time}`;
+}
+
+/** An on/off switch (the "Schieberle"). Controlled: `checked` + `onChange(next)`. */
+export function Toggle({
+  checked,
+  onChange,
+  disabled = false,
+  label,
+}: {
+  checked: boolean;
+  onChange: (next: boolean) => void;
+  disabled?: boolean;
+  label?: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 dark:focus:ring-offset-slate-800 disabled:opacity-50 disabled:cursor-not-allowed ${
+        checked ? "bg-primary" : "bg-slate-300 dark:bg-slate-600"
+      }`}
+    >
+      <span
+        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+          checked ? "translate-x-4" : "translate-x-0.5"
+        }`}
+      />
+    </button>
+  );
+}
 
 /** Reactive "is the effective theme dark?" — re-renders on a theme switch or an OS change. */
 export function useResolvedDark(): boolean {

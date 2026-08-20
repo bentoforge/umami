@@ -7,6 +7,7 @@ import {
   CustomFieldsForm,
   errMsg,
   Field,
+  formatDateTime,
   formatFieldValue,
 } from "../components";
 import { card, dangerButton, ghostButton, input, primaryButton, td, th } from "../ui";
@@ -177,9 +178,7 @@ export function UsersPage() {
                     <td className={td}>{user.roles.join(", ") || "—"}</td>
                     <td className={td}>{user.locked ? "Locked" : "—"}</td>
                     <td className={td}>
-                      {new Date(user.lastSeen).getTime() > 0
-                        ? new Date(user.lastSeen).toLocaleString()
-                        : "—"}
+                      {new Date(user.lastSeen).getTime() > 0 ? formatDateTime(user.lastSeen) : "—"}
                     </td>
                     {tableDefs.map((def) => (
                       <td key={def.key} className={td}>

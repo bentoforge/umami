@@ -207,6 +207,8 @@ export interface ScopeDef {
 export interface FeatureDef {
   code: string;
   name: string;
+  /** Optional human-readable description (shown muted under the name in the admin UI). */
+  description?: string | null;
   /** Boolean expression over the tenant's current features gating whether it may be granted. */
   assignableIf?: string | null;
 }
