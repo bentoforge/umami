@@ -479,7 +479,7 @@ async fn maybe_auto_init(
     if env::var("UMAMI_AUTO_INIT").as_deref() != Ok("true") {
         return Ok(());
     }
-    if !tenants.list_all().await?.is_empty() {
+    if !tenants.find_tenants("", 1).await?.0.is_empty() {
         return Ok(());
     }
 

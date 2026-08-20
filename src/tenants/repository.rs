@@ -1,5 +1,6 @@
 //! DynamoDB persistence for tenants.
 
+use crate::search::{query_matches, value_search_text};
 use crate::tenants::Tenant;
 use anyhow::Context;
 use async_trait::async_trait;
@@ -8,11 +9,12 @@ use aws_sdk_dynamodb::types::{
     ProjectionType,
 };
 use chrono::{SecondsFormat, Utc};
+use futures_util::StreamExt;
 use std::collections::BTreeMap;
 use warp::http::StatusCode;
 use wasabi::aws::dynamodb::client::DynamoClient;
 use wasabi::aws::dynamodb::schema::{str_attribute, with_hash_index};
-use wasabi::aws::dynamodb::{deserialize_entity, find_all, generate_id, str};
+use wasabi::aws::dynamodb::{deserialize_entity, generate_id, str, stream_all};
 use wasabi::status_bail;
 
 /// Table storing tenants.
@@ -74,8 +76,11 @@ pub trait TenantRepository: Send + Sync {
     /// Fetches a tenant by id. `None` if unknown.
     async fn get_tenant(&self, tenant_id: &str) -> anyhow::Result<Option<Tenant>>;
 
-    /// Lists every tenant (full table scan; system-admin / bootstrap use only).
-    async fn list_all(&self) -> anyhow::Result<Vec<Tenant>>;
+    /// Finds tenants matching `query` (case-insensitive over name/slug/custom fields; empty = all),
+    /// newest-active first, returning at most `limit` plus a `truncated` flag when more matched.
+    /// The DynamoDB backend streams the listing GSI and stops as soon as the cap is reached; a
+    /// smarter store can push the filter + limit down to the server.
+    async fn find_tenants(&self, query: &str, limit: usize) -> anyhow::Result<(Vec<Tenant>, bool)>;
 
     /// Overwrites a tenant record (used by PATCH after a read-modify), bumping `lastUpdated`.
     async fn put_tenant(&self, tenant: Tenant) -> anyhow::Result<Tenant>;
@@ -203,10 +208,11 @@ impl TenantRepository for DynamoTenantRepository {
     }
 
     #[tracing::instrument(level = "debug", skip(self), err(Display))]
-    async fn list_all(&self) -> anyhow::Result<Vec<Tenant>> {
-        // Single query on the constant-partition GSI, newest `lastUpdated` first, paginated by
-        // `find_all`. No table scan.
-        let query = self
+    async fn find_tenants(&self, query: &str, limit: usize) -> anyhow::Result<(Vec<Tenant>, bool)> {
+        // Constant-partition GSI, newest-active first. We *stream* the pages and filter in-memory —
+        // DynamoDB can't search — stopping the moment we have `limit`+1 matches, so an unfiltered
+        // (or quickly-matched) query never drains the whole partition.
+        let request = self
             .client
             .query(TABLE_TENANTS)
             .index_name(INDEX_BY_LAST_ACTIVE)
@@ -215,7 +221,21 @@ impl TenantRepository for DynamoTenantRepository {
             .expression_attribute_values(":shard", str(LIST_SHARD_VALUE))
             .scan_index_forward(false)
             .limit(LIST_PAGE_SIZE);
-        find_all(query).await.context("Error listing 'tenants'")
+
+        let mut stream = stream_all::<Tenant>(request)?;
+        let mut matched = Vec::new();
+        let mut truncated = false;
+        while let Some(item) = stream.next().await {
+            let tenant = item.context("Error listing 'tenants'")?;
+            if query_matches(&tenant_haystack(&tenant), query) {
+                if matched.len() >= limit {
+                    truncated = true;
+                    break;
+                }
+                matched.push(tenant);
+            }
+        }
+        Ok((matched, truncated))
     }
 
     #[tracing::instrument(level = "debug", skip(self), err(Display))]
@@ -289,4 +309,15 @@ impl TenantRepository for DynamoTenantRepository {
             .context("Error deleting from 'tenants' table")?;
         Ok(())
     }
+}
+
+/// Concatenates a tenant's searchable text: name, slug, and every custom-field value (customer
+/// number / address live in custom fields). Fed to `query_matches` for the in-memory filter.
+fn tenant_haystack(tenant: &Tenant) -> String {
+    let mut haystack = format!("{} {}", tenant.name, tenant.slug);
+    for value in tenant.custom_fields.values() {
+        haystack.push(' ');
+        haystack.push_str(&value_search_text(value));
+    }
+    haystack
 }

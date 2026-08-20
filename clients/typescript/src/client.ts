@@ -310,9 +310,8 @@ export class UmamiClient {
   /** List every tenant (system-admin only; sorted newest-updated first, capped at 250). `q` is an
    * optional case-insensitive search: whitespace-separated terms must all match (over name / slug /
    * custom fields). `truncated` is true when more than 250 matched. */
-  listTenants(q?: string): Promise<{ tenants: Tenant[]; truncated: boolean }> {
-    const qs = q ? `?q=${encodeURIComponent(q)}` : "";
-    return this.request<{ tenants: Tenant[]; truncated: boolean }>(`/tenants${qs}`);
+  listTenants(q?: string, limit?: number): Promise<{ tenants: Tenant[]; truncated: boolean }> {
+    return this.request<{ tenants: Tenant[]; truncated: boolean }>(`/tenants${listQs(q, limit)}`);
   }
   /** Create a tenant and its first owner (system-admin only). */
   createTenant(request: CreateTenantRequest): Promise<CreateTenantResponse> {
@@ -376,9 +375,8 @@ export class UmamiClient {
   }
   /** List the caller's tenant's users (sorted by recent activity, capped at 250). `q` is an
    * optional case-insensitive search over username / email / name / custom fields. */
-  listUsers(q?: string): Promise<{ users: UserView[]; truncated: boolean }> {
-    const qs = q ? `?q=${encodeURIComponent(q)}` : "";
-    return this.request<{ users: UserView[]; truncated: boolean }>(`/users${qs}`);
+  listUsers(q?: string, limit?: number): Promise<{ users: UserView[]; truncated: boolean }> {
+    return this.request<{ users: UserView[]; truncated: boolean }>(`/users${listQs(q, limit)}`);
   }
   /** Read one user in the caller's tenant (requires `manage:users`). */
   getUser(userId: string): Promise<UserView> {
@@ -547,4 +545,17 @@ export class UmamiClient {
 
 function enc(value: string): string {
   return encodeURIComponent(value);
+}
+
+/** Builds a `?q=&limit=` query string for the list endpoints (omitting absent params). */
+function listQs(q?: string, limit?: number): string {
+  const params = new URLSearchParams();
+  if (q) {
+    params.set("q", q);
+  }
+  if (limit != null) {
+    params.set("limit", String(limit));
+  }
+  const s = params.toString();
+  return s ? `?${s}` : "";
 }

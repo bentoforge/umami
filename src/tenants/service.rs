@@ -13,7 +13,6 @@ use crate::constants::{
     ADMIN_TENANT_PERMISSION, MANAGE_TENANTS_PERMISSION, MAX_LIST_RESULTS, MAX_TEXT_BODY_SIZE,
     ROLE_OWNER,
 };
-use crate::search::{query_matches, value_search_text};
 use crate::tenants::repository::TenantRepository;
 use crate::tenants::{Tenant, slugify};
 use crate::users::repository::{NewUser, UserRepository};
@@ -78,10 +77,11 @@ struct CreateTenantResponse {
     owner_user_id: Option<String>,
 }
 
-/// Optional search for the list endpoint (`?q=`).
+/// Optional search + page cap for the list endpoint (`?q=&limit=`).
 #[derive(Deserialize, Debug)]
 struct ListQuery {
     q: Option<String>,
+    limit: Option<usize>,
 }
 
 /// `GET /tenants` response. `truncated` is true when more than [`MAX_LIST_RESULTS`] matched and the
@@ -354,30 +354,17 @@ async fn list_tenants(
     tenants: Arc<dyn TenantRepository>,
 ) -> anyhow::Result<TenantListResponse> {
     let search = query.q.unwrap_or_default();
-    let mut matched: Vec<Tenant> = tenants
-        .list_all()
-        .await?
-        .into_iter()
-        .filter(|tenant| query_matches(&tenant_haystack(tenant), &search))
-        .collect();
-
-    let truncated = matched.len() > MAX_LIST_RESULTS;
-    matched.truncate(MAX_LIST_RESULTS);
+    // Caller may request a smaller page (e.g. the switch-tenant dropdown wants 5); never above the
+    // hard cap. The repository stops streaming once it has this many matches.
+    let limit = query
+        .limit
+        .unwrap_or(MAX_LIST_RESULTS)
+        .clamp(1, MAX_LIST_RESULTS);
+    let (matched, truncated) = tenants.find_tenants(&search, limit).await?;
     Ok(TenantListResponse {
         tenants: matched,
         truncated,
     })
-}
-
-/// Concatenates a tenant's searchable text: name, slug, and every custom-field value (which is
-/// where a customer number / address would live).
-fn tenant_haystack(tenant: &Tenant) -> String {
-    let mut haystack = format!("{} {}", tenant.name, tenant.slug);
-    for value in tenant.custom_fields.values() {
-        haystack.push(' ');
-        haystack.push_str(&value_search_text(value));
-    }
-    haystack
 }
 
 async fn delete_tenant(
@@ -404,8 +391,9 @@ async fn delete_tenant(
         client_bail!("No such tenant");
     }
 
-    // Only empty tenants may be deleted — otherwise their users would be orphaned.
-    if !users.list_by_tenant(&tenant_id).await?.is_empty() {
+    // Only empty tenants may be deleted — otherwise their users would be orphaned. A cap of 1 stops
+    // the stream at the first user.
+    if !users.find_users(&tenant_id, "", 1).await?.0.is_empty() {
         status_bail!(
             StatusCode::CONFLICT,
             "Tenant still has users — remove them before deleting the tenant"

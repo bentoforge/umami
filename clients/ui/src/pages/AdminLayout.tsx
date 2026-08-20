@@ -385,8 +385,8 @@ function TenantSwitcher() {
     const handle = setTimeout(async () => {
       setError(null);
       try {
-        const res = await client.listTenants(query.trim() || undefined);
-        setResults(res.tenants.slice(0, 5));
+        const res = await client.listTenants(query.trim() || undefined, 5);
+        setResults(res.tenants);
       } catch (err) {
         setError(errMsg(err));
         setResults([]);

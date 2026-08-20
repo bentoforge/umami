@@ -13,7 +13,6 @@ use crate::config::repository::ConfigRepository;
 use crate::constants::{
     MANAGE_USERS_PERMISSION, MAX_LIST_RESULTS, MAX_TEXT_BODY_SIZE, ROLE_MEMBER,
 };
-use crate::search::{query_matches, value_search_text};
 use crate::tenants::repository::TenantRepository;
 use crate::users::repository::{NewUser, UserRepository};
 use crate::users::{DisplayNames, Salutation, User, normalize_email, normalize_name};
@@ -172,10 +171,11 @@ struct CreateUserResponse {
     temporary_password: Option<String>,
 }
 
-/// Optional search for the list endpoint (`?q=`).
+/// Optional search + page cap for the list endpoint (`?q=&limit=`).
 #[derive(Deserialize, Debug)]
 struct ListQuery {
     q: Option<String>,
+    limit: Option<usize>,
 }
 
 /// List response. `truncated` is true when more than [`MAX_LIST_RESULTS`] matched and the list was
@@ -486,40 +486,18 @@ async fn list_users(
 ) -> anyhow::Result<UserListResponse> {
     let tenant_id = caller.tenant_id()?;
     let search = query.q.unwrap_or_default();
+    let limit = query
+        .limit
+        .unwrap_or(MAX_LIST_RESULTS)
+        .clamp(1, MAX_LIST_RESULTS);
     let salutations = config.current().await?.salutations.clone();
 
-    let mut matched: Vec<UserView> = users
-        .list_by_tenant(tenant_id)
-        .await?
+    let (users, truncated) = users.find_users(tenant_id, &search, limit).await?;
+    let users = users
         .into_iter()
-        .filter(|user| query_matches(&user_haystack(user), &search))
         .map(|user| UserView::build(user, &salutations))
         .collect();
-
-    let truncated = matched.len() > MAX_LIST_RESULTS;
-    matched.truncate(MAX_LIST_RESULTS);
-    Ok(UserListResponse {
-        users: matched,
-        truncated,
-    })
-}
-
-/// Concatenates a user's searchable text: username, email, display name, and every custom-field
-/// value (which is where first/last name would live).
-fn user_haystack(user: &User) -> String {
-    let mut haystack = format!(
-        "{} {} {} {} {}",
-        user.username,
-        user.email.as_deref().unwrap_or(""),
-        user.title.as_deref().unwrap_or(""),
-        user.firstname.as_deref().unwrap_or(""),
-        user.lastname.as_deref().unwrap_or("")
-    );
-    for value in user.custom_fields.values() {
-        haystack.push(' ');
-        haystack.push_str(&value_search_text(value));
-    }
-    haystack
+    Ok(UserListResponse { users, truncated })
 }
 
 async fn patch_user(

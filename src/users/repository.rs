@@ -5,6 +5,7 @@
 //! uniqueness via a conditional put and serves the strongly-consistent username→user login lookup.
 //! Email is optional contact info and is not indexed.
 
+use crate::search::{query_matches, value_search_text};
 use crate::users::{User, normalize_email, normalize_name, normalize_username};
 use anyhow::Context;
 use async_trait::async_trait;
@@ -13,10 +14,11 @@ use aws_sdk_dynamodb::types::{
     ProjectionType,
 };
 use chrono::{SecondsFormat, Utc};
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use wasabi::aws::dynamodb::client::DynamoClient;
 use wasabi::aws::dynamodb::schema::{str_attribute, with_hash_index};
-use wasabi::aws::dynamodb::{deserialize_entity, find_all, generate_id, str};
+use wasabi::aws::dynamodb::{deserialize_entity, generate_id, str, stream_all};
 use wasabi::client_bail;
 
 // ── Table names ────────────────────────────────────────────────────────────────
@@ -111,8 +113,15 @@ pub trait UserRepository: Send + Sync {
     /// Fetches a user by id. `None` if unknown.
     async fn get_user(&self, user_id: &str) -> anyhow::Result<Option<User>>;
 
-    /// Lists all users in a tenant (via the `ByTenantIndex` GSI).
-    async fn list_by_tenant(&self, tenant_id: &str) -> anyhow::Result<Vec<User>>;
+    /// Finds users in `tenant_id` matching `query` (case-insensitive over username/email/name/custom
+    /// fields; empty = all), newest-active first, returning at most `limit` plus a `truncated` flag.
+    /// The DynamoDB backend streams the per-tenant GSI and stops once the cap is reached.
+    async fn find_users(
+        &self,
+        tenant_id: &str,
+        query: &str,
+        limit: usize,
+    ) -> anyhow::Result<(Vec<User>, bool)>;
 
     /// Overwrites a user record (used by PATCH after a read-modify).
     async fn put_user(&self, user: User) -> anyhow::Result<User>;
@@ -323,8 +332,15 @@ impl UserRepository for DynamoUserRepository {
     }
 
     #[tracing::instrument(level = "debug", skip(self), err(Display))]
-    async fn list_by_tenant(&self, tenant_id: &str) -> anyhow::Result<Vec<User>> {
-        let query = self
+    async fn find_users(
+        &self,
+        tenant_id: &str,
+        query: &str,
+        limit: usize,
+    ) -> anyhow::Result<(Vec<User>, bool)> {
+        // Per-tenant GSI, newest-active first. Stream the pages and filter in-memory (DynamoDB can't
+        // search), stopping once we have `limit`+1 matches so we never drain the whole tenant.
+        let request = self
             .client
             .query(TABLE_USERS)
             .index_name(INDEX_BY_TENANT)
@@ -334,9 +350,20 @@ impl UserRepository for DynamoUserRepository {
             .scan_index_forward(false)
             .limit(100);
 
-        find_all(query)
-            .await
-            .context("Error listing users by tenant")
+        let mut stream = stream_all::<User>(request)?;
+        let mut matched = Vec::new();
+        let mut truncated = false;
+        while let Some(item) = stream.next().await {
+            let user = item.context("Error listing users by tenant")?;
+            if query_matches(&user_haystack(&user), query) {
+                if matched.len() >= limit {
+                    truncated = true;
+                    break;
+                }
+                matched.push(user);
+            }
+        }
+        Ok((matched, truncated))
     }
 
     #[tracing::instrument(level = "debug", skip(self), err(Display))]
@@ -486,4 +513,22 @@ impl UserRepository for DynamoUserRepository {
 
         Ok(())
     }
+}
+
+/// Concatenates a user's searchable text: username, email, name parts, and every custom-field value.
+/// Fed to `query_matches` for the in-memory tenant-scoped search.
+fn user_haystack(user: &User) -> String {
+    let mut haystack = format!(
+        "{} {} {} {} {}",
+        user.username,
+        user.email.as_deref().unwrap_or(""),
+        user.title.as_deref().unwrap_or(""),
+        user.firstname.as_deref().unwrap_or(""),
+        user.lastname.as_deref().unwrap_or("")
+    );
+    for value in user.custom_fields.values() {
+        haystack.push(' ');
+        haystack.push_str(&value_search_text(value));
+    }
+    haystack
 }
