@@ -250,7 +250,7 @@ function UserMenu({
           </div>
           {items.map((item) => (
             <Fragment key={item.to}>
-              {(item.to === "/audit" || item.to === "/config") && (
+              {item.to === "/audit" && (
                 <div className="my-1 border-t border-slate-200 dark:border-slate-700" />
               )}
               <NavLink
@@ -314,7 +314,7 @@ function MobileMenu({
       {/* Account items below a rule; the system config gets its own rule above it. */}
       {menuItems.map((item, index) => (
         <Fragment key={item.to}>
-          {(index === 0 || item.to === "/audit" || item.to === "/config") && divider}
+          {(index === 0 || item.to === "/audit") && divider}
           <NavLink to={item.to} end={item.end} className={linkClass} onClick={onNavigate}>
             {item.label}
           </NavLink>
