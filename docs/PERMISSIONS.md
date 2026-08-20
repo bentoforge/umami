@@ -30,8 +30,18 @@ policy evolves in config.
   `admin:tenant`, `manage:config`. They exist **only** in the JWT `permissions` claim — never stored
   on a user/tenant/key, never assigned directly.
 - **Synthetic markers** (`is:*`) are computed by the mint layer at token-issue time and are
-  **not grantable/revocable**. Today the only one is `is:system-tenant`, added when the token's
-  tenant equals `UMAMI_SYSTEM_TENANT_ID`. (Room for more later, e.g. `is:trial`.)
+  **not grantable/revocable**. Current markers:
+  - `is:system-tenant` — the token's tenant equals `UMAMI_SYSTEM_TENANT_ID`.
+  - `is:messaging-configured` — the deployment has a Telegram bot and/or WhatsApp number set.
+  - `is:passkey` — the session authenticated with a passkey (WebAuthn).
+  - `is:totp` — the session authenticated with a TOTP second factor.
+  - `is:2fa` — either strong second factor was used (passkey **or** TOTP); gate on this to require
+    2FA regardless of method, e.g. `{ "when": "is:2fa", "grant": ["perm:sensitive-action"] }`.
+
+  The auth-strength markers (`is:passkey`/`is:totp`/`is:2fa`) reflect **how this session logged in**:
+  they are recorded on the session at login, re-applied on refresh, and carried across
+  `POST /auth/exchange` / `POST /auth/switch-tenant` via the token's `amr` claim. API-key / M2M
+  tokens never carry them (no interactive second factor).
 
 ### Subject set `S`
 At token-issue time the mint layer builds `S` from the principal + tenant + computed markers:
