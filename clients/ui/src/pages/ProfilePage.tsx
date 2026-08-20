@@ -386,8 +386,6 @@ function BaseDataCard() {
           <DetailRow label={t("users.name")}>
             {u.firstname || u.lastname ? u.fullName : "—"}
           </DetailRow>
-          <DetailRow label={t("dashboard.tenant")}>{me.tenant?.name ?? u.tenantId}</DetailRow>
-          <DetailRow label={t("dashboard.role")}>{u.roles.join(", ") || "—"}</DetailRow>
           {defs.map((def) => (
             <DetailRow key={def.key} label={def.label}>
               {formatFieldValue(u.customFields[def.key])}
@@ -407,7 +405,7 @@ function AuditCard() {
 
   useEffect(() => {
     client
-      .myAudit(10)
+      .myAudit(5)
       .then(setEntries)
       .catch(() => setEntries([]));
   }, [client]);
