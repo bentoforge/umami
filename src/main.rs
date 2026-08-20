@@ -179,17 +179,21 @@ async fn app() -> anyhow::Result<()> {
 
     // Config catalog behind a repository: S3 (whole-document, cached) when a bucket is configured,
     // otherwise a built-in default (dev/tests/no-S3).
-    let config_repository: Arc<dyn ConfigRepository> = if env::var("UMAMI_CONFIG_BUCKET").is_ok() {
-        let s3_client = S3Client::from_env().await?;
-        Arc::new(S3ConfigRepository::from_env(s3_client).await?)
-    } else {
-        tracing::warn!(
-            "UMAMI_CONFIG_BUCKET not set — using the in-memory config repository. Config edits \
-             (features, custom fields, PUT /config) are NOT persisted and are lost on restart \
-             (reset to the built-in default). Set UMAMI_CONFIG_BUCKET (+ S3_BUCKET_SUFFIX) to \
-             persist config in S3."
-        );
-        Arc::new(StaticConfigRepository::with_default())
+    // Persist config in S3 whenever an S3 client is available the wasabi way (i.e. S3_BUCKET_SUFFIX
+    // is set); the bucket is discovered/auto-created from a prefix (UMAMI_CONFIG_BUCKET, default).
+    // Otherwise fall back to the in-memory repo — non-persistent, for local dev without S3. (The
+    // repo-discovery story will be refined later.)
+    let config_repository: Arc<dyn ConfigRepository> = match S3Client::from_env().await {
+        Ok(s3_client) => Arc::new(S3ConfigRepository::from_env(s3_client).await?),
+        Err(err) => {
+            tracing::warn!(
+                "S3 not available ({err:#}) — using the in-memory config repository. Config edits \
+                 (features, custom fields, PUT /config) are NOT persisted and are lost on restart \
+                 (reset to the built-in default). Set S3_BUCKET_SUFFIX (wasabi S3 naming) to \
+                 persist config in S3."
+            );
+            Arc::new(StaticConfigRepository::with_default())
+        }
     };
 
     // Symmetric key for encrypting MFA secrets at rest.
