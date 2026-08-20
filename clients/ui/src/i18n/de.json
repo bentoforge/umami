@@ -152,6 +152,8 @@
     "empty": "Keine Einträge im Audit-Log.",
     "severity": "Schweregrad",
     "when": "Zeitpunkt",
-    "event": "Ereignis"
+    "event": "Ereignis",
+    "ip": "IP",
+    "userId": "Benutzer-ID"
   }
 }

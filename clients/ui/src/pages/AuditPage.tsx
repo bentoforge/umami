@@ -78,11 +78,16 @@ export function AuditPage() {
           <table className="w-full border-collapse">
             <thead>
               <tr className="border-b border-slate-200 dark:border-slate-700">
-                <th className={`${th} w-0`}>
+                <th className={`${th} w-0 align-bottom`}>
                   <span className="sr-only">{t("audit.severity")}</span>
                 </th>
-                <th className={th}>{t("audit.when")}</th>
-                <th className={th}>{t("audit.event")}</th>
+                <th className={`${th} align-bottom`}>
+                  <div>{t("audit.when")}</div>
+                  <div className="text-[10px] font-normal text-slate-400">
+                    {t("audit.ip")} · {t("audit.userId")}
+                  </div>
+                </th>
+                <th className={`${th} align-bottom`}>{t("audit.event")}</th>
               </tr>
             </thead>
             <tbody>

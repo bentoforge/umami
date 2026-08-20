@@ -152,6 +152,8 @@
     "empty": "No audit entries.",
     "severity": "Severity",
     "when": "When",
-    "event": "Event"
+    "event": "Event",
+    "ip": "IP",
+    "userId": "User ID"
   }
 }
