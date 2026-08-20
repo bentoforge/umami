@@ -4,8 +4,10 @@
 //! from the caller's token), so an admin can never see or touch another tenant's users. The first
 //! user of a tenant is created by `POST /tenants` (see `tenants::service`), not here.
 
+use crate::audit::AuditEntry;
 use crate::audit::repository::{AuditRepository, record_best_effort};
 use crate::audit::{AuditSeverity, NewAuditEntry};
+use crate::auth::session::SessionRepository;
 use crate::config::Config;
 use crate::config::repository::ConfigRepository;
 use crate::constants::{
@@ -204,6 +206,24 @@ pub fn list_users_route(
         .boxed()
 }
 
+/// `GET /users/{id}` — read one user in the caller's tenant (requires `manage:users`).
+pub fn get_user_route(
+    users: Arc<dyn UserRepository>,
+    config: Arc<dyn ConfigRepository>,
+    authenticator: Arc<Authenticator>,
+) -> BoxedFilter<(impl warp::Reply,)> {
+    warp::path!("users" / String)
+        .and(warp::get())
+        .and(with_cloneable(users))
+        .and(with_cloneable(config))
+        .and(with_user_with_any_permission(
+            authenticator,
+            REQUIRE_MANAGE_USERS,
+        ))
+        .and_then(handle_get_user_route)
+        .boxed()
+}
+
 /// `PATCH /users/{id}` — update a user's roles/lock/name/custom fields within the caller's tenant.
 pub fn patch_user_route(
     users: Arc<dyn UserRepository>,
@@ -287,6 +307,27 @@ async fn handle_list_users_route(
     caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
     into_response(list_users(query, users, config, caller).await)
+}
+
+#[tracing::instrument(level = "debug", name = "GET /users/{id}", skip_all)]
+async fn handle_get_user_route(
+    user_id: String,
+    users: Arc<dyn UserRepository>,
+    config: Arc<dyn ConfigRepository>,
+    caller: AuthUser,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    into_response(get_user(user_id, users, config, caller).await)
+}
+
+async fn get_user(
+    user_id: String,
+    users: Arc<dyn UserRepository>,
+    config: Arc<dyn ConfigRepository>,
+    caller: AuthUser,
+) -> anyhow::Result<UserView> {
+    let user = scoped_user(&users, &user_id, &caller).await?;
+    let salutations = config.current().await?.salutations.clone();
+    Ok(UserView::build(user, &salutations))
 }
 
 #[tracing::instrument(level = "debug", name = "PATCH /users/{id}", skip_all)]
@@ -556,4 +597,179 @@ async fn reset_password(
         status: "ok".to_owned(),
         temporary_password: generated.then_some(password),
     })
+}
+
+// ── Admin views of a user's activity (audit / sessions / logout) ────────────────────
+
+/// Optional `?limit=` for the per-user audit list (clamped to `1..=MAX_LIST_RESULTS`).
+#[derive(Deserialize, Debug)]
+struct LimitQuery {
+    limit: Option<i32>,
+}
+
+/// `{ entries }` — a user's audit trail.
+#[derive(Serialize, Debug)]
+struct AuditListResponse {
+    entries: Vec<AuditEntry>,
+}
+
+/// A user's login session as seen by an admin — never exposes the refresh secret/hash. `current`
+/// is always `false` (an admin views someone else's sessions).
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct AdminSessionView {
+    session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    user_agent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ip: Option<String>,
+    created: DateTime<Utc>,
+    last_seen: DateTime<Utc>,
+    expires_at: DateTime<Utc>,
+    current: bool,
+}
+
+/// Loads a user, scoping strictly to the caller's tenant — a foreign user reads as "not found".
+async fn scoped_user(
+    users: &Arc<dyn UserRepository>,
+    user_id: &str,
+    caller: &AuthUser,
+) -> anyhow::Result<User> {
+    let tenant_id = caller.tenant_id()?;
+    match users.get_user(user_id).await? {
+        Some(user) if user.tenant_id == tenant_id => Ok(user),
+        _ => client_bail!("No such user in this tenant"),
+    }
+}
+
+/// `GET /users/{id}/audit[?limit=]` — a tenant user's audit trail (requires `manage:users`).
+pub fn user_audit_route(
+    users: Arc<dyn UserRepository>,
+    audit: Arc<dyn AuditRepository>,
+    authenticator: Arc<Authenticator>,
+) -> BoxedFilter<(impl warp::Reply,)> {
+    warp::path!("users" / String / "audit")
+        .and(warp::get())
+        .and(warp::query::<LimitQuery>())
+        .and(with_cloneable(users))
+        .and(with_cloneable(audit))
+        .and(with_user_with_any_permission(
+            authenticator,
+            REQUIRE_MANAGE_USERS,
+        ))
+        .and_then(handle_user_audit_route)
+        .boxed()
+}
+
+/// `GET /users/{id}/sessions` — a tenant user's active login sessions (requires `manage:users`).
+pub fn user_sessions_route(
+    users: Arc<dyn UserRepository>,
+    sessions: Arc<dyn SessionRepository>,
+    authenticator: Arc<Authenticator>,
+) -> BoxedFilter<(impl warp::Reply,)> {
+    warp::path!("users" / String / "sessions")
+        .and(warp::get())
+        .and(with_cloneable(users))
+        .and(with_cloneable(sessions))
+        .and(with_user_with_any_permission(
+            authenticator,
+            REQUIRE_MANAGE_USERS,
+        ))
+        .and_then(handle_user_sessions_route)
+        .boxed()
+}
+
+/// `POST /users/{id}/logout-all` — revoke all of a tenant user's sessions by bumping their
+/// `tokenVersion` (requires `manage:users`).
+pub fn logout_user_route(
+    users: Arc<dyn UserRepository>,
+    authenticator: Arc<Authenticator>,
+) -> BoxedFilter<(impl warp::Reply,)> {
+    warp::path!("users" / String / "logout-all")
+        .and(warp::post())
+        .and(with_cloneable(users))
+        .and(with_user_with_any_permission(
+            authenticator,
+            REQUIRE_MANAGE_USERS,
+        ))
+        .and_then(handle_logout_user_route)
+        .boxed()
+}
+
+#[tracing::instrument(level = "debug", name = "GET /users/{id}/audit", skip_all)]
+async fn handle_user_audit_route(
+    user_id: String,
+    query: LimitQuery,
+    users: Arc<dyn UserRepository>,
+    audit: Arc<dyn AuditRepository>,
+    caller: AuthUser,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    into_response(user_audit(user_id, query, users, audit, caller).await)
+}
+
+#[tracing::instrument(level = "debug", name = "GET /users/{id}/sessions", skip_all)]
+async fn handle_user_sessions_route(
+    user_id: String,
+    users: Arc<dyn UserRepository>,
+    sessions: Arc<dyn SessionRepository>,
+    caller: AuthUser,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    into_response(user_sessions(user_id, users, sessions, caller).await)
+}
+
+#[tracing::instrument(level = "debug", name = "POST /users/{id}/logout-all", skip_all)]
+async fn handle_logout_user_route(
+    user_id: String,
+    users: Arc<dyn UserRepository>,
+    caller: AuthUser,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    into_response(logout_user(user_id, users, caller).await)
+}
+
+async fn user_audit(
+    user_id: String,
+    query: LimitQuery,
+    users: Arc<dyn UserRepository>,
+    audit: Arc<dyn AuditRepository>,
+    caller: AuthUser,
+) -> anyhow::Result<AuditListResponse> {
+    let user = scoped_user(&users, &user_id, &caller).await?;
+    let limit = query.limit.unwrap_or(100).clamp(1, MAX_LIST_RESULTS as i32);
+    Ok(AuditListResponse {
+        entries: audit.list_by_user(&user.user_id, limit).await?,
+    })
+}
+
+async fn user_sessions(
+    user_id: String,
+    users: Arc<dyn UserRepository>,
+    sessions: Arc<dyn SessionRepository>,
+    caller: AuthUser,
+) -> anyhow::Result<Vec<AdminSessionView>> {
+    let user = scoped_user(&users, &user_id, &caller).await?;
+    let views = sessions
+        .list_by_user(&user.user_id)
+        .await?
+        .into_iter()
+        .map(|session| AdminSessionView {
+            session_id: session.session_id,
+            user_agent: session.user_agent,
+            ip: session.ip,
+            created: session.created,
+            last_seen: session.last_seen,
+            expires_at: session.expires_at,
+            current: false,
+        })
+        .collect();
+    Ok(views)
+}
+
+async fn logout_user(
+    user_id: String,
+    users: Arc<dyn UserRepository>,
+    caller: AuthUser,
+) -> anyhow::Result<Value> {
+    let user = scoped_user(&users, &user_id, &caller).await?;
+    users.bump_token_version(&user.user_id).await?;
+    Ok(json!({ "status": "ok" }))
 }

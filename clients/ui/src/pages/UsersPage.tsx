@@ -1,6 +1,7 @@
 import type { CustomFieldDef, Salutation, UserView } from "@bentoforge/umami-iam";
-import { Fragment, useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Link } from "react-router-dom";
 import { useUmami } from "../auth/UmamiProvider";
 import {
   Banner,
@@ -13,7 +14,7 @@ import {
   formatFieldValue,
   Loader,
 } from "../components";
-import { card, ghostButton, input, primaryButton, td, th } from "../ui";
+import { card, input, primaryButton, td, th } from "../ui";
 
 /** Own-tenant screen: list / create / edit / suspend / delete users. */
 export function UsersPage() {
@@ -27,7 +28,6 @@ export function UsersPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [resetPw, setResetPw] = useState<{ user: string; pw: string } | null>(null);
   const [creating, setCreating] = useState(false);
-  const [editing, setEditing] = useState<string | null>(null);
 
   const myId = me?.user.userId;
   const tableDefs = defs.filter((d) => d.showInTable);
@@ -169,77 +169,59 @@ export function UsersPage() {
                 const displayName = user.fullName || user.username;
                 const sub = user.fullName ? user.username : (user.email ?? "");
                 return (
-                  <Fragment key={user.userId}>
-                    <tr className="border-b border-slate-100 dark:border-slate-700/50">
-                      <td className={td}>
-                        <button
-                          type="button"
-                          className="font-medium text-primary hover:underline text-left"
-                          onClick={() =>
-                            setEditing((id) => (id === user.userId ? null : user.userId))
-                          }
-                        >
-                          {displayName}
-                        </button>
-                        {sub && <div className="text-xs text-slate-400">{sub}</div>}
+                  <tr
+                    key={user.userId}
+                    className="border-b border-slate-100 dark:border-slate-700/50"
+                  >
+                    <td className={td}>
+                      <Link
+                        to={`/users/${encodeURIComponent(user.userId)}`}
+                        className="font-medium text-primary hover:underline"
+                      >
+                        {displayName}
+                      </Link>
+                      {sub && <div className="text-xs text-slate-400">{sub}</div>}
+                    </td>
+                    {tableDefs.map((def) => (
+                      <td key={def.key} className={td}>
+                        {formatFieldValue(user.customFields[def.key])}
                       </td>
-                      {tableDefs.map((def) => (
-                        <td key={def.key} className={td}>
-                          {formatFieldValue(user.customFields[def.key])}
-                        </td>
-                      ))}
-                      <td className={td}>{user.lastSeen ? formatDateTime(user.lastSeen) : "—"}</td>
-                      <td className={td}>
-                        <div className="flex flex-wrap gap-1">
-                          {isSelf && <Tag tone="brand">{t("users.you")}</Tag>}
-                          {user.locked && <Tag tone="danger">{t("users.locked")}</Tag>}
-                          {user.passwordGenerated && <Tag>{t("users.generatedPassword")}</Tag>}
-                          {user.mfaEnabled && <Tag>{t("users.twoFactor")}</Tag>}
-                          {user.hasPasskey && <Tag>{t("users.passkey")}</Tag>}
-                        </div>
-                      </td>
-                      <td className={`${td} text-right`}>
-                        <DropdownMenu
-                          label={t("users.actions")}
-                          actions={[
-                            {
-                              label: t("users.resetPassword"),
-                              onSelect: () => void resetPassword(user),
-                            },
-                            ...(isSelf
-                              ? []
-                              : [
-                                  {
-                                    label: user.locked ? t("users.unlock") : t("users.lock"),
-                                    onSelect: () => void setLocked(user, !user.locked),
-                                  },
-                                  {
-                                    label: t("users.delete"),
-                                    danger: true,
-                                    onSelect: () => void onDelete(user),
-                                  },
-                                ]),
-                          ]}
-                        />
-                      </td>
-                    </tr>
-                    {editing === user.userId && (
-                      <tr className="border-b border-slate-100 dark:border-slate-700/50 bg-slate-50 dark:bg-slate-900/40">
-                        <td className={td} colSpan={4 + tableDefs.length}>
-                          <EditUserPanel
-                            user={user}
-                            defs={defs}
-                            onCancel={() => setEditing(null)}
-                            onSaved={async () => {
-                              setEditing(null);
-                              await load();
-                            }}
-                            onError={setError}
-                          />
-                        </td>
-                      </tr>
-                    )}
-                  </Fragment>
+                    ))}
+                    <td className={td}>{user.lastSeen ? formatDateTime(user.lastSeen) : "—"}</td>
+                    <td className={td}>
+                      <div className="flex flex-wrap gap-1">
+                        {isSelf && <Tag tone="brand">{t("users.you")}</Tag>}
+                        {user.locked && <Tag tone="danger">{t("users.locked")}</Tag>}
+                        {user.passwordGenerated && <Tag>{t("users.generatedPassword")}</Tag>}
+                        {user.mfaEnabled && <Tag>{t("users.twoFactor")}</Tag>}
+                        {user.hasPasskey && <Tag>{t("users.passkey")}</Tag>}
+                      </div>
+                    </td>
+                    <td className={`${td} text-right`}>
+                      <DropdownMenu
+                        label={t("users.actions")}
+                        actions={[
+                          {
+                            label: t("users.resetPassword"),
+                            onSelect: () => void resetPassword(user),
+                          },
+                          ...(isSelf
+                            ? []
+                            : [
+                                {
+                                  label: user.locked ? t("users.unlock") : t("users.lock"),
+                                  onSelect: () => void setLocked(user, !user.locked),
+                                },
+                                {
+                                  label: t("users.delete"),
+                                  danger: true,
+                                  onSelect: () => void onDelete(user),
+                                },
+                              ]),
+                        ]}
+                      />
+                    </td>
+                  </tr>
                 );
               })}
             </tbody>
@@ -270,113 +252,6 @@ function Tag({
     >
       {children}
     </span>
-  );
-}
-
-function EditUserPanel({
-  user,
-  defs,
-  onCancel,
-  onSaved,
-  onError,
-}: {
-  user: UserView;
-  defs: CustomFieldDef[];
-  onCancel: () => void;
-  onSaved: () => Promise<void>;
-  onError: (msg: string) => void;
-}) {
-  const { client } = useUmami();
-  const [roles, setRoles] = useState<string[]>(user.roles);
-  const [assignable, setAssignable] = useState<string[]>([]);
-  const [locked, setLocked] = useState<boolean>(user.locked);
-  const [fields, setFields] = useState<Record<string, unknown>>({ ...user.customFields });
-  const [title, setTitle] = useState(user.title ?? "");
-  const [salutation, setSalutation] = useState<Salutation>(user.salutation);
-  const [firstname, setFirstname] = useState(user.firstname ?? "");
-  const [lastname, setLastname] = useState(user.lastname ?? "");
-  const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    client
-      .assignableRoles(user.userId)
-      .then((r) => setAssignable(r.codes))
-      .catch(() => setAssignable([]));
-  }, [client, user.userId]);
-
-  const save = async () => {
-    setSaving(true);
-    onError("");
-    try {
-      await client.patchUser(user.userId, {
-        roles,
-        locked,
-        title,
-        salutation,
-        firstname,
-        lastname,
-        customFields: fields,
-      });
-      await onSaved();
-    } catch (err) {
-      onError(errMsg(err));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className="space-y-3 py-1">
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Salutation">
-          <select
-            className={input}
-            value={salutation}
-            onChange={(e) => setSalutation(e.target.value as Salutation)}
-          >
-            <option value="">(none)</option>
-            <option value="SIR">Sir</option>
-            <option value="MADAM">Madam</option>
-          </select>
-        </Field>
-        <Field label="Title">
-          <input className={input} value={title} onChange={(e) => setTitle(e.target.value)} />
-        </Field>
-        <Field label="First name">
-          <input
-            className={input}
-            value={firstname}
-            onChange={(e) => setFirstname(e.target.value)}
-          />
-        </Field>
-        <Field label="Last name">
-          <input className={input} value={lastname} onChange={(e) => setLastname(e.target.value)} />
-        </Field>
-        <Field label="Roles">
-          <CheckboxTags
-            options={assignable}
-            selected={roles}
-            onChange={setRoles}
-            empty="no roles assignable"
-          />
-        </Field>
-        <Field label="Locked">
-          <label className="inline-flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={locked} onChange={(e) => setLocked(e.target.checked)} />
-            Locked
-          </label>
-        </Field>
-        <CustomFieldsForm defs={defs} values={fields} onChange={setFields} />
-      </div>
-      <div>
-        <button className={primaryButton} disabled={saving} onClick={() => void save()}>
-          Save
-        </button>{" "}
-        <button className={ghostButton} disabled={saving} onClick={onCancel}>
-          Cancel
-        </button>
-      </div>
-    </div>
   );
 }
 

@@ -7,6 +7,7 @@ import { AuditPage } from "./pages/AuditPage";
 import { ConfigPage } from "./pages/ConfigPage";
 import { CreateTenantPage } from "./pages/CreateTenantPage";
 import { EditTenantPage } from "./pages/EditTenantPage";
+import { EditUserPage } from "./pages/EditUserPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ProfilePage } from "./pages/ProfilePage";
 import { SessionsPage } from "./pages/SessionsPage";
@@ -50,6 +51,10 @@ export function App() {
         <Route
           path="users"
           element={can("manage:users") ? <UsersPage /> : <Navigate to="/" replace />}
+        />
+        <Route
+          path="users/:userId"
+          element={can("manage:users") ? <EditUserPage /> : <Navigate to="/" replace />}
         />
         <Route
           path="api-tokens"

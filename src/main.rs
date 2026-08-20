@@ -96,7 +96,8 @@ use crate::tenants::service::{
 };
 use crate::users::repository::{DynamoUserRepository, NewUser, UserRepository};
 use crate::users::service::{
-    create_user_route, delete_user_route, list_users_route, patch_user_route, reset_password_route,
+    create_user_route, delete_user_route, get_user_route, list_users_route, logout_user_route,
+    patch_user_route, reset_password_route, user_audit_route, user_sessions_route,
 };
 use crate::web_ui::ui_routes;
 use std::env;
@@ -381,6 +382,11 @@ async fn app() -> anyhow::Result<()> {
             config_repository.clone(),
             authenticator.clone()
         ),
+        get_user_route(
+            user_repository.clone(),
+            config_repository.clone(),
+            authenticator.clone()
+        ),
         patch_user_route(
             user_repository.clone(),
             tenant_repository.clone(),
@@ -394,6 +400,17 @@ async fn app() -> anyhow::Result<()> {
             audit_repository.clone(),
             authenticator.clone()
         ),
+        user_audit_route(
+            user_repository.clone(),
+            audit_repository.clone(),
+            authenticator.clone()
+        ),
+        user_sessions_route(
+            user_repository.clone(),
+            session_repository.clone(),
+            authenticator.clone()
+        ),
+        logout_user_route(user_repository.clone(), authenticator.clone()),
         // authorization management (assignable roles/scopes/features + feature grant/revoke)
         assignable_roles_route(
             user_repository,

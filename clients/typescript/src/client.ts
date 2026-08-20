@@ -376,6 +376,10 @@ export class UmamiClient {
     const qs = q ? `?q=${encodeURIComponent(q)}` : "";
     return this.request<{ users: UserView[]; truncated: boolean }>(`/users${qs}`);
   }
+  /** Read one user in the caller's tenant (requires `manage:users`). */
+  getUser(userId: string): Promise<UserView> {
+    return this.request<UserView>(`/users/${enc(userId)}`);
+  }
   patchUser(userId: string, body: PatchUserRequest): Promise<UserView> {
     return this.request<UserView>(`/users/${enc(userId)}`, {
       method: "PATCH",
@@ -417,6 +421,20 @@ export class UmamiClient {
       `/tenants/${enc(tenantId)}/audit${qs}`,
     );
     return data.entries;
+  }
+  /** A tenant user's audit trail (requires `manage:users`; own tenant). */
+  async userAudit(userId: string, limit?: number): Promise<AuditEntry[]> {
+    const qs = limit ? `?limit=${limit}` : "";
+    const data = await this.request<{ entries: AuditEntry[] }>(`/users/${enc(userId)}/audit${qs}`);
+    return data.entries;
+  }
+  /** A tenant user's active login sessions (requires `manage:users`; own tenant). */
+  userSessions(userId: string): Promise<SessionView[]> {
+    return this.request<SessionView[]>(`/users/${enc(userId)}/sessions`);
+  }
+  /** Revokes all of a tenant user's sessions by bumping their tokenVersion (requires `manage:users`). */
+  async logoutUser(userId: string): Promise<void> {
+    await this.request(`/users/${enc(userId)}/logout-all`, { method: "POST" });
   }
 
   // ── messaging links ─────────────────────────────────────────────────────────
