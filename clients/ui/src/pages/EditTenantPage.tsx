@@ -252,7 +252,7 @@ function MetaBox({ tenant }: { tenant: Tenant }) {
     { label: t("tenants.createdAt"), value: formatDateTime(tenant.created) },
   ];
   return (
-    <section className="rounded-2xl border border-slate-200 dark:border-slate-700/50 bg-slate-50 dark:bg-slate-800/40 p-6">
+    <section className="rounded border border-slate-200 dark:border-slate-700/50 bg-slate-50 dark:bg-slate-800/40 p-6">
       <dl className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3">
         {rows.map((row) => (
           <div key={row.label}>
