@@ -19,7 +19,6 @@ use crate::users::User;
 use anyhow::Context;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use std::net::SocketAddr;
 use std::sync::Arc;
 use warp::Filter;
 use warp::filters::BoxedFilter;
@@ -27,7 +26,7 @@ use warp::http::StatusCode;
 use warp::http::header::{CONTENT_TYPE, HeaderValue, SET_COOKIE};
 use warp::reply::Response;
 use wasabi::status_bail;
-use wasabi::web::warp::{into_rejection, with_body_as_json, with_cloneable};
+use wasabi::web::warp::{client_ip, into_rejection, with_body_as_json, with_cloneable};
 
 /// Login request body. A user belongs to exactly one tenant, so no tenant selection is needed.
 /// `totp_code` completes the second factor when the account has MFA enabled.
@@ -72,7 +71,7 @@ pub fn login_route(context: AuthContext) -> BoxedFilter<(impl warp::Reply,)> {
         .and(with_body_as_json::<LoginRequest>(MAX_TEXT_BODY_SIZE))
         .and(with_cloneable(Arc::new(context)))
         .and(warp::header::optional::<String>("user-agent"))
-        .and(warp::filters::addr::remote())
+        .and(client_ip())
         .and_then(handle_login_route)
         .boxed()
 }
@@ -104,9 +103,8 @@ async fn handle_login_route(
     request: LoginRequest,
     context: Arc<AuthContext>,
     user_agent: Option<String>,
-    remote: Option<SocketAddr>,
+    ip: Option<String>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    let ip = remote.map(|addr| addr.ip().to_string());
     match login(&context, request, user_agent, ip).await {
         Ok((body, set_cookie)) => {
             match json_with_optional_cookie(StatusCode::OK, &body, set_cookie) {

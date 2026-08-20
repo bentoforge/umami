@@ -4131,7 +4131,7 @@ dependencies = [
 [[package]]
 name = "wasabi"
 version = "0.1.0"
-source = "git+https://github.com/bentoforge/wasabi?tag=3.3.0#46088616741914c42a320a9d12ce96c726f06768"
+source = "git+https://github.com/bentoforge/wasabi?tag=3.4.0#c31adb5c530334b6c86ca836c8ac2575333b828e"
 dependencies = [
  "wasabi-core",
  "wasabi-macro",
@@ -4140,7 +4140,7 @@ dependencies = [
 [[package]]
 name = "wasabi-core"
 version = "0.1.0"
-source = "git+https://github.com/bentoforge/wasabi?tag=3.3.0#46088616741914c42a320a9d12ce96c726f06768"
+source = "git+https://github.com/bentoforge/wasabi?tag=3.4.0#c31adb5c530334b6c86ca836c8ac2575333b828e"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -4183,7 +4183,7 @@ dependencies = [
 [[package]]
 name = "wasabi-macro"
 version = "0.1.0"
-source = "git+https://github.com/bentoforge/wasabi?tag=3.3.0#46088616741914c42a320a9d12ce96c726f06768"
+source = "git+https://github.com/bentoforge/wasabi?tag=3.4.0#c31adb5c530334b6c86ca836c8ac2575333b828e"
 dependencies = [
  "darling",
  "quote",

@@ -18,7 +18,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::env;
-use std::net::SocketAddr;
 use std::sync::Arc;
 use warp::Filter;
 use warp::filters::BoxedFilter;
@@ -29,7 +28,9 @@ use wasabi::status_bail;
 use wasabi::web::auth::authenticator::Authenticator;
 use wasabi::web::auth::user::User as AuthUser;
 use wasabi::web::auth::with_user;
-use wasabi::web::warp::{into_rejection, into_response, with_body_as_json, with_cloneable};
+use wasabi::web::warp::{
+    client_ip, into_rejection, into_response, with_body_as_json, with_cloneable,
+};
 use webauthn_rs::prelude::{
     AuthenticationResult, CreationChallengeResponse, CredentialID, Passkey, PasskeyAuthentication,
     PasskeyRegistration, PublicKeyCredential, RegisterPublicKeyCredential,
@@ -206,7 +207,7 @@ pub fn webauthn_login_finish_route(
         .and(with_cloneable(service))
         .and(with_cloneable(webauthn))
         .and(warp::header::optional::<String>("user-agent"))
-        .and(warp::filters::addr::remote())
+        .and(client_ip())
         .and_then(handle_login_finish)
         .boxed()
 }
@@ -305,9 +306,8 @@ async fn handle_login_finish(
     service: Arc<WebauthnService>,
     webauthn: Arc<dyn WebauthnRepository>,
     user_agent: Option<String>,
-    remote: Option<SocketAddr>,
+    ip: Option<String>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    let ip = remote.map(|addr| addr.ip().to_string());
     match login_finish(request, &context, service, webauthn, user_agent, ip).await {
         Ok((access_token, set_cookie)) => {
             let body = json!({ "accessToken": access_token, "tenants": [] });
