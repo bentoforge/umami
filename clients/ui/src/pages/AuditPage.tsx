@@ -15,6 +15,10 @@ const SEVERITY_DOT: Record<AuditSeverity, string> = {
   bad: "bg-red-500",
 };
 
+/** Top-aligned cell: `td` bakes in `align-middle`, and a trailing `align-top` won't reliably win
+ * the Tailwind cascade — so swap the class rather than append it. */
+const tdTop = td.replace("align-middle", "align-top");
+
 /** Tenant audit trail (admin:tenant), newest first, paged with a "load more" button. */
 export function AuditPage() {
   const { client, me } = useUmami();
@@ -97,18 +101,18 @@ export function AuditPage() {
                   .join(" · ");
                 return (
                   <tr key={e.id} className="border-b border-slate-100 dark:border-slate-700/50">
-                    <td className={`${td} align-top`}>
+                    <td className={tdTop}>
                       <span
                         className={`mt-1.5 inline-block h-2.5 w-2.5 shrink-0 rounded-full ${SEVERITY_DOT[e.severity] ?? SEVERITY_DOT.neutral}`}
                       />
                     </td>
-                    <td className={`${td} whitespace-nowrap align-top`}>
+                    <td className={`${tdTop} whitespace-nowrap`}>
                       <div className="text-slate-700 dark:text-slate-200">
                         {formatDateTime(e.timestamp)}
                       </div>
                       <div className="font-mono text-xs text-slate-400">{meta || "—"}</div>
                     </td>
-                    <td className={`${td} align-top`}>{e.message}</td>
+                    <td className={tdTop}>{e.message}</td>
                   </tr>
                 );
               })}
