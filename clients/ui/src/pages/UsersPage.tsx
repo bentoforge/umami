@@ -132,9 +132,12 @@ export function UsersPage() {
       {creating && (
         <CreateUser
           defs={defs}
-          onDone={async () => {
+          onDone={async (res) => {
             setCreating(false);
             setNotice("User created.");
+            if (res.temporaryPassword) {
+              setResetPw({ user: res.username, pw: res.temporaryPassword });
+            }
             await load();
           }}
           onError={setError}
@@ -261,13 +264,13 @@ function CreateUser({
   onError,
 }: {
   defs: CustomFieldDef[];
-  onDone: () => Promise<void>;
+  onDone: (res: UserView & { temporaryPassword?: string | null }) => Promise<void>;
   onError: (msg: string) => void;
 }) {
   const { client, me } = useUmami();
+  const { t } = useTranslation();
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [roles, setRoles] = useState<string[]>(["role:member"]);
   const [assignable, setAssignable] = useState<string[]>([]);
   const [fields, setFields] = useState<Record<string, unknown>>({});
@@ -290,10 +293,9 @@ function CreateUser({
     setBusy(true);
     onError("");
     try {
-      await client.createUser({
+      const res = await client.createUser({
         username: username.trim() || undefined,
         email: email.trim() || undefined,
-        password,
         roles,
         title,
         salutation,
@@ -303,14 +305,13 @@ function CreateUser({
       });
       setUsername("");
       setEmail("");
-      setPassword("");
       setRoles(["role:member"]);
       setTitle("");
       setSalutation("");
       setFirstname("");
       setLastname("");
       setFields({});
-      await onDone();
+      await onDone(res);
     } catch (err) {
       onError(errMsg(err));
     } finally {
@@ -320,36 +321,12 @@ function CreateUser({
 
   return (
     <section className={`${card} space-y-3`}>
-      <h2 className="font-medium text-slate-800 dark:text-slate-200">New user</h2>
+      <h2 className="font-medium text-slate-800 dark:text-slate-200">{t("users.new")}</h2>
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Salutation">
-          <select
-            className={input}
-            value={salutation}
-            onChange={(e) => setSalutation(e.target.value as Salutation)}
-          >
-            <option value="">(none)</option>
-            <option value="SIR">Sir</option>
-            <option value="MADAM">Madam</option>
-          </select>
-        </Field>
-        <Field label="Title">
-          <input className={input} value={title} onChange={(e) => setTitle(e.target.value)} />
-        </Field>
-        <Field label="First name">
-          <input
-            className={input}
-            value={firstname}
-            onChange={(e) => setFirstname(e.target.value)}
-          />
-        </Field>
-        <Field label="Last name">
-          <input className={input} value={lastname} onChange={(e) => setLastname(e.target.value)} />
-        </Field>
-        <Field label="Username (defaults to email)">
+        <Field label={t("users.username")}>
           <input className={input} value={username} onChange={(e) => setUsername(e.target.value)} />
         </Field>
-        <Field label="Email (optional)">
+        <Field label={t("users.email")}>
           <input
             className={input}
             type="email"
@@ -357,26 +334,42 @@ function CreateUser({
             onChange={(e) => setEmail(e.target.value)}
           />
         </Field>
-        <Field label="Password">
+        <Field label={t("users.salutation")}>
+          <select
+            className={input}
+            value={salutation}
+            onChange={(e) => setSalutation(e.target.value as Salutation)}
+          >
+            <option value="">—</option>
+            <option value="SIR">Sir</option>
+            <option value="MADAM">Madam</option>
+          </select>
+        </Field>
+        <Field label={t("users.nameTitle")}>
+          <input className={input} value={title} onChange={(e) => setTitle(e.target.value)} />
+        </Field>
+        <Field label={t("users.firstname")}>
           <input
             className={input}
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            value={firstname}
+            onChange={(e) => setFirstname(e.target.value)}
           />
         </Field>
-        <Field label="Roles">
+        <Field label={t("users.lastname")}>
+          <input className={input} value={lastname} onChange={(e) => setLastname(e.target.value)} />
+        </Field>
+        <CustomFieldsForm defs={defs} values={fields} onChange={setFields} />
+        <Field label={t("users.rolesTitle")}>
           <CheckboxTags
             options={assignable}
             selected={roles}
             onChange={setRoles}
-            empty="no roles assignable"
+            empty={t("users.rolesEmpty")}
           />
         </Field>
-        <CustomFieldsForm defs={defs} values={fields} onChange={setFields} />
       </div>
       <button className={primaryButton} disabled={busy} onClick={() => void submit()}>
-        Create user
+        {t("users.create")}
       </button>
     </section>
   );

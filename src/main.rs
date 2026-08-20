@@ -512,6 +512,7 @@ async fn maybe_auto_init(
             password_hash: Some(password_hash),
             custom_fields: std::collections::BTreeMap::new(),
             created_by: None,
+            password_generated: false,
         })
         .await?;
 

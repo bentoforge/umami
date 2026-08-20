@@ -121,10 +121,18 @@ export interface CreateUserRequest extends NameInput {
   username?: string;
   /** Optional contact email (not unique). */
   email?: string;
-  password: string;
+  /** Optional initial password. Omit (the normal case) to have a temporary one generated and
+   * returned once in {@link CreateUserResponse.temporaryPassword}. */
+  password?: string;
   roles?: string[];
   customFields?: Record<string, unknown>;
 }
+
+/** The created user, plus the one-time temporary password when one was generated. */
+export type CreateUserResponse = UserView & {
+  /** Present only when the server generated the initial password — shown once. */
+  temporaryPassword?: string | null;
+};
 
 export interface PatchUserRequest extends NameInput {
   /** New login username (globally unique). Omit to leave unchanged; must not be empty. */

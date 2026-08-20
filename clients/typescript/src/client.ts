@@ -10,6 +10,7 @@ import type {
   CreateTenantRequest,
   CreateTenantResponse,
   CreateUserRequest,
+  CreateUserResponse,
   CustomFieldsSchema,
   ExchangeResponse,
   LoginResponse,
@@ -367,8 +368,11 @@ export class UmamiClient {
 
   // ── users ────────────────────────────────────────────────────────────────────
 
-  createUser(request: CreateUserRequest): Promise<UserView> {
-    return this.request<UserView>("/users", { method: "POST", body: JSON.stringify(request) });
+  createUser(request: CreateUserRequest): Promise<CreateUserResponse> {
+    return this.request<CreateUserResponse>("/users", {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
   }
   /** List the caller's tenant's users (sorted by recent activity, capped at 250). `q` is an
    * optional case-insensitive search over username / email / name / custom fields. */

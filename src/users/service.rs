@@ -43,7 +43,10 @@ struct CreateUserRequest {
     username: Option<String>,
     /// Optional contact email (not unique, may be absent).
     email: Option<String>,
-    password: String,
+    /// Optional initial password. Omitted (the normal case) → a temporary one is generated and
+    /// returned once, flagged as a still-unchanged reset password.
+    #[serde(default)]
+    password: Option<String>,
     #[serde(default)]
     title: Option<String>,
     #[serde(default)]
@@ -157,6 +160,16 @@ impl UserView {
             last_changed_by: user.last_changed_by,
         }
     }
+}
+
+/// Create response: the new user plus, when generated, the one-time temporary password.
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct CreateUserResponse {
+    #[serde(flatten)]
+    user: UserView,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temporary_password: Option<String>,
 }
 
 /// Optional search for the list endpoint (`?q=`).
@@ -382,7 +395,7 @@ async fn create_user(
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
     caller: AuthUser,
-) -> anyhow::Result<UserView> {
+) -> anyhow::Result<CreateUserResponse> {
     let tenant_id = caller.tenant_id()?.to_owned();
 
     // Username is the login identifier; fall back to the email when the caller omits it. At least
@@ -402,11 +415,17 @@ async fn create_user(
     };
 
     let config = config.current().await?;
-    config.validate_password(&request.password)?;
+    // Normal case: no password supplied → generate a temporary one, returned once and flagged as a
+    // still-unchanged reset password (so the user must change it and the admin sees the tag).
+    let (password, generated) = match request.password {
+        Some(pw) if !pw.trim().is_empty() => (pw, false),
+        _ => (generate_id(), true),
+    };
+    config.validate_password(&password)?;
     let custom_fields = request.custom_fields.unwrap_or_default();
     Config::validate_custom_fields(&config.custom_user_fields, &custom_fields)?;
 
-    let password_hash = crate::auth::password::hash(&request.password)?;
+    let password_hash = crate::auth::password::hash(&password)?;
     let roles = request
         .roles
         .filter(|roles| !roles.is_empty())
@@ -425,10 +444,14 @@ async fn create_user(
             password_hash: Some(password_hash),
             custom_fields,
             created_by: Some(caller.user_id()?.to_owned()),
+            password_generated: generated,
         })
         .await?;
 
-    Ok(UserView::build(user, &config.salutations))
+    Ok(CreateUserResponse {
+        user: UserView::build(user, &config.salutations),
+        temporary_password: generated.then_some(password),
+    })
 }
 
 /// Rejects any requested role that isn't assignable given the tenant's authorization features (or

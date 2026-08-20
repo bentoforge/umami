@@ -313,6 +313,7 @@ async fn create_tenant(
                 password_hash: Some(password_hash),
                 custom_fields: BTreeMap::new(),
                 created_by: Some(created_by.clone()),
+                password_generated: false,
             })
         }
         None => None,

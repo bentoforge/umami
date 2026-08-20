@@ -14,6 +14,7 @@ import { useUmami } from "../auth/UmamiProvider";
 import {
   Banner,
   CustomFieldsForm,
+  DropdownMenu,
   errMsg,
   Field,
   formatDateTime,
@@ -26,7 +27,7 @@ import { card, ghostButton, input, primaryButton, td, th } from "../ui";
 /** Per-user edit view: details (read + inline edit), roles, recent audit, sessions, read-only PATs,
  * a change-tracking metadata box, and an in-app Back. */
 export function EditUserPage() {
-  const { client } = useUmami();
+  const { client, me } = useUmami();
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { userId = "" } = useParams();
@@ -35,6 +36,7 @@ export function EditUserPage() {
   const [defs, setDefs] = useState<CustomFieldDef[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [resetPw, setResetPw] = useState<string | null>(null);
   const [missing, setMissing] = useState(false);
 
   const reload = useCallback(async () => {
@@ -58,6 +60,49 @@ export function EditUserPage() {
       .catch(() => setDefs([]));
   }, [client]);
 
+  const isSelf = user?.userId === me?.user.userId;
+  const name = () => user?.fullName || user?.username || "";
+
+  const onReset = async () => {
+    if (!user || !window.confirm(t("users.resetConfirm", { name: name() }))) {
+      return;
+    }
+    setError(null);
+    try {
+      const res = await client.resetPassword(user.userId);
+      if (res.temporaryPassword) {
+        setResetPw(res.temporaryPassword);
+      }
+    } catch (err) {
+      setError(errMsg(err));
+    }
+  };
+
+  const onSetLocked = async (locked: boolean) => {
+    if (!user) {
+      return;
+    }
+    setError(null);
+    try {
+      await client.patchUser(user.userId, { locked });
+      await reload();
+    } catch (err) {
+      setError(errMsg(err));
+    }
+  };
+
+  const onDelete = async () => {
+    if (!user || !window.confirm(t("users.deleteConfirm", { name: name() }))) {
+      return;
+    }
+    try {
+      await client.deleteUser(user.userId);
+      navigate("/users");
+    } catch (err) {
+      setError(errMsg(err));
+    }
+  };
+
   const goBack = () => {
     const idx = (window.history.state as { idx?: number } | null)?.idx ?? 0;
     if (idx > 0) {
@@ -80,12 +125,41 @@ export function EditUserPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-xl font-semibold text-slate-900 dark:text-white">
-        {t("users.editTitle")}
-      </h1>
+      <div className="flex items-center justify-between gap-4">
+        <h1 className="text-xl font-semibold text-slate-900 dark:text-white">
+          {t("users.editTitle")}
+        </h1>
+        {user && (
+          <DropdownMenu
+            label={t("users.actions")}
+            actions={[
+              { label: t("users.resetPassword"), onSelect: () => void onReset() },
+              ...(isSelf
+                ? []
+                : [
+                    {
+                      label: user.locked ? t("users.unlock") : t("users.lock"),
+                      onSelect: () => void onSetLocked(!user.locked),
+                    },
+                    { label: t("users.delete"), danger: true, onSelect: () => void onDelete() },
+                  ]),
+            ]}
+          />
+        )}
+      </div>
 
       {error && <Banner tone="error">{error}</Banner>}
       {notice && <Banner tone="ok">{notice}</Banner>}
+      {resetPw && (
+        <div className="rounded-lg border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950 p-3">
+          <p className="text-xs text-emerald-700 dark:text-emerald-300 mb-1">
+            {t("users.resetPassword")} — <strong>{name()}</strong>:
+          </p>
+          <code className="block break-all text-sm text-slate-900 dark:text-slate-100">
+            {resetPw}
+          </code>
+        </div>
+      )}
 
       {user === null ? (
         <Loader />
@@ -137,7 +211,6 @@ function DetailsCard({
   const [salutation, setSalutation] = useState<Salutation>(user.salutation);
   const [firstname, setFirstname] = useState(user.firstname ?? "");
   const [lastname, setLastname] = useState(user.lastname ?? "");
-  const [locked, setLocked] = useState(user.locked);
   const [fields, setFields] = useState<Record<string, unknown>>({ ...user.customFields });
   const [saving, setSaving] = useState(false);
 
@@ -148,7 +221,6 @@ function DetailsCard({
     setSalutation(user.salutation);
     setFirstname(user.firstname ?? "");
     setLastname(user.lastname ?? "");
-    setLocked(user.locked);
     setFields({ ...user.customFields });
   }, [user]);
 
@@ -170,7 +242,6 @@ function DetailsCard({
         salutation,
         firstname,
         lastname,
-        locked,
         customFields: fields,
       });
       setEditing(false);
@@ -242,17 +313,6 @@ function DetailsCard({
               />
             </Field>
             <CustomFieldsForm defs={defs} values={fields} onChange={setFields} />
-            <Field label={t("users.locked")}>
-              <label className="inline-flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  className="h-4 w-4 accent-primary"
-                  checked={locked}
-                  onChange={(e) => setLocked(e.target.checked)}
-                />
-                {t("users.locked")}
-              </label>
-            </Field>
           </div>
           <div className="flex gap-2">
             <button className={primaryButton} disabled={saving} onClick={() => void save()}>
@@ -275,7 +335,9 @@ function DetailsCard({
               {formatFieldValue(user.customFields[def.key])}
             </DetailRow>
           ))}
-          <DetailRow label={t("users.locked")}>{user.locked ? t("users.locked") : "—"}</DetailRow>
+          <DetailRow label={t("users.locked")}>
+            {user.locked ? t("users.yes") : t("users.no")}
+          </DetailRow>
         </dl>
       )}
     </section>

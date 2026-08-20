@@ -93,6 +93,9 @@ pub struct NewUser {
     pub custom_fields: std::collections::BTreeMap<String, serde_json::Value>,
     /// User id creating this user (audit); `None` for the auto-init bootstrap owner.
     pub created_by: Option<String>,
+    /// Whether the initial password was admin-generated (vs. explicitly supplied) — stamps
+    /// `last_password_reset` so the "generated password" flag shows until the user changes it.
+    pub password_generated: bool,
 }
 
 /// Persistence interface for user identities.
@@ -232,7 +235,11 @@ impl UserRepository for DynamoUserRepository {
             last_updated: now,
             last_seen: None,
             last_active_or_created: now,
-            last_password_reset: None,
+            last_password_reset: if new_user.password_generated {
+                Some(now)
+            } else {
+                None
+            },
             last_password_change: None,
             has_passkey: false,
             created_by: new_user.created_by.clone(),

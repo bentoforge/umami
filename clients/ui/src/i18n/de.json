@@ -14,6 +14,7 @@
   "users": {
     "title": "Benutzer",
     "new": "Neuer Benutzer",
+    "create": "Erstellen",
     "cancel": "Abbrechen",
     "empty": "Keine Benutzer.",
     "colName": "Name",
@@ -56,6 +57,8 @@
     "noPats": "Keine Zugriffstokens.",
     "name": "Name",
     "lastUpdated": "Zuletzt geändert",
+    "yes": "Ja",
+    "no": "Nein",
     "rolesEmpty": "keine Rollen zuweisbar"
   },
   "login": {
