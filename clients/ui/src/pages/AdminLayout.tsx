@@ -11,6 +11,7 @@ import {
 } from "@heroicons/react/24/outline";
 import type { SVGProps } from "react";
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { NavLink, Outlet } from "react-router-dom";
 import { useUmami } from "../auth/UmamiProvider";
 import { errMsg, Logo } from "../components";
@@ -30,6 +31,7 @@ const navLinkClass = ({ isActive }: { isActive: boolean }) =>
  * (mobile), the impersonation banner, and the active route. */
 export function AdminLayout() {
   const { client, me, activeTenantId, activeTenantName } = useUmami();
+  const { t } = useTranslation();
   const can = (permission: string) => client.hasPermission(permission);
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -37,18 +39,18 @@ export function AdminLayout() {
   const switched = !!activeTenantId && activeTenantId !== homeTenantId;
 
   const navItems: NavItem[] = [
-    { to: "/", label: "Start", show: true, end: true },
-    { to: "/tenants", label: "Tenants", show: can("manage:tenants") },
-    { to: "/users", label: "Users", show: can("manage:users") },
-    { to: "/api-tokens", label: "API Tokens", show: can("manage:service-keys") },
+    { to: "/", label: t("nav.start"), show: true, end: true },
+    { to: "/tenants", label: t("nav.tenants"), show: can("manage:tenants") },
+    { to: "/users", label: t("nav.users"), show: can("manage:users") },
+    { to: "/api-tokens", label: t("nav.apiTokens"), show: can("manage:service-keys") },
   ].filter((item) => item.show);
 
   // Personal/account items — the user menu (desktop) and part of the mobile menu.
   const menuItems: NavItem[] = [
-    { to: "/profile", label: "Profil", show: true },
-    { to: "/audit", label: "Audit-Log", show: can("admin:tenant") },
-    { to: "/sessions", label: "Sitzungen", show: true },
-    { to: "/config", label: "Config", show: can("manage:config") },
+    { to: "/profile", label: t("nav.profile"), show: true },
+    { to: "/audit", label: t("nav.audit"), show: can("admin:tenant") },
+    { to: "/sessions", label: t("nav.sessions"), show: true },
+    { to: "/config", label: t("nav.config"), show: can("manage:config") },
   ].filter((item) => item.show);
 
   const fullName = me?.user.fullName?.trim() || me?.user.username || "";
@@ -339,6 +341,7 @@ function MobileMenu({
  * impersonating — end the impersonation below the list. */
 function TenantSwitcher() {
   const { client, me, activeTenantId, switchTenant } = useUmami();
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Tenant[]>([]);
@@ -410,7 +413,7 @@ function TenantSwitcher() {
         >
           <input
             className={input}
-            placeholder="Mandanten suchen…"
+            placeholder={t("common.search")}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />

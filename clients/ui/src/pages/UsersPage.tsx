@@ -1,5 +1,6 @@
 import type { CustomFieldDef, Salutation, UserView } from "@bentoforge/umami-iam";
 import { Fragment, useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useUmami } from "../auth/UmamiProvider";
 import {
   Banner,
@@ -16,6 +17,7 @@ import { card, dangerButton, ghostButton, input, primaryButton, td, th } from ".
 /** Own-tenant screen: list / create / edit / suspend / delete users. */
 export function UsersPage() {
   const { client, me } = useUmami();
+  const { t } = useTranslation();
   const [users, setUsers] = useState<UserView[] | null>(null);
   const [defs, setDefs] = useState<CustomFieldDef[]>([]);
   const [truncated, setTruncated] = useState(false);
@@ -99,7 +101,7 @@ export function UsersPage() {
         <h1 className="text-xl font-semibold text-slate-900 dark:text-white">Users</h1>
         <input
           className={`${input} max-w-xs`}
-          placeholder="Search username, email, name…"
+          placeholder={t("common.search")}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />

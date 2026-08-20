@@ -82,7 +82,7 @@ export function TenantsPage() {
         </h1>
         <input
           className={`${input} max-w-xs`}
-          placeholder={t("tenants.search")}
+          placeholder={t("common.search")}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />

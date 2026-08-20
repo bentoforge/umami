@@ -1,6 +1,16 @@
 {
   "app": { "title": "umami" },
-  "common": { "loading": "Loading data…" },
+  "common": { "loading": "Loading data…", "search": "Search…" },
+  "nav": {
+    "start": "Start",
+    "tenants": "Tenants",
+    "users": "Users",
+    "apiTokens": "API Tokens",
+    "profile": "Profile",
+    "audit": "Audit log",
+    "sessions": "Sessions",
+    "config": "System configuration"
+  },
   "login": {
     "heading": "Sign in",
     "email": "Email",
