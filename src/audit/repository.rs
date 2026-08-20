@@ -15,7 +15,7 @@ use chrono::{Duration, SecondsFormat, Utc};
 use std::env;
 use wasabi::aws::dynamodb::client::DynamoClient;
 use wasabi::aws::dynamodb::schema::{str_attribute, with_hash_index};
-use wasabi::aws::dynamodb::{find_all, generate_id, str};
+use wasabi::aws::dynamodb::{deserialize_entity, generate_id, str};
 
 const TABLE_AUDIT: &str = "audit-log";
 const FIELD_ID: &str = "id";
@@ -89,7 +89,9 @@ impl DynamoAuditRepository {
         key_value: &str,
         limit: i32,
     ) -> anyhow::Result<Vec<AuditEntry>> {
-        let query = self
+        // Single page only: `.limit(n)` caps what DynamoDB reads/returns, and one `send()` fetches
+        // just that first (newest-first) page — no pagination, so we never over-read to discard.
+        let result = self
             .client
             .query(TABLE_AUDIT)
             .index_name(index)
@@ -97,12 +99,17 @@ impl DynamoAuditRepository {
             .expression_attribute_names("#k", key_field)
             .expression_attribute_values(":v", str(key_value))
             .scan_index_forward(false)
-            .limit(limit.max(1));
-        // `.limit(..)` is only the page size; `find_all` paginates every page. Truncate to the
-        // requested cap so callers get at most `limit` (newest-first) entries.
-        let mut entries = find_all(query).await.context("Error listing 'audit-log'")?;
-        entries.truncate(limit.max(1) as usize);
-        Ok(entries)
+            .limit(limit.max(1))
+            .send()
+            .await
+            .context("Error listing 'audit-log'")?;
+
+        result
+            .items
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|item| deserialize_entity::<AuditEntry>(Some(item)).transpose())
+            .collect()
     }
 }
 
