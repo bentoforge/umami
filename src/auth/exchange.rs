@@ -93,6 +93,9 @@ async fn exchange(
     let config = deps.config.current().await?;
     let access_ttl_secs = config.security.access_ttl_secs as i64;
 
+    // Carry the second factors from the caller's token so downstream tokens keep is:2fa etc.
+    let (passkey, totp) = crate::auth::broker::auth_strength(&caller);
+
     let tenant = deps.tenants.get_tenant(&user.tenant_id).await?;
     let features: Vec<String> = tenant
         .as_ref()
@@ -110,9 +113,8 @@ async fn exchange(
             subjects: &user.roles,
             features: &features,
             system_tenant: deps.system_tenant_id.as_deref() == Some(user.tenant_id.as_str()),
-            // Downstream re-mint from an access token — the session's auth method isn't readable here.
-            passkey: false,
-            totp: false,
+            passkey,
+            totp,
             user: Some(&user),
             tenant: tenant.as_ref(),
             kind: None,

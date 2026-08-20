@@ -13,6 +13,17 @@ use std::collections::BTreeMap;
 use warp::http::StatusCode;
 use wasabi::{client_bail, status_bail};
 
+/// Reads the auth-strength (`amr`) claim off a caller's access token → `(passkey, totp)`, so a
+/// re-mint that has no session context (exchange / switch-tenant) can carry forward the second
+/// factors the original login established.
+pub fn auth_strength(caller: &wasabi::web::auth::user::User) -> (bool, bool) {
+    let amr = caller.claim("amr").and_then(|value| value.as_array());
+    let has = |method: &str| {
+        amr.is_some_and(|entries| entries.iter().any(|entry| entry.as_str() == Some(method)))
+    };
+    (has("passkey"), has("totp"))
+}
+
 /// Everything needed to mint a token for a principal (user, PAT, or M2M key) against a target API.
 pub struct MintParams<'a> {
     /// Target API code in the config `apis` catalog.
@@ -121,6 +132,18 @@ pub async fn mint_for_api(
     let mut extra = api.build_claims(&ctx);
     if let Some(kind) = params.kind {
         let _ = extra.insert("kind".to_owned(), json!(kind));
+    }
+    // Record the second factors used (`amr`) so a downstream re-mint (exchange / switch-tenant) can
+    // carry the auth-strength markers forward — see [`auth_strength`].
+    let mut amr: Vec<&str> = Vec::new();
+    if params.passkey {
+        amr.push("passkey");
+    }
+    if params.totp {
+        amr.push("totp");
+    }
+    if !amr.is_empty() {
+        let _ = extra.insert("amr".to_owned(), json!(amr));
     }
 
     tokens

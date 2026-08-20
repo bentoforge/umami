@@ -89,6 +89,9 @@ async fn switch_tenant(
     let config = context.config.current().await?;
     let access_ttl_secs = config.security.access_ttl_secs as i64;
 
+    // Carry the caller's second factors forward so the impersonation token keeps is:2fa etc.
+    let (passkey, totp) = crate::auth::broker::auth_strength(&caller);
+
     let (access_token, _exp) = mint_for_api(
         &context.tokens,
         &config,
@@ -102,9 +105,8 @@ async fn switch_tenant(
             features: &target.features,
             // Retain system-admin: keep is:system-tenant so manage:tenants + switch:tenant + the switch ability persist.
             system_tenant: true,
-            // Re-mint from an access token — the session's auth method isn't readable here.
-            passkey: false,
-            totp: false,
+            passkey,
+            totp,
             user: Some(&user),
             tenant: Some(&target),
             kind: None,
