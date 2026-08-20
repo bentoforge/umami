@@ -102,12 +102,12 @@ export function TenantsPage() {
             <thead>
               <tr className="border-b border-slate-200 dark:border-slate-700">
                 <th className={th}>{t("tenants.colName")}</th>
-                <th className={th}>{t("tenants.colUpdated")}</th>
                 {tableDefs.map((def) => (
                   <th key={def.key} className={th}>
                     {def.label}
                   </th>
                 ))}
+                <th className={th}>{t("tenants.colUpdated")}</th>
                 <th className={`${th} text-right`}>
                   <span className="sr-only">{t("tenants.actions")}</span>
                 </th>
@@ -133,12 +133,17 @@ export function TenantsPage() {
                     )}
                     <div className="text-xs text-slate-400 font-mono">{tenant.tenantId}</div>
                   </td>
-                  <td className={td}>{formatDateTime(tenant.lastUpdated)}</td>
                   {tableDefs.map((def) => (
                     <td key={def.key} className={td}>
                       {formatFieldValue(tenant.customFields[def.key])}
                     </td>
                   ))}
+                  <td className={`${td} whitespace-nowrap`}>
+                    <div>{formatDateTime(tenant.lastUpdated)}</div>
+                    <div className="text-xs text-slate-400">
+                      {tenant.lastActive ? formatDateTime(tenant.lastActive) : "—"}
+                    </div>
+                  </td>
                   <td className={`${td} text-right whitespace-nowrap`}>
                     <DropdownMenu
                       label={t("tenants.actions")}
