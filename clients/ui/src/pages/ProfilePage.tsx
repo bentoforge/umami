@@ -254,7 +254,7 @@ function ProfileFieldsPanel() {
       )}
       {error && <Banner tone="error">{error}</Banner>}
       {ok && <Banner tone="ok">Profile updated.</Banner>}
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Field label="Salutation">
           <select
             className={input}
@@ -281,7 +281,7 @@ function ProfileFieldsPanel() {
         </Field>
       </div>
       {defs.length > 0 && (
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <CustomFieldsForm defs={defs} values={values} onChange={setValues} />
         </div>
       )}

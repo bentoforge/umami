@@ -46,7 +46,7 @@ export function CreateTenantPage() {
       {error && <Banner tone="error">{error}</Banner>}
 
       <section className={`${card} space-y-4`}>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <Field label={t("tenants.nameLabel")}>
             <input
               className={input}

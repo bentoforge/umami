@@ -322,7 +322,7 @@ function CreateUser({
   return (
     <section className={`${card} space-y-3`}>
       <h2 className="font-medium text-slate-800 dark:text-slate-200">{t("users.new")}</h2>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Field label={t("users.username")}>
           <input className={input} value={username} onChange={(e) => setUsername(e.target.value)} />
         </Field>

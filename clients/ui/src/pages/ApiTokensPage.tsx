@@ -182,7 +182,7 @@ function CreateKey({
   return (
     <section className={`${card} space-y-3`}>
       <h2 className="font-medium text-slate-800 dark:text-slate-200">New service key</h2>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Field label="Name">
           <input className={input} value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
