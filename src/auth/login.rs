@@ -124,7 +124,9 @@ async fn handle_refresh_route(
     cookie_header: Option<String>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
     match refresh(&context, cookie_header.as_deref()).await {
-        Ok((body, set_cookie)) => Ok(reply_with_cookie(StatusCode::OK, body, set_cookie)),
+        Ok((body, set_cookie)) => {
+            json_with_optional_cookie(StatusCode::OK, &body, set_cookie).map_err(into_rejection)
+        }
         Err(err) => Err(into_rejection(err)),
     }
 }
@@ -400,7 +402,7 @@ pub(crate) async fn issue_session(
 async fn refresh(
     context: &AuthContext,
     cookie_header: Option<&str>,
-) -> anyhow::Result<(TokenResponse, String)> {
+) -> anyhow::Result<(TokenResponse, Option<String>)> {
     let (session_id, secret) = match parse_refresh_cookie(cookie_header) {
         Some(parsed) => parsed,
         None => status_bail!(StatusCode::UNAUTHORIZED, "No refresh cookie present"),
@@ -411,9 +413,21 @@ async fn refresh(
         None => status_bail!(StatusCode::UNAUTHORIZED, "No active session"),
     };
 
-    // Reuse/theft detection: a present session with a non-matching secret means a stale or stolen
-    // token was replayed — revoke the session and reject.
-    if !verify_refresh_secret(&secret, &session.refresh_hash) {
+    let matches_current = verify_refresh_secret(&secret, &session.refresh_hash);
+    // Grace: the immediately-previous secret is briefly honored after a rotation, so a racing or
+    // retried refresh (concurrent tabs, a network retry) isn't mistaken for token theft.
+    let matches_grace = !matches_current
+        && session
+            .prev_refresh_hash
+            .as_deref()
+            .is_some_and(|hash| verify_refresh_secret(&secret, hash))
+        && session
+            .prev_refresh_expires_at
+            .is_some_and(|until| Utc::now() < until);
+
+    // Reuse/theft detection: neither the current nor a still-valid previous secret matched — a stale
+    // or stolen token was replayed. Revoke the session and reject.
+    if !matches_current && !matches_grace {
         context.sessions.delete_session(&session_id).await?;
         record_best_effort(
             &context.audit,
@@ -450,12 +464,25 @@ async fn refresh(
     let config = context.config.current().await?;
     let refresh_ttl_secs = config.security.refresh_ttl_secs as i64;
 
-    let new_secret = generate_refresh_secret();
-    let new_hash = hash_refresh_secret(&new_secret);
-    context
-        .sessions
-        .rotate_session(&session_id, new_hash, refresh_ttl_secs)
-        .await?;
+    // Only the *current* secret rotates the session and issues a fresh cookie. A grace-window hit is
+    // a duplicate of an already-succeeded refresh, so we mint a token but leave the cookie alone
+    // (the winning request already set the current one).
+    let set_cookie = if matches_current {
+        let new_secret = generate_refresh_secret();
+        let new_hash = hash_refresh_secret(&new_secret);
+        context
+            .sessions
+            .rotate_session(&session_id, new_hash, refresh_ttl_secs)
+            .await?;
+        Some(build_refresh_cookie(
+            &session_id,
+            &new_secret,
+            context.cookie_domain.as_deref(),
+            refresh_ttl_secs,
+        ))
+    } else {
+        None
+    };
 
     // The session's active tenant is the user's home tenant (single-tenant v1); fall back to it.
     let tenant_id = session
@@ -482,13 +509,6 @@ async fn refresh(
     if let Err(err) = context.tenants.touch_last_active(tenant_id).await {
         tracing::warn!("failed to update lastActive for tenant {tenant_id}: {err:#}");
     }
-
-    let set_cookie = build_refresh_cookie(
-        &session_id,
-        &new_secret,
-        context.cookie_domain.as_deref(),
-        refresh_ttl_secs,
-    );
 
     Ok((
         TokenResponse {

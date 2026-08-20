@@ -25,6 +25,10 @@ use wasabi::aws::dynamodb::{deserialize_entity, find_all, generate_id, str};
 /// Number of random bytes in a refresh secret (256 bits of entropy).
 const REFRESH_SECRET_BYTES: usize = 32;
 
+/// How long the immediately-previous refresh secret stays valid after a rotation, so a racing or
+/// retried refresh (concurrent tabs, network retry) is honored instead of flagged as token reuse.
+const REFRESH_GRACE_SECS: i64 = 30;
+
 /// Default target API for sessions created before `api_code` existed: the umami admin API.
 fn default_session_api() -> String {
     "umami".to_owned()
@@ -64,6 +68,14 @@ pub struct Session {
     pub api_code: String,
     /// SHA-256 (base64url) of the current refresh secret. The secret itself is never stored.
     pub refresh_hash: String,
+    /// The immediately-previous refresh hash, kept briefly after a rotation so a racing/retried
+    /// refresh presenting the just-rotated-out secret is honored (grace) instead of mistaken for
+    /// token theft. `None` before the first rotation.
+    #[serde(default)]
+    pub prev_refresh_hash: Option<String>,
+    /// Deadline until which [`prev_refresh_hash`] is accepted. `None` = no grace window active.
+    #[serde(default)]
+    pub prev_refresh_expires_at: Option<DateTime<Utc>>,
     /// Snapshot of `user.tokenVersion` at issue; a global bump invalidates this session at refresh.
     pub token_version_at_issue: u32,
     /// Whether this session authenticated with a passkey — re-applied as `is:passkey`/`is:2fa` on
@@ -222,6 +234,8 @@ impl SessionRepository for DynamoSessionRepository {
             active_tenant_id: new_session.active_tenant_id,
             api_code: new_session.api_code,
             refresh_hash: new_session.refresh_hash,
+            prev_refresh_hash: None,
+            prev_refresh_expires_at: None,
             token_version_at_issue: new_session.token_version_at_issue,
             mfa_passkey: new_session.mfa_passkey,
             mfa_totp: new_session.mfa_totp,
@@ -286,13 +300,18 @@ impl SessionRepository for DynamoSessionRepository {
     ) -> anyhow::Result<()> {
         let now = Utc::now();
         let expires_at = now + Duration::seconds(ttl_secs);
+        let grace_until = now + Duration::seconds(REFRESH_GRACE_SECS);
 
         let _ = self
             .client
             .update_item(TABLE_SESSIONS)
             .key(FIELD_SESSION_ID, str(session_id))
+            // RHS reads pre-update values, so `#prevRefreshHash = #refreshHash` snapshots the
+            // outgoing hash before it is overwritten — that's the short grace window.
             .update_expression(
-                "SET #refreshHash = :refreshHash, \
+                "SET #prevRefreshHash = #refreshHash, \
+                       #prevRefreshExpiresAt = :graceUntil, \
+                       #refreshHash = :refreshHash, \
                        #lastSeen = :lastSeen, \
                        #expiresAt = :expiresAt, \
                        #ttl = :ttl",
@@ -300,10 +319,16 @@ impl SessionRepository for DynamoSessionRepository {
             .condition_expression("attribute_exists(#sessionId)")
             .expression_attribute_names("#sessionId", FIELD_SESSION_ID)
             .expression_attribute_names("#refreshHash", "refreshHash")
+            .expression_attribute_names("#prevRefreshHash", "prevRefreshHash")
+            .expression_attribute_names("#prevRefreshExpiresAt", "prevRefreshExpiresAt")
             .expression_attribute_names("#lastSeen", "lastSeen")
             .expression_attribute_names("#expiresAt", "expiresAt")
             .expression_attribute_names("#ttl", "ttl")
             .expression_attribute_values(":refreshHash", str(new_refresh_hash))
+            .expression_attribute_values(
+                ":graceUntil",
+                str(grace_until.to_rfc3339_opts(SecondsFormat::Millis, true)),
+            )
             .expression_attribute_values(
                 ":lastSeen",
                 str(now.to_rfc3339_opts(SecondsFormat::Millis, true)),
