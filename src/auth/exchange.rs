@@ -110,6 +110,9 @@ async fn exchange(
             subjects: &user.roles,
             features: &features,
             system_tenant: deps.system_tenant_id.as_deref() == Some(user.tenant_id.as_str()),
+            // Downstream re-mint from an access token — the session's auth method isn't readable here.
+            passkey: false,
+            totp: false,
             user: Some(&user),
             tenant: tenant.as_ref(),
             kind: None,

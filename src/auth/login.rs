@@ -185,6 +185,8 @@ async fn mint_access_token(
     user: &User,
     tenant_id: &str,
     api_code: &str,
+    mfa_passkey: bool,
+    mfa_totp: bool,
 ) -> anyhow::Result<String> {
     let access_ttl_secs = config.security.access_ttl_secs as i64;
 
@@ -205,6 +207,8 @@ async fn mint_access_token(
             subjects: &user.roles,
             features: &features,
             system_tenant: context.system_tenant_id.as_deref() == Some(tenant_id),
+            passkey: mfa_passkey,
+            totp: mfa_totp,
             user: Some(user),
             tenant: tenant.as_ref(),
             kind: None,
@@ -301,10 +305,14 @@ async fn login(
         }
     }
 
+    // If the account has TOTP, we only reach here after verifying it above — so a present secret
+    // means this login was TOTP-secured. (Password login never involves a passkey.)
+    let mfa_totp = user.totp_secret.is_some();
+
     // Default to the umami admin API when the caller didn't request a specific target.
     let api_code = request.api.as_deref().unwrap_or("umami");
     let (access_token, set_cookie) =
-        issue_session(context, &user, api_code, user_agent, ip).await?;
+        issue_session(context, &user, api_code, false, mfa_totp, user_agent, ip).await?;
 
     record_best_effort(
         &context.audit,
@@ -335,6 +343,8 @@ pub(crate) async fn issue_session(
     context: &AuthContext,
     user: &User,
     api_code: &str,
+    mfa_passkey: bool,
+    mfa_totp: bool,
     user_agent: Option<String>,
     ip: Option<String>,
 ) -> anyhow::Result<(String, String)> {
@@ -342,7 +352,16 @@ pub(crate) async fn issue_session(
     let refresh_ttl_secs = config.security.refresh_ttl_secs as i64;
 
     // Mint first: if the user isn't eligible for the requested API, fail before creating a session.
-    let access_token = mint_access_token(context, &config, user, &user.tenant_id, api_code).await?;
+    let access_token = mint_access_token(
+        context,
+        &config,
+        user,
+        &user.tenant_id,
+        api_code,
+        mfa_passkey,
+        mfa_totp,
+    )
+    .await?;
 
     let secret = generate_refresh_secret();
     let refresh_hash = hash_refresh_secret(&secret);
@@ -355,6 +374,8 @@ pub(crate) async fn issue_session(
             api_code: api_code.to_owned(),
             refresh_hash,
             token_version_at_issue: user.token_version,
+            mfa_passkey,
+            mfa_totp,
             ttl_secs: refresh_ttl_secs,
             user_agent,
             ip,
@@ -441,9 +462,18 @@ async fn refresh(
         .active_tenant_id
         .as_deref()
         .unwrap_or(&user.tenant_id);
-    // Re-mint for the API this session was opened against, so the audience stays stable.
-    let access_token =
-        mint_access_token(context, &config, &user, tenant_id, &session.api_code).await?;
+    // Re-mint for the API this session was opened against, so the audience stays stable; carry the
+    // session's original auth-strength markers (is:passkey/is:totp/is:2fa) across the rotation.
+    let access_token = mint_access_token(
+        context,
+        &config,
+        &user,
+        tenant_id,
+        &session.api_code,
+        session.mfa_passkey,
+        session.mfa_totp,
+    )
+    .await?;
 
     // Best-effort activity marker (a refresh counts as "seen"); never fail refresh on this.
     if let Err(err) = context.users.touch_last_seen(&user.user_id).await {

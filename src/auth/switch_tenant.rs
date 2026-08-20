@@ -102,6 +102,9 @@ async fn switch_tenant(
             features: &target.features,
             // Retain system-admin: keep is:system-tenant so manage:tenants + switch:tenant + the switch ability persist.
             system_tenant: true,
+            // Re-mint from an access token — the session's auth method isn't readable here.
+            passkey: false,
+            totp: false,
             user: Some(&user),
             tenant: Some(&target),
             kind: None,

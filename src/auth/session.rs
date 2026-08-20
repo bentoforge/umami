@@ -66,6 +66,13 @@ pub struct Session {
     pub refresh_hash: String,
     /// Snapshot of `user.tokenVersion` at issue; a global bump invalidates this session at refresh.
     pub token_version_at_issue: u32,
+    /// Whether this session authenticated with a passkey — re-applied as `is:passkey`/`is:2fa` on
+    /// every refresh so the auth-strength markers survive token rotation.
+    #[serde(default)]
+    pub mfa_passkey: bool,
+    /// Whether this session authenticated with a TOTP second factor (re-applied as `is:totp`/`is:2fa`).
+    #[serde(default)]
+    pub mfa_totp: bool,
     /// Optional best-effort device metadata for a future device list.
     pub user_agent: Option<String>,
     /// Best-effort client IP captured at creation.
@@ -118,6 +125,9 @@ pub struct NewSession {
     pub refresh_hash: String,
     /// Snapshot of `user.tokenVersion` at issue.
     pub token_version_at_issue: u32,
+    /// Whether the login used a passkey / a TOTP second factor (persisted for refresh re-minting).
+    pub mfa_passkey: bool,
+    pub mfa_totp: bool,
     /// Session lifetime in seconds.
     pub ttl_secs: i64,
     /// Best-effort captured `User-Agent`.
@@ -213,6 +223,8 @@ impl SessionRepository for DynamoSessionRepository {
             api_code: new_session.api_code,
             refresh_hash: new_session.refresh_hash,
             token_version_at_issue: new_session.token_version_at_issue,
+            mfa_passkey: new_session.mfa_passkey,
+            mfa_totp: new_session.mfa_totp,
             user_agent: new_session.user_agent,
             ip: new_session.ip,
             created: now,

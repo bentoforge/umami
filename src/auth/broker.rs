@@ -4,7 +4,10 @@
 
 use crate::auth::tokens::{AccessTokenClaims, TokenIssuer};
 use crate::config::Config;
-use crate::constants::{MESSAGING_CONFIGURED_MARKER, SYSTEM_TENANT_MARKER};
+use crate::constants::{
+    MESSAGING_CONFIGURED_MARKER, PASSKEY_MARKER, SYSTEM_TENANT_MARKER, TOTP_MARKER,
+    TWO_FACTOR_MARKER,
+};
 use serde_json::json;
 use std::collections::BTreeMap;
 use warp::http::StatusCode;
@@ -27,6 +30,10 @@ pub struct MintParams<'a> {
     /// Whether the token's tenant is the configured system tenant (adds the `is:system-tenant`
     /// synthetic marker to the subject set).
     pub system_tenant: bool,
+    /// Whether the session authenticated with a passkey (adds `is:passkey` + `is:2fa`).
+    pub passkey: bool,
+    /// Whether the session authenticated with a TOTP second factor (adds `is:totp` + `is:2fa`).
+    pub totp: bool,
     /// The user principal, when the token acts as a user (`None` for an M2M service key). Source of
     /// the `$user.*` claim references and the composed display names.
     pub user: Option<&'a crate::users::User>,
@@ -56,6 +63,17 @@ pub async fn mint_for_api(
     subject_set.extend(params.features.iter().cloned());
     if params.system_tenant {
         subject_set.push(SYSTEM_TENANT_MARKER.to_owned());
+    }
+    // Authentication-strength markers reflecting how *this* session was authenticated, so permission
+    // rules / API eligibility can require a second factor (e.g. `when: "is:2fa"`).
+    if params.passkey {
+        subject_set.push(PASSKEY_MARKER.to_owned());
+    }
+    if params.totp {
+        subject_set.push(TOTP_MARKER.to_owned());
+    }
+    if params.passkey || params.totp {
+        subject_set.push(TWO_FACTOR_MARKER.to_owned());
     }
     // Global capability marker: messaging self-service is available when the deployment has a bot
     // and/or WhatsApp number configured.

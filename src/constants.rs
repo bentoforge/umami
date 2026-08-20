@@ -65,6 +65,16 @@ pub const SYSTEM_TENANT_MARKER: &str = "is:system-tenant";
 /// set (`messaging.telegramBot` / `messaging.whatsappNumber`). A global capability marker.
 pub const MESSAGING_CONFIGURED_MARKER: &str = "is:messaging-configured";
 
+/// Added to the subject set when the session authenticated with a passkey (WebAuthn).
+pub const PASSKEY_MARKER: &str = "is:passkey";
+
+/// Added to the subject set when the session authenticated with a TOTP second factor.
+pub const TOTP_MARKER: &str = "is:totp";
+
+/// Added whenever the session used a strong second factor (passkey or TOTP), so permission rules
+/// can gate on "2FA present" regardless of the specific method.
+pub const TWO_FACTOR_MARKER: &str = "is:2fa";
+
 // ── Built-in role codes (defined in the default config, namespaced `role:*`) ───
 
 /// Role code for a tenant's first/owning user.

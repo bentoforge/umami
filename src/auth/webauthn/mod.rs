@@ -473,8 +473,9 @@ async fn login_finish(
     };
 
     // Mint for the requested API (default: umami admin API); the session records it for refresh.
+    // A passkey login is a strong factor → is:passkey + is:2fa.
     let api_code = request.api.as_deref().unwrap_or("umami");
-    issue_session(context, &user, api_code, user_agent, ip).await
+    issue_session(context, &user, api_code, true, false, user_agent, ip).await
 }
 
 #[cfg(test)]
