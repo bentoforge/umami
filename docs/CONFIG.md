@@ -11,10 +11,13 @@ For the permission-string DSL and the mint algorithm in depth, see [PERMISSIONS.
 
 ## 1. Where the config lives
 
-- **S3-backed** when `UMAMI_CONFIG_BUCKET` is set: the whole document is stored as one object and
-  cached in memory. Edit it via `PUT /config` (load → edit → write back; optimistic `version`).
-- **Built-in default** otherwise (dev/tests): [`Config::default()`](../src/config/mod.rs). This is the
-  config described under [§5](#5-the-built-in-default).
+- **S3-backed** when an S3 client is available the wasabi way (`S3_BUCKET_SUFFIX` set): the whole
+  document is stored as one object in the fixed bucket `config.<S3_BUCKET_SUFFIX>` (auto-created on
+  first boot, like a DynamoDB table) and cached in memory. Edit it via `PUT /config` (load → edit →
+  write back; optimistic `version`).
+- **In-memory default** otherwise (dev/tests): [`Config::default()`](../src/config/mod.rs) — **not
+  persisted**, so edits are lost on restart. This is the config described under
+  [§5](#5-the-built-in-default).
 
 New fields are added with `#[serde(default)]`, so an older stored document keeps loading after an
 upgrade (missing keys fall back to defaults).
@@ -23,7 +26,8 @@ Relevant environment variables:
 
 | Env | Effect |
 |-----|--------|
-| `UMAMI_CONFIG_BUCKET` | Use S3 config instead of the built-in default. |
+| `S3_BUCKET_SUFFIX` | When set, persist config in S3 (bucket `config.<suffix>`); unset ⇒ in-memory default (non-persistent). |
+| `UMAMI_CONFIG_KEY` | Optional object key for the config document (default `umami/config.json`). |
 | `UMAMI_SYSTEM_TENANT_ID` | Tenant whose members get the `is:system-tenant` marker (⇒ `manage:tenants` + `switch:tenant`). |
 | `UMAMI_AUTO_INIT=true` | Bootstrap a first tenant + owner when zero tenants exist. |
 | `UMAMI_UI_DIR` | Directory of the built management SPA to serve under `/app` (default `clients/ui/dist`; absent index.html ⇒ API-only). |

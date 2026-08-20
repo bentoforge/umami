@@ -180,7 +180,7 @@ async fn app() -> anyhow::Result<()> {
     // Config catalog behind a repository: S3 (whole-document, cached) when a bucket is configured,
     // otherwise a built-in default (dev/tests/no-S3).
     // Persist config in S3 whenever an S3 client is available the wasabi way (i.e. S3_BUCKET_SUFFIX
-    // is set); the bucket is discovered/auto-created from a prefix (UMAMI_CONFIG_BUCKET, default).
+    // is set); the bucket is the fixed "config.<S3_BUCKET_SUFFIX>", auto-created on first boot.
     // Otherwise fall back to the in-memory repo — non-persistent, for local dev without S3. (The
     // repo-discovery story will be refined later.)
     let config_repository: Arc<dyn ConfigRepository> = match S3Client::from_env().await {

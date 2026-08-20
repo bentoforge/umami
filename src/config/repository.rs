@@ -19,9 +19,10 @@ const CONFIG_CACHE_TTL: Duration = Duration::from_secs(900);
 /// Default S3 object key for the config document.
 const DEFAULT_CONFIG_KEY: &str = "umami/config.json";
 
-/// Default bucket-name **prefix** for the config bucket (the wasabi naming schema appends
-/// `.<S3_BUCKET_SUFFIX>`). Config only ever carries the prefix, never a full bucket name.
-const DEFAULT_CONFIG_BUCKET_PREFIX: &str = "umami-config";
+/// Bucket-name **prefix** for the config bucket. The wasabi naming schema appends
+/// `.<S3_BUCKET_SUFFIX>` to form the effective bucket, so this is a fixed prefix — never a full
+/// bucket name and not separately configurable.
+const CONFIG_BUCKET_PREFIX: &str = "config";
 
 /// Reads the optional noncurrent-version retention for the config bucket from the environment:
 /// `UMAMI_CONFIG_VERSIONS_KEEP` (keep the newest N) and `UMAMI_CONFIG_VERSIONS_EXPIRE_DAYS`
@@ -94,14 +95,14 @@ pub struct S3ConfigRepository {
 }
 
 impl S3ConfigRepository {
-    /// Builds the repository from the optional `UMAMI_CONFIG_BUCKET` (the bucket **prefix**,
-    /// default [`DEFAULT_CONFIG_BUCKET_PREFIX`]; the effective name is `<prefix>.<S3_BUCKET_SUFFIX>`)
-    /// plus optional `UMAMI_CONFIG_KEY`. Provisions the bucket if absent (mirroring how each
-    /// repository auto-creates its DynamoDB table on boot), enables versioning so config edits are
-    /// recoverable, and seeds a default document if none exists yet.
+    /// Builds the repository for the fixed [`CONFIG_BUCKET_PREFIX`] bucket (effective name
+    /// `config.<S3_BUCKET_SUFFIX>`, wasabi naming — analogous to how DynamoDB tables get a fixed
+    /// name plus the shared deployment prefix) plus optional `UMAMI_CONFIG_KEY`. Provisions the
+    /// bucket if absent (mirroring how each repository auto-creates its DynamoDB table on boot),
+    /// enables versioning so config edits are recoverable, and seeds a default document if none
+    /// exists yet.
     pub async fn from_env(client: S3Client) -> anyhow::Result<Self> {
-        let bucket_prefix = env::var("UMAMI_CONFIG_BUCKET")
-            .unwrap_or_else(|_| DEFAULT_CONFIG_BUCKET_PREFIX.to_owned());
+        let bucket_prefix = CONFIG_BUCKET_PREFIX.to_owned();
         let key = env::var("UMAMI_CONFIG_KEY").unwrap_or_else(|_| DEFAULT_CONFIG_KEY.to_owned());
         let bucket = BucketName::Prefix(bucket_prefix.clone());
         let effective = client.effective_name(&bucket);
