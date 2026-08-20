@@ -51,7 +51,10 @@ export function AuditList({ entries }: { entries: AuditEntry[] }) {
           />
           <div className="min-w-0">
             <div className="text-sm text-slate-800 dark:text-slate-200">{entry.message}</div>
-            <div className="text-xs text-slate-400">{formatDateTime(entry.timestamp)}</div>
+            <div className="text-xs text-slate-400">
+              {formatDateTime(entry.timestamp)}
+              {entry.ip && <span className="font-mono"> · {entry.ip}</span>}
+            </div>
           </div>
         </li>
       ))}

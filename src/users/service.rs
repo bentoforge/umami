@@ -28,7 +28,7 @@ use wasabi::aws::dynamodb::generate_id;
 use wasabi::web::auth::authenticator::Authenticator;
 use wasabi::web::auth::user::User as AuthUser;
 use wasabi::web::auth::with_user_with_any_permission;
-use wasabi::web::warp::{into_response, with_body_as_json, with_cloneable};
+use wasabi::web::warp::{client_ip, into_response, with_body_as_json, with_cloneable};
 use wasabi::{client_bail, status_bail};
 
 /// Permission required to administer a tenant's users.
@@ -267,6 +267,7 @@ pub fn patch_user_route(
             authenticator,
             REQUIRE_MANAGE_USERS,
         ))
+        .and(client_ip())
         .and_then(handle_patch_user_route)
         .boxed()
 }
@@ -308,6 +309,7 @@ pub fn reset_password_route(
             authenticator,
             REQUIRE_MANAGE_USERS,
         ))
+        .and(client_ip())
         .and_then(handle_reset_password_route)
         .boxed()
 }
@@ -357,6 +359,7 @@ async fn get_user(
 }
 
 #[tracing::instrument(level = "debug", name = "PATCH /users/{id}", skip_all)]
+#[allow(clippy::too_many_arguments)]
 async fn handle_patch_user_route(
     user_id: String,
     request: PatchUserRequest,
@@ -365,8 +368,9 @@ async fn handle_patch_user_route(
     config: Arc<dyn ConfigRepository>,
     audit: Arc<dyn AuditRepository>,
     caller: AuthUser,
+    ip: Option<String>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(patch_user(user_id, request, users, tenants, config, audit, caller).await)
+    into_response(patch_user(user_id, request, users, tenants, config, audit, caller, ip).await)
 }
 
 #[tracing::instrument(level = "debug", name = "DELETE /users/{id}", skip_all)]
@@ -386,8 +390,9 @@ async fn handle_reset_password_route(
     config: Arc<dyn ConfigRepository>,
     audit: Arc<dyn AuditRepository>,
     caller: AuthUser,
+    ip: Option<String>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(reset_password(user_id, request, users, config, audit, caller).await)
+    into_response(reset_password(user_id, request, users, config, audit, caller, ip).await)
 }
 
 // ── Business logic ──────────────────────────────────────────────────────────────
@@ -500,6 +505,7 @@ async fn list_users(
     Ok(UserListResponse { users, truncated })
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn patch_user(
     user_id: String,
     request: PatchUserRequest,
@@ -508,6 +514,7 @@ async fn patch_user(
     config: Arc<dyn ConfigRepository>,
     audit: Arc<dyn AuditRepository>,
     caller: AuthUser,
+    ip: Option<String>,
 ) -> anyhow::Result<UserView> {
     let tenant_id = caller.tenant_id()?;
 
@@ -582,9 +589,10 @@ async fn patch_user(
                 format!(
                     "User '{}' {action} by admin {}",
                     updated.username,
-                    caller.user_id()?
+                    caller.user_id()?,
                 ),
-            ),
+            )
+            .with_ip(ip),
         )
         .await;
     }
@@ -622,6 +630,7 @@ async fn reset_password(
     config: Arc<dyn ConfigRepository>,
     audit: Arc<dyn AuditRepository>,
     caller: AuthUser,
+    ip: Option<String>,
 ) -> anyhow::Result<ResetPasswordResponse> {
     let tenant_id = caller.tenant_id()?;
 
@@ -652,7 +661,8 @@ async fn reset_password(
             Some(user.tenant_id.clone()),
             Some(user.user_id.clone()),
             format!("Password reset by admin {}", caller.user_id()?),
-        ),
+        )
+        .with_ip(ip),
     )
     .await;
 

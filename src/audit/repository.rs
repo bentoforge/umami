@@ -200,6 +200,7 @@ impl AuditRepository for DynamoAuditRepository {
             user: entry.user,
             severity: entry.severity,
             message: entry.message,
+            ip: entry.ip,
             ttl: (now + Duration::days(self.retention_days)).timestamp(),
         };
         let _ = self

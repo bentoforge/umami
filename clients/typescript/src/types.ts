@@ -438,6 +438,9 @@ export interface AuditEntry {
   user?: string | null;
   severity: AuditSeverity;
   message: string;
+  /** Best-effort client IP, present on security-relevant events (logins, credential/account
+   * changes). Absent on events with no request IP. */
+  ip?: string | null;
 }
 
 /** Result of an admin password reset — `temporaryPassword` is set (once) only when generated. */

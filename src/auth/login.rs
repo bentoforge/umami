@@ -91,6 +91,7 @@ pub fn refresh_route(context: AuthContext) -> BoxedFilter<(impl warp::Reply,)> {
         .and(with_cloneable(Arc::new(context)))
         .and(warp::header::optional::<String>("cookie"))
         .and(warp::query::<RefreshQuery>())
+        .and(client_ip())
         .and_then(handle_refresh_route)
         .boxed()
 }
@@ -130,8 +131,9 @@ async fn handle_refresh_route(
     context: Arc<AuthContext>,
     cookie_header: Option<String>,
     query: RefreshQuery,
+    ip: Option<String>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    match refresh(&context, cookie_header.as_deref(), query.api.as_deref()).await {
+    match refresh(&context, cookie_header.as_deref(), query.api.as_deref(), ip).await {
         Ok((body, set_cookie)) => {
             json_with_optional_cookie(StatusCode::OK, &body, set_cookie).map_err(into_rejection)
         }
@@ -236,6 +238,8 @@ async fn login(
     user_agent: Option<String>,
     ip: Option<String>,
 ) -> anyhow::Result<(LoginResponse, Option<String>)> {
+    // Clone for the audit records: `ip` itself is moved into `issue_session` on the success path.
+    let audit_ip = ip.clone();
     // Uniform "invalid credentials" for unknown username / wrong password / inactive account, so we
     // don't reveal which users exist.
     let user = match context.users.find_by_username(&request.username).await? {
@@ -251,7 +255,8 @@ async fn login(
                         "Login failed for '{}': unknown or inactive account",
                         request.username
                     ),
-                ),
+                )
+                .with_ip(audit_ip.clone()),
             )
             .await;
             status_bail!(StatusCode::UNAUTHORIZED, "Invalid username or password");
@@ -265,6 +270,7 @@ async fn login(
             Some(user.user_id.clone()),
             message,
         )
+        .with_ip(audit_ip.clone())
     };
 
     let password_hash = match user.password_hash.as_deref() {
@@ -331,7 +337,8 @@ async fn login(
             Some(user.tenant_id.clone()),
             Some(user.user_id.clone()),
             "Password login".to_owned(),
-        ),
+        )
+        .with_ip(audit_ip.clone()),
     )
     .await;
 
@@ -410,6 +417,7 @@ async fn refresh(
     context: &AuthContext,
     cookie_header: Option<&str>,
     api: Option<&str>,
+    ip: Option<String>,
 ) -> anyhow::Result<(TokenResponse, Option<String>)> {
     let (session_id, secret) = match parse_refresh_cookie(cookie_header) {
         Some(parsed) => parsed,
@@ -444,7 +452,8 @@ async fn refresh(
                 session.active_tenant_id.clone(),
                 Some(session.user_id.clone()),
                 "Refresh token reuse detected — session revoked".to_owned(),
-            ),
+            )
+            .with_ip(ip),
         )
         .await;
         status_bail!(StatusCode::UNAUTHORIZED, "Refresh token rejected");

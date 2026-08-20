@@ -80,6 +80,7 @@ export function AuditPage() {
                 <th className={th}>When</th>
                 <th className={th}>Severity</th>
                 <th className={th}>User</th>
+                <th className={th}>IP</th>
                 <th className={th}>Event</th>
               </tr>
             </thead>
@@ -99,6 +100,7 @@ export function AuditPage() {
                   <td className={`${td} font-mono text-xs text-slate-400`}>
                     {e.user ? e.user.slice(0, 10) : "—"}
                   </td>
+                  <td className={`${td} font-mono text-xs text-slate-400`}>{e.ip || "—"}</td>
                   <td className={td}>{e.message}</td>
                 </tr>
               ))}

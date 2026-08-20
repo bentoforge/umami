@@ -27,7 +27,7 @@ use warp::http::StatusCode;
 use wasabi::web::auth::authenticator::Authenticator;
 use wasabi::web::auth::user::User as AuthUser;
 use wasabi::web::auth::{with_user, with_user_with};
-use wasabi::web::warp::{into_response, with_body_as_json, with_cloneable};
+use wasabi::web::warp::{client_ip, into_response, with_body_as_json, with_cloneable};
 use wasabi::{client_bail, status_bail};
 
 /// Current user, without the password hash.
@@ -155,6 +155,7 @@ pub fn change_password_route(
         .and(with_cloneable(config))
         .and(with_cloneable(audit))
         .and(with_user_with(authenticator, DENY_READONLY))
+        .and(client_ip())
         .and_then(handle_change_password_route)
         .boxed()
 }
@@ -295,8 +296,9 @@ async fn handle_change_password_route(
     config: Arc<dyn ConfigRepository>,
     audit: Arc<dyn AuditRepository>,
     caller: AuthUser,
+    ip: Option<String>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(change_password(request, users, config, audit, caller).await)
+    into_response(change_password(request, users, config, audit, caller, ip).await)
 }
 
 async fn change_password(
@@ -305,6 +307,7 @@ async fn change_password(
     config: Arc<dyn ConfigRepository>,
     audit: Arc<dyn AuditRepository>,
     caller: AuthUser,
+    ip: Option<String>,
 ) -> anyhow::Result<serde_json::Value> {
     let mut user = match users.get_user(caller.user_id()?).await? {
         Some(user) => user,
@@ -327,7 +330,8 @@ async fn change_password(
                 Some(user.tenant_id.clone()),
                 Some(user.user_id.clone()),
                 "Password change failed: wrong current password".to_owned(),
-            ),
+            )
+            .with_ip(ip.clone()),
         )
         .await;
         status_bail!(StatusCode::UNAUTHORIZED, "Current password is incorrect");
@@ -352,7 +356,8 @@ async fn change_password(
             Some(user.tenant_id.clone()),
             Some(user.user_id.clone()),
             "Password changed".to_owned(),
-        ),
+        )
+        .with_ip(ip),
     )
     .await;
 

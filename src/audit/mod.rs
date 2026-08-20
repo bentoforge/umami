@@ -41,6 +41,11 @@ pub struct AuditEntry {
     pub severity: AuditSeverity,
     /// Human-readable description. **Never** include secrets/tokens/password hashes.
     pub message: String,
+    /// Best-effort client IP of the acting request, recorded on security-relevant events (logins,
+    /// credential/account-state changes) as legitimate-interest security forensics. Absent on
+    /// events with no request IP to hand. Expires with the row via the audit-log TTL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ip: Option<String>,
     /// Epoch-seconds expiry for a DynamoDB TTL (enabled out-of-band).
     pub ttl: i64,
 }
@@ -52,10 +57,15 @@ pub struct NewAuditEntry {
     pub user: Option<String>,
     pub severity: AuditSeverity,
     pub message: String,
+    /// Best-effort client IP; set via [`NewAuditEntry::with_ip`] on security-relevant events.
+    pub ip: Option<String>,
 }
 
 impl NewAuditEntry {
-    /// Convenience constructor.
+    /// Convenience constructor. The `ip` defaults to `None`; attach one with [`with_ip`] on
+    /// security-relevant events.
+    ///
+    /// [`with_ip`]: NewAuditEntry::with_ip
     pub fn new(
         severity: AuditSeverity,
         tenant: Option<String>,
@@ -67,6 +77,15 @@ impl NewAuditEntry {
             user,
             severity,
             message: message.into(),
+            ip: None,
         }
+    }
+
+    /// Attaches the acting request's client IP (recorded for security forensics). No-op semantics
+    /// for `None`, so callers can pass an optional IP straight through.
+    #[must_use]
+    pub fn with_ip(mut self, ip: Option<String>) -> Self {
+        self.ip = ip;
+        self
     }
 }
