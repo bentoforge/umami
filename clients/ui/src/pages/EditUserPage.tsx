@@ -7,6 +7,7 @@ import type {
   SessionView,
   UserView,
 } from "@bentoforge/umami-iam";
+import { ArrowUpRightIcon } from "@heroicons/react/24/outline";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams } from "react-router-dom";
@@ -495,9 +496,10 @@ function AuditCard({ userId }: { userId: string }) {
           {hasMore && (
             <button
               type="button"
-              className="text-sm text-primary hover:underline"
+              className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
               onClick={() => navigate(`/audit?user=${encodeURIComponent(userId)}`)}
             >
+              <ArrowUpRightIcon className="h-4 w-4" />
               {t("users.showAllActivity")}
             </button>
           )}
