@@ -35,6 +35,7 @@
     "detailsTitle": "Details",
     "rolesTitle": "Roles",
     "auditTitle": "Recent activity",
+    "showAllActivity": "Show all activity",
     "sessionsTitle": "Sessions",
     "logoutAll": "Log out everywhere",
     "logoutAllConfirm": "End all sessions of “{{name}}”? Every device loses access on its next refresh.",

@@ -446,15 +446,17 @@ function RolesCard({
   );
 }
 
-/** The user's most recent audit entries (last 5). */
+/** The user's most recent audit entries (last 5); a link to the full trail when there are more. */
 function AuditCard({ userId }: { userId: string }) {
   const { client } = useUmami();
   const { t } = useTranslation();
+  const navigate = useNavigate();
+  // Fetch one more than we show so we know whether to offer "show all".
   const [entries, setEntries] = useState<AuditEntry[] | null>(null);
 
   useEffect(() => {
     client
-      .userAudit(userId, 5)
+      .userAudit(userId, 6)
       .then(setEntries)
       .catch(() => setEntries([]));
   }, [client, userId]);
@@ -465,27 +467,41 @@ function AuditCard({ userId }: { userId: string }) {
     bad: "bg-red-500",
   };
 
+  const shown = entries?.slice(0, 5) ?? [];
+  const hasMore = (entries?.length ?? 0) > 5;
+
   return (
     <section className={`${card} space-y-3`}>
       <h2 className="font-medium text-slate-800 dark:text-slate-200">{t("users.auditTitle")}</h2>
       {entries === null ? (
         <Loader />
-      ) : entries.length === 0 ? (
+      ) : shown.length === 0 ? (
         <p className="text-sm text-slate-500">{t("users.noAudit")}</p>
       ) : (
-        <ul className="divide-y divide-slate-100 dark:divide-slate-700/50">
-          {entries.map((entry) => (
-            <li key={entry.id} className="flex items-start gap-3 py-2">
-              <span
-                className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${dot[entry.severity] ?? dot.neutral}`}
-              />
-              <div className="min-w-0">
-                <div className="text-sm text-slate-800 dark:text-slate-200">{entry.message}</div>
-                <div className="text-xs text-slate-400">{formatDateTime(entry.timestamp)}</div>
-              </div>
-            </li>
-          ))}
-        </ul>
+        <>
+          <ul className="divide-y divide-slate-100 dark:divide-slate-700/50">
+            {shown.map((entry) => (
+              <li key={entry.id} className="flex items-start gap-3 py-2">
+                <span
+                  className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${dot[entry.severity] ?? dot.neutral}`}
+                />
+                <div className="min-w-0">
+                  <div className="text-sm text-slate-800 dark:text-slate-200">{entry.message}</div>
+                  <div className="text-xs text-slate-400">{formatDateTime(entry.timestamp)}</div>
+                </div>
+              </li>
+            ))}
+          </ul>
+          {hasMore && (
+            <button
+              type="button"
+              className="text-sm text-primary hover:underline"
+              onClick={() => navigate(`/audit?user=${encodeURIComponent(userId)}`)}
+            >
+              {t("users.showAllActivity")}
+            </button>
+          )}
+        </>
       )}
     </section>
   );

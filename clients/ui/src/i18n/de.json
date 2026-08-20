@@ -39,6 +39,7 @@
     "detailsTitle": "Stammdaten",
     "rolesTitle": "Rollen",
     "auditTitle": "Letzte Aktivitäten",
+    "showAllActivity": "Alle Aktivitäten anzeigen",
     "sessionsTitle": "Sitzungen",
     "logoutAll": "Überall abmelden",
     "logoutAllConfirm": "Alle Sitzungen von „{{name}}“ beenden? Alle Geräte verlieren beim nächsten Refresh den Zugang.",
