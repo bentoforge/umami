@@ -1,8 +1,12 @@
 import type { AuditEntry, AuditSeverity } from "@bentoforge/umami-iam";
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useUmami } from "../auth/UmamiProvider";
 import { Banner, errMsg, formatDateTime } from "../components";
 import { card, ghostButton, td, th } from "../ui";
+
+/** Entries fetched per page (and per "load more"). */
+const PAGE = 250;
 
 const SEVERITY_STYLE: Record<AuditSeverity, string> = {
   good: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300",
@@ -10,11 +14,14 @@ const SEVERITY_STYLE: Record<AuditSeverity, string> = {
   bad: "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300",
 };
 
-/** Tenant audit trail (admin:tenant), newest first. */
+/** Tenant audit trail (admin:tenant), newest first, paged with a "load more" button. */
 export function AuditPage() {
   const { client, me } = useUmami();
+  const { t } = useTranslation();
   const [entries, setEntries] = useState<AuditEntry[] | null>(null);
+  const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
   const tenantId = me?.user.tenantId;
 
@@ -22,7 +29,9 @@ export function AuditPage() {
     if (!tenantId) return;
     setError(null);
     try {
-      setEntries(await client.tenantAudit(tenantId, 250));
+      const page = await client.tenantAudit(tenantId, PAGE);
+      setEntries(page.entries);
+      setCursor(page.nextCursor);
     } catch (err) {
       setError(errMsg(err));
       setEntries([]);
@@ -32,6 +41,21 @@ export function AuditPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const loadMore = async () => {
+    if (!tenantId || !cursor) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const page = await client.tenantAudit(tenantId, PAGE, cursor);
+      setEntries((prev) => [...(prev ?? []), ...page.entries]);
+      setCursor(page.nextCursor);
+    } catch (err) {
+      setError(errMsg(err));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -82,6 +106,17 @@ export function AuditPage() {
           </table>
         )}
       </section>
+
+      {cursor && (
+        <button
+          type="button"
+          className="text-sm text-primary hover:underline disabled:opacity-50"
+          disabled={busy}
+          onClick={() => void loadMore()}
+        >
+          {t("common.loadMore")}
+        </button>
+      )}
     </div>
   );
 }

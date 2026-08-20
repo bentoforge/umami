@@ -3,6 +3,7 @@ import type {
   ApiErrorBody,
   ApiKeyView,
   AuditEntry,
+  AuditPage,
   Config,
   CreateApiKeyRequest,
   CreateApiKeyResponse,
@@ -410,25 +411,17 @@ export class UmamiClient {
       body: JSON.stringify({ currentPassword, newPassword }),
     });
   }
-  /** The current user's own audit trail (newest first). */
-  async myAudit(limit?: number): Promise<AuditEntry[]> {
-    const qs = limit ? `?limit=${limit}` : "";
-    const data = await this.request<{ entries: AuditEntry[] }>(`/auth/me/audit${qs}`);
-    return data.entries;
+  /** One page of the current user's own audit trail (newest first). Pass `cursor` to page. */
+  myAudit(limit?: number, cursor?: string): Promise<AuditPage> {
+    return this.request<AuditPage>(`/auth/me/audit${auditQs(limit, cursor)}`);
   }
-  /** A tenant's audit trail (requires `admin:tenant`; own tenant). */
-  async tenantAudit(tenantId: string, limit?: number): Promise<AuditEntry[]> {
-    const qs = limit ? `?limit=${limit}` : "";
-    const data = await this.request<{ entries: AuditEntry[] }>(
-      `/tenants/${enc(tenantId)}/audit${qs}`,
-    );
-    return data.entries;
+  /** One page of a tenant's audit trail (requires `admin:tenant`; own tenant). */
+  tenantAudit(tenantId: string, limit?: number, cursor?: string): Promise<AuditPage> {
+    return this.request<AuditPage>(`/tenants/${enc(tenantId)}/audit${auditQs(limit, cursor)}`);
   }
-  /** A tenant user's audit trail (requires `manage:users`; own tenant). */
-  async userAudit(userId: string, limit?: number): Promise<AuditEntry[]> {
-    const qs = limit ? `?limit=${limit}` : "";
-    const data = await this.request<{ entries: AuditEntry[] }>(`/users/${enc(userId)}/audit${qs}`);
-    return data.entries;
+  /** One page of a tenant user's audit trail (requires `manage:users`; own tenant). */
+  userAudit(userId: string, limit?: number, cursor?: string): Promise<AuditPage> {
+    return this.request<AuditPage>(`/users/${enc(userId)}/audit${auditQs(limit, cursor)}`);
   }
   /** A tenant user's active login sessions (requires `manage:users`; own tenant). */
   userSessions(userId: string): Promise<SessionView[]> {
@@ -545,6 +538,19 @@ export class UmamiClient {
 
 function enc(value: string): string {
   return encodeURIComponent(value);
+}
+
+/** Builds a `?limit=&cursor=` query string for the audit endpoints (omitting absent params). */
+function auditQs(limit?: number, cursor?: string): string {
+  const params = new URLSearchParams();
+  if (limit != null) {
+    params.set("limit", String(limit));
+  }
+  if (cursor) {
+    params.set("cursor", cursor);
+  }
+  const s = params.toString();
+  return s ? `?${s}` : "";
 }
 
 /** Builds a `?q=&limit=` query string for the list endpoints (omitting absent params). */

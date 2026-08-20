@@ -664,16 +664,20 @@ async fn reset_password(
 
 // ── Admin views of a user's activity (audit / sessions / logout) ────────────────────
 
-/// Optional `?limit=` for the per-user audit list (clamped to `1..=MAX_LIST_RESULTS`).
+/// Optional `?limit=` (clamped to `1..=MAX_LIST_RESULTS`) + `?cursor=` for the per-user audit list.
 #[derive(Deserialize, Debug)]
 struct LimitQuery {
     limit: Option<i32>,
+    cursor: Option<String>,
 }
 
-/// `{ entries }` — a user's audit trail.
+/// One page of a user's audit trail + the cursor for the next (absent when exhausted).
 #[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
 struct AuditListResponse {
     entries: Vec<AuditEntry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    next_cursor: Option<String>,
 }
 
 /// A user's login session as seen by an admin — never exposes the refresh secret/hash. `current`
@@ -798,8 +802,12 @@ async fn user_audit(
 ) -> anyhow::Result<AuditListResponse> {
     let user = scoped_user(&users, &user_id, &caller).await?;
     let limit = query.limit.unwrap_or(100).clamp(1, MAX_LIST_RESULTS as i32);
+    let (entries, next_cursor) = audit
+        .list_by_user(&user.user_id, limit, query.cursor.as_deref())
+        .await?;
     Ok(AuditListResponse {
-        entries: audit.list_by_user(&user.user_id, limit).await?,
+        entries,
+        next_cursor,
     })
 }
 

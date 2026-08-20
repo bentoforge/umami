@@ -1,4 +1,4 @@
-import type { CustomFieldDef } from "@bentoforge/umami-iam";
+import type { AuditEntry, CustomFieldDef } from "@bentoforge/umami-iam";
 import { EllipsisVerticalIcon } from "@heroicons/react/24/outline";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -33,6 +33,30 @@ export function formatDateTime(value: string | number | Date): string {
     return `${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()} ${time}`;
   }
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${time}`;
+}
+
+/** Renders audit entries as a severity-dotted list (message + timestamp). */
+export function AuditList({ entries }: { entries: AuditEntry[] }) {
+  const dot: Record<string, string> = {
+    good: "bg-emerald-500",
+    neutral: "bg-slate-400",
+    bad: "bg-red-500",
+  };
+  return (
+    <ul className="divide-y divide-slate-100 dark:divide-slate-700/50">
+      {entries.map((entry) => (
+        <li key={entry.id} className="flex items-start gap-3 py-2">
+          <span
+            className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${dot[entry.severity] ?? dot.neutral}`}
+          />
+          <div className="min-w-0">
+            <div className="text-sm text-slate-800 dark:text-slate-200">{entry.message}</div>
+            <div className="text-xs text-slate-400">{formatDateTime(entry.timestamp)}</div>
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 /** An on/off switch (the "Schieberle"). Controlled: `checked` + `onChange(next)`. */

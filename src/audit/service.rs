@@ -19,10 +19,11 @@ const DEFAULT_LIMIT: i32 = 100;
 
 const REQUIRE_ADMIN_TENANT: &[&str] = &[ADMIN_TENANT_PERMISSION];
 
-/// Optional `?limit=` (clamped to `1..=MAX_LIST_RESULTS`).
+/// Optional `?limit=` (clamped to `1..=MAX_LIST_RESULTS`) + `?cursor=` (resume after a prior page).
 #[derive(Deserialize, Debug)]
 struct AuditQuery {
     limit: Option<i32>,
+    cursor: Option<String>,
 }
 
 impl AuditQuery {
@@ -33,10 +34,13 @@ impl AuditQuery {
     }
 }
 
-/// Audit-list response.
+/// Audit-list response: one page + the cursor for the next (absent when the trail is exhausted).
 #[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
 struct AuditListResponse {
     entries: Vec<AuditEntry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    next_cursor: Option<String>,
 }
 
 /// `GET /tenants/{id}/audit[?limit=]` — the tenant's audit trail (requires `admin:tenant`, own tenant).
@@ -101,8 +105,12 @@ async fn tenant_audit(
             "You may only read your own tenant's audit log"
         );
     }
+    let (entries, next_cursor) = audit
+        .list_by_tenant(&tenant_id, query.effective(), query.cursor.as_deref())
+        .await?;
     Ok(AuditListResponse {
-        entries: audit.list_by_tenant(&tenant_id, query.effective()).await?,
+        entries,
+        next_cursor,
     })
 }
 
@@ -111,9 +119,15 @@ async fn my_audit(
     audit: Arc<dyn AuditRepository>,
     caller: AuthUser,
 ) -> anyhow::Result<AuditListResponse> {
+    let (entries, next_cursor) = audit
+        .list_by_user(
+            caller.user_id()?,
+            query.effective(),
+            query.cursor.as_deref(),
+        )
+        .await?;
     Ok(AuditListResponse {
-        entries: audit
-            .list_by_user(caller.user_id()?, query.effective())
-            .await?,
+        entries,
+        next_cursor,
     })
 }

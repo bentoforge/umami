@@ -424,6 +424,12 @@ export interface ResolvedMessagingUser {
 /** Outcome flavour of an audited event. */
 export type AuditSeverity = "good" | "neutral" | "bad";
 
+/** One page of audit entries plus the cursor to fetch the next (absent when the trail is exhausted). */
+export interface AuditPage {
+  entries: AuditEntry[];
+  nextCursor?: string;
+}
+
 export interface AuditEntry {
   id: string;
   /** RFC3339 event time. */

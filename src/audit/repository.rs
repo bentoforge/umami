@@ -11,7 +11,10 @@ use async_trait::async_trait;
 use aws_sdk_dynamodb::types::{
     BillingMode, GlobalSecondaryIndex, KeySchemaElement, KeyType, Projection, ProjectionType,
 };
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::{Duration, SecondsFormat, Utc};
+use std::collections::HashMap;
 use std::env;
 use wasabi::aws::dynamodb::client::DynamoClient;
 use wasabi::aws::dynamodb::schema::{str_attribute, with_hash_index};
@@ -35,11 +38,38 @@ pub trait AuditRepository: Send + Sync {
     /// Appends an audit entry (stamps `id`/`timestamp`/`ttl`).
     async fn record(&self, entry: NewAuditEntry) -> anyhow::Result<()>;
 
-    /// Lists a user's entries, newest first (capped by `limit`).
-    async fn list_by_user(&self, user_id: &str, limit: i32) -> anyhow::Result<Vec<AuditEntry>>;
+    /// One page of a user's entries, newest first (`limit` per page). `cursor` resumes after a prior
+    /// page; returns the page plus the next cursor (`None` when the trail is exhausted).
+    async fn list_by_user(
+        &self,
+        user_id: &str,
+        limit: i32,
+        cursor: Option<&str>,
+    ) -> anyhow::Result<(Vec<AuditEntry>, Option<String>)>;
 
-    /// Lists a tenant's entries, newest first (capped by `limit`).
-    async fn list_by_tenant(&self, tenant_id: &str, limit: i32) -> anyhow::Result<Vec<AuditEntry>>;
+    /// One page of a tenant's entries, newest first (`limit` per page). See [`list_by_user`].
+    async fn list_by_tenant(
+        &self,
+        tenant_id: &str,
+        limit: i32,
+        cursor: Option<&str>,
+    ) -> anyhow::Result<(Vec<AuditEntry>, Option<String>)>;
+}
+
+/// Opaque page cursor over `(timestamp, id)` — unique even across equal timestamps, since `id` is
+/// the table PK. Encoded base64url so it survives a query string untouched.
+fn encode_cursor(timestamp: &str, id: &str) -> String {
+    URL_SAFE_NO_PAD.encode(format!("{timestamp}|{id}"))
+}
+
+fn decode_cursor(cursor: &str) -> anyhow::Result<(String, String)> {
+    let raw = URL_SAFE_NO_PAD
+        .decode(cursor)
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .context("Invalid audit cursor")?;
+    let (timestamp, id) = raw.split_once('|').context("Invalid audit cursor")?;
+    Ok((timestamp.to_owned(), id.to_owned()))
 }
 
 /// DynamoDB-backed [`AuditRepository`].
@@ -81,17 +111,18 @@ impl DynamoAuditRepository {
         })
     }
 
-    /// Query one of the GSIs (hash on `key_field`, range `timestamp`), newest first.
-    async fn list_by(
+    /// Query one page of a GSI (hash on `key_field`, range `timestamp`), newest first. `.limit(n)`
+    /// caps what DynamoDB reads, and `cursor` resumes after a prior page via `ExclusiveStartKey` —
+    /// so we only ever read one page, never the whole trail. Returns the page + the next cursor.
+    async fn list_page(
         &self,
         index: &str,
         key_field: &str,
         key_value: &str,
         limit: i32,
-    ) -> anyhow::Result<Vec<AuditEntry>> {
-        // Single page only: `.limit(n)` caps what DynamoDB reads/returns, and one `send()` fetches
-        // just that first (newest-first) page — no pagination, so we never over-read to discard.
-        let result = self
+        cursor: Option<&str>,
+    ) -> anyhow::Result<(Vec<AuditEntry>, Option<String>)> {
+        let mut query = self
             .client
             .query(TABLE_AUDIT)
             .index_name(index)
@@ -99,17 +130,34 @@ impl DynamoAuditRepository {
             .expression_attribute_names("#k", key_field)
             .expression_attribute_values(":v", str(key_value))
             .scan_index_forward(false)
-            .limit(limit.max(1))
-            .send()
-            .await
-            .context("Error listing 'audit-log'")?;
+            .limit(limit.max(1));
 
-        result
+        if let Some(cursor) = cursor {
+            let (timestamp, id) = decode_cursor(cursor)?;
+            // A GSI query's LastEvaluatedKey carries the GSI keys + the table PK.
+            let start = HashMap::from([
+                (key_field.to_owned(), str(key_value)),
+                (FIELD_TIMESTAMP.to_owned(), str(&timestamp)),
+                (FIELD_ID.to_owned(), str(&id)),
+            ]);
+            query = query.set_exclusive_start_key(Some(start));
+        }
+
+        let result = query.send().await.context("Error listing 'audit-log'")?;
+        let has_more = result.last_evaluated_key.is_some();
+        let entries: Vec<AuditEntry> = result
             .items
             .unwrap_or_default()
             .into_iter()
             .filter_map(|item| deserialize_entity::<AuditEntry>(Some(item)).transpose())
-            .collect()
+            .collect::<anyhow::Result<_>>()?;
+
+        // Only offer a next cursor when DynamoDB says more may follow (and we have an anchor).
+        let next = match entries.last() {
+            Some(last) if has_more => Some(encode_cursor(&last.timestamp, &last.id)),
+            _ => None,
+        };
+        Ok((entries, next))
     }
 }
 
@@ -166,14 +214,24 @@ impl AuditRepository for DynamoAuditRepository {
     }
 
     #[tracing::instrument(level = "debug", skip(self), err(Display))]
-    async fn list_by_user(&self, user_id: &str, limit: i32) -> anyhow::Result<Vec<AuditEntry>> {
-        self.list_by(INDEX_BY_USER, FIELD_USER, user_id, limit)
+    async fn list_by_user(
+        &self,
+        user_id: &str,
+        limit: i32,
+        cursor: Option<&str>,
+    ) -> anyhow::Result<(Vec<AuditEntry>, Option<String>)> {
+        self.list_page(INDEX_BY_USER, FIELD_USER, user_id, limit, cursor)
             .await
     }
 
     #[tracing::instrument(level = "debug", skip(self), err(Display))]
-    async fn list_by_tenant(&self, tenant_id: &str, limit: i32) -> anyhow::Result<Vec<AuditEntry>> {
-        self.list_by(INDEX_BY_TENANT, FIELD_TENANT, tenant_id, limit)
+    async fn list_by_tenant(
+        &self,
+        tenant_id: &str,
+        limit: i32,
+        cursor: Option<&str>,
+    ) -> anyhow::Result<(Vec<AuditEntry>, Option<String>)> {
+        self.list_page(INDEX_BY_TENANT, FIELD_TENANT, tenant_id, limit, cursor)
             .await
     }
 }

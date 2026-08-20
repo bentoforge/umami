@@ -7,12 +7,12 @@ import type {
   SessionView,
   UserView,
 } from "@bentoforge/umami-iam";
-import { ArrowUpRightIcon } from "@heroicons/react/24/outline";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams } from "react-router-dom";
 import { useUmami } from "../auth/UmamiProvider";
 import {
+  AuditList,
   Banner,
   CustomFieldsForm,
   DropdownMenu,
@@ -24,6 +24,9 @@ import {
   Toggle,
 } from "../components";
 import { card, ghostButton, input, primaryButton, td, th } from "../ui";
+
+/** Page size for the audit "load more" list. */
+const AUDIT_PAGE = 10;
 
 /** Per-user edit view: details (read + inline edit), roles, recent audit, sessions, read-only PATs,
  * a change-tracking metadata box, and an in-app Back. */
@@ -447,60 +450,66 @@ function RolesCard({
   );
 }
 
-/** The user's most recent audit entries (last 5); a link to the full trail when there are more. */
+/** The user's audit entries, paged newest-first with a "load more" button. */
 function AuditCard({ userId }: { userId: string }) {
   const { client } = useUmami();
   const { t } = useTranslation();
-  const navigate = useNavigate();
-  // Fetch one more than we show so we know whether to offer "show all".
   const [entries, setEntries] = useState<AuditEntry[] | null>(null);
+  const [cursor, setCursor] = useState<string | undefined>(undefined);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
+    let alive = true;
     client
-      .userAudit(userId, 6)
-      .then(setEntries)
-      .catch(() => setEntries([]));
+      .userAudit(userId, AUDIT_PAGE)
+      .then((page) => {
+        if (alive) {
+          setEntries(page.entries);
+          setCursor(page.nextCursor);
+        }
+      })
+      .catch(() => {
+        if (alive) {
+          setEntries([]);
+        }
+      });
+    return () => {
+      alive = false;
+    };
   }, [client, userId]);
 
-  const dot: Record<string, string> = {
-    good: "bg-emerald-500",
-    neutral: "bg-slate-400",
-    bad: "bg-red-500",
+  const loadMore = async () => {
+    if (!cursor) {
+      return;
+    }
+    setBusy(true);
+    try {
+      const page = await client.userAudit(userId, AUDIT_PAGE, cursor);
+      setEntries((prev) => [...(prev ?? []), ...page.entries]);
+      setCursor(page.nextCursor);
+    } finally {
+      setBusy(false);
+    }
   };
-
-  const shown = entries?.slice(0, 5) ?? [];
-  const hasMore = (entries?.length ?? 0) > 5;
 
   return (
     <section className={`${card} space-y-3`}>
       <h2 className="font-medium text-slate-800 dark:text-slate-200">{t("users.auditTitle")}</h2>
       {entries === null ? (
         <Loader />
-      ) : shown.length === 0 ? (
+      ) : entries.length === 0 ? (
         <p className="text-sm text-slate-500">{t("users.noAudit")}</p>
       ) : (
         <>
-          <ul className="divide-y divide-slate-100 dark:divide-slate-700/50">
-            {shown.map((entry) => (
-              <li key={entry.id} className="flex items-start gap-3 py-2">
-                <span
-                  className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${dot[entry.severity] ?? dot.neutral}`}
-                />
-                <div className="min-w-0">
-                  <div className="text-sm text-slate-800 dark:text-slate-200">{entry.message}</div>
-                  <div className="text-xs text-slate-400">{formatDateTime(entry.timestamp)}</div>
-                </div>
-              </li>
-            ))}
-          </ul>
-          {hasMore && (
+          <AuditList entries={entries} />
+          {cursor && (
             <button
               type="button"
-              className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
-              onClick={() => navigate(`/audit?user=${encodeURIComponent(userId)}`)}
+              className="text-sm text-primary hover:underline disabled:opacity-50"
+              disabled={busy}
+              onClick={() => void loadMore()}
             >
-              <ArrowUpRightIcon className="h-4 w-4" />
-              {t("users.showAllActivity")}
+              {t("common.loadMore")}
             </button>
           )}
         </>

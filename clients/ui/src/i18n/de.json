@@ -5,7 +5,8 @@
   "common": {
     "loading": "Lade Daten…",
     "search": "Suchbegriff…",
-    "moreActions": "Weitere Aktionen"
+    "moreActions": "Weitere Aktionen",
+    "loadMore": "Mehr laden"
   },
   "nav": {
     "start": "Start",
