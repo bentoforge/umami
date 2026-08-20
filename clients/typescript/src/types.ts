@@ -93,8 +93,8 @@ export interface UserView extends NameParts {
   customFields: Record<string, unknown>;
   /** RFC3339 creation timestamp. */
   created: string;
-  /** RFC3339 timestamp of the user's last authentication (login/refresh). */
-  lastSeen: string;
+  /** RFC3339 timestamp of the user's last authentication (login/refresh); null until first active. */
+  lastSeen: string | null;
 }
 
 /** The editable structured name parts (all optional; omitted = unset, `""` clears). */
@@ -168,6 +168,8 @@ export interface Tenant {
   /** RFC3339 timestamp of the last token activity (refresh / exchange) scoped to this tenant;
    * null until the first activity. */
   lastActive?: string | null;
+  /** Sort key backing the tenant listing: `lastActive` when present, else `created`. */
+  lastActiveOrCreated?: string;
   /** User id that created this tenant (audit; not surfaced in the UI yet). */
   createdBy?: string | null;
   /** User id of the last change to this tenant (audit; not surfaced in the UI yet). */

@@ -104,7 +104,7 @@ struct UserView {
     locked: bool,
     custom_fields: BTreeMap<String, Value>,
     created: DateTime<Utc>,
-    last_seen: DateTime<Utc>,
+    last_seen: Option<DateTime<Utc>>,
 }
 
 impl UserView {

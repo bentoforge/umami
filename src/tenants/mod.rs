@@ -42,6 +42,12 @@ pub struct Tenant {
     /// refresh / downstream exchange and on an m2m api-key exchange. `None` until first activity.
     #[serde(default)]
     pub last_active: Option<DateTime<Utc>>,
+    /// Range key of the listing GSI: `last_active` when present, else `created`. Initialised to
+    /// `created` and bumped on every activity, so a `scan_index_forward(false)` query returns active
+    /// tenants first and keeps inactive ones stably ordered by creation. Defaults to the epoch for
+    /// records written before this field existed.
+    #[serde(default = "epoch")]
+    pub last_active_or_created: DateTime<Utc>,
     /// User id that created this tenant (audit; not surfaced in the UI yet). `None` for the
     /// system/auto-init tenant.
     #[serde(default)]
@@ -50,6 +56,11 @@ pub struct Tenant {
     /// surfaced in the UI yet).
     #[serde(default)]
     pub last_changed_by: Option<String>,
+}
+
+/// The Unix epoch — the `last_active_or_created` fallback for records predating the field.
+fn epoch() -> DateTime<Utc> {
+    DateTime::UNIX_EPOCH
 }
 
 /// Derives a URL-friendly slug from a display name: lowercase, non-alphanumerics collapsed to

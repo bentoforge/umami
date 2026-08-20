@@ -24,11 +24,12 @@ const FIELD_TENANT_ID: &str = "tenantId";
 /// Optimistic-concurrency attribute.
 const FIELD_VERSION: &str = "version";
 
-/// `lastUpdated` attribute — range key of the listing GSI (sort tenants newest-first).
-const FIELD_LAST_UPDATED: &str = "lastUpdated";
-
 /// `lastActive` attribute — bumped by [`TenantRepository::touch_last_active`] on token activity.
 const FIELD_LAST_ACTIVE: &str = "lastActive";
+
+/// `lastActiveOrCreated` attribute — range key of the listing GSI (`last_active` else `created`;
+/// bumped on activity), so tenants sort activity-first and inactive ones stably by creation.
+const FIELD_LAST_ACTIVE_OR_CREATED: &str = "lastActiveOrCreated";
 
 /// Constant partition attribute injected at write time so all tenants share one GSI partition,
 /// making "list every tenant, sorted by `lastUpdated`" a single query (no table scan). Kept out of
@@ -38,8 +39,8 @@ const FIELD_LIST_SHARD: &str = "listShard";
 /// The single value written to [`FIELD_LIST_SHARD`].
 const LIST_SHARD_VALUE: &str = "tenant";
 
-/// GSI listing all tenants ordered by `lastUpdated`.
-const INDEX_BY_LAST_UPDATED: &str = "ByLastUpdatedIndex";
+/// GSI listing all tenants ordered by `lastActiveOrCreated`.
+const INDEX_BY_LAST_ACTIVE: &str = "ByLastActiveIndex";
 
 /// Page size for the listing query (paginated internally by `find_all`).
 const LIST_PAGE_SIZE: i32 = 100;
@@ -94,8 +95,8 @@ impl DynamoTenantRepository {
     pub async fn with_client(client: &DynamoClient) -> anyhow::Result<Self> {
         client
             .create_table(TABLE_TENANTS, |table| {
-                let by_last_updated = GlobalSecondaryIndex::builder()
-                    .index_name(INDEX_BY_LAST_UPDATED)
+                let by_last_active = GlobalSecondaryIndex::builder()
+                    .index_name(INDEX_BY_LAST_ACTIVE)
                     .key_schema(
                         KeySchemaElement::builder()
                             .attribute_name(FIELD_LIST_SHARD)
@@ -104,7 +105,7 @@ impl DynamoTenantRepository {
                     )
                     .key_schema(
                         KeySchemaElement::builder()
-                            .attribute_name(FIELD_LAST_UPDATED)
+                            .attribute_name(FIELD_LAST_ACTIVE_OR_CREATED)
                             .key_type(KeyType::Range)
                             .build()?,
                     )
@@ -118,11 +119,11 @@ impl DynamoTenantRepository {
                 let table = table
                     .attribute_definitions(str_attribute(FIELD_TENANT_ID)?)
                     .attribute_definitions(str_attribute(FIELD_LIST_SHARD)?)
-                    .attribute_definitions(str_attribute(FIELD_LAST_UPDATED)?);
+                    .attribute_definitions(str_attribute(FIELD_LAST_ACTIVE_OR_CREATED)?);
                 let table = with_hash_index(table, FIELD_TENANT_ID)?;
 
                 Ok(table
-                    .global_secondary_indexes(by_last_updated)
+                    .global_secondary_indexes(by_last_active)
                     .billing_mode(BillingMode::PayPerRequest))
             })
             .await?;
@@ -165,6 +166,7 @@ impl TenantRepository for DynamoTenantRepository {
             created: now,
             last_updated: now,
             last_active: None,
+            last_active_or_created: now,
             created_by: created_by.map(str::to_owned),
             last_changed_by: created_by.map(str::to_owned),
         };
@@ -207,7 +209,7 @@ impl TenantRepository for DynamoTenantRepository {
         let query = self
             .client
             .query(TABLE_TENANTS)
-            .index_name(INDEX_BY_LAST_UPDATED)
+            .index_name(INDEX_BY_LAST_ACTIVE)
             .key_condition_expression("#shard = :shard")
             .expression_attribute_names("#shard", FIELD_LIST_SHARD)
             .expression_attribute_values(":shard", str(LIST_SHARD_VALUE))
@@ -260,10 +262,11 @@ impl TenantRepository for DynamoTenantRepository {
             .client
             .update_item(TABLE_TENANTS)
             .key(FIELD_TENANT_ID, str(tenant_id))
-            .update_expression("SET #lastActive = :now")
+            .update_expression("SET #lastActive = :now, #lastActiveOrCreated = :now")
             .condition_expression("attribute_exists(#tenantId)")
             .expression_attribute_names("#tenantId", FIELD_TENANT_ID)
             .expression_attribute_names("#lastActive", FIELD_LAST_ACTIVE)
+            .expression_attribute_names("#lastActiveOrCreated", FIELD_LAST_ACTIVE_OR_CREATED)
             .expression_attribute_values(
                 ":now",
                 str(Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)),

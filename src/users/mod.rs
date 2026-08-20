@@ -97,14 +97,19 @@ pub struct User {
     pub created: chrono::DateTime<chrono::Utc>,
     /// RFC 3339 timestamp of the last update to this record.
     pub last_updated: chrono::DateTime<chrono::Utc>,
-    /// RFC 3339 timestamp of the user's last authentication (login or refresh); range key of the
-    /// per-tenant listing GSI so a tenant's users sort by recency of activity. Defaults to the
-    /// epoch for records written before this field existed.
+    /// RFC 3339 timestamp of the user's last authentication (login or refresh). `None` until the
+    /// user is first active — never a placeholder like the creation time.
+    #[serde(default)]
+    pub last_seen: Option<chrono::DateTime<chrono::Utc>>,
+    /// Range key of the per-tenant listing GSI: `last_seen` when present, else `created`. Initialised
+    /// to `created` and bumped on every activity, so a `scan_index_forward(false)` query returns
+    /// active users first and keeps inactive ones stably ordered by creation. Defaults to the epoch
+    /// for records written before this field existed.
     #[serde(default = "epoch")]
-    pub last_seen: chrono::DateTime<chrono::Utc>,
+    pub last_active_or_created: chrono::DateTime<chrono::Utc>,
 }
 
-/// The Unix epoch — the `last_seen` fallback for user records predating the field.
+/// The Unix epoch — the `last_active_or_created` fallback for user records predating the field.
 fn epoch() -> chrono::DateTime<chrono::Utc> {
     chrono::DateTime::UNIX_EPOCH
 }

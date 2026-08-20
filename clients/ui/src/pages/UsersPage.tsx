@@ -177,9 +177,7 @@ export function UsersPage() {
                     </td>
                     <td className={td}>{user.roles.join(", ") || "—"}</td>
                     <td className={td}>{user.locked ? "Locked" : "—"}</td>
-                    <td className={td}>
-                      {new Date(user.lastSeen).getTime() > 0 ? formatDateTime(user.lastSeen) : "—"}
-                    </td>
+                    <td className={td}>{user.lastSeen ? formatDateTime(user.lastSeen) : "—"}</td>
                     {tableDefs.map((def) => (
                       <td key={def.key} className={td}>
                         {formatFieldValue(user.customFields[def.key])}

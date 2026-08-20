@@ -41,8 +41,12 @@ const FIELD_TOKEN_VERSION: &str = "tokenVersion";
 /// RFC 3339 last-update attribute.
 const FIELD_LAST_UPDATED: &str = "lastUpdated";
 
-/// RFC 3339 last-authentication attribute — range key of `ByTenantIndex` (sort users by recency).
+/// RFC 3339 last-authentication attribute — absent until the user is first active.
 const FIELD_LAST_SEEN: &str = "lastSeen";
+
+/// `lastActiveOrCreated` attribute — range key of `ByTenantIndex` (`last_seen` else `created`;
+/// bumped on activity), so a tenant's users sort activity-first, inactive ones stably by creation.
+const FIELD_LAST_ACTIVE_OR_CREATED: &str = "lastActiveOrCreated";
 
 /// Hash key of the `user-usernames` guard table (holds the normalized username).
 const FIELD_USERNAME: &str = "username";
@@ -138,7 +142,7 @@ impl DynamoUserRepository {
                     )
                     .key_schema(
                         KeySchemaElement::builder()
-                            .attribute_name(FIELD_LAST_SEEN)
+                            .attribute_name(FIELD_LAST_ACTIVE_OR_CREATED)
                             .key_type(KeyType::Range)
                             .build()?,
                     )
@@ -152,7 +156,7 @@ impl DynamoUserRepository {
                 let table = table
                     .attribute_definitions(str_attribute(FIELD_USER_ID)?)
                     .attribute_definitions(str_attribute(FIELD_TENANT_ID)?)
-                    .attribute_definitions(str_attribute(FIELD_LAST_SEEN)?);
+                    .attribute_definitions(str_attribute(FIELD_LAST_ACTIVE_OR_CREATED)?);
                 let table = with_hash_index(table, FIELD_USER_ID)?;
 
                 Ok(table
@@ -208,7 +212,8 @@ impl UserRepository for DynamoUserRepository {
             custom_fields: new_user.custom_fields,
             created: now,
             last_updated: now,
-            last_seen: now,
+            last_seen: None,
+            last_active_or_created: now,
         };
 
         // Claim the username first: a conditional put fails if it's already taken, giving strict
@@ -347,10 +352,11 @@ impl UserRepository for DynamoUserRepository {
             .client
             .update_item(TABLE_USERS)
             .key(FIELD_USER_ID, str(user_id))
-            .update_expression("SET #lastSeen = :now")
+            .update_expression("SET #lastSeen = :now, #lastActiveOrCreated = :now")
             .condition_expression("attribute_exists(#userId)")
             .expression_attribute_names("#userId", FIELD_USER_ID)
             .expression_attribute_names("#lastSeen", FIELD_LAST_SEEN)
+            .expression_attribute_names("#lastActiveOrCreated", FIELD_LAST_ACTIVE_OR_CREATED)
             .expression_attribute_values(
                 ":now",
                 str(Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)),

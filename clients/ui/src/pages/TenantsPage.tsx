@@ -107,7 +107,7 @@ export function TenantsPage() {
                     {def.label}
                   </th>
                 ))}
-                <th className={th}>{t("tenants.colUpdated")}</th>
+                <th className={th}>{t("tenants.lastActive")}</th>
                 <th className={`${th} text-right`}>
                   <span className="sr-only">{t("tenants.actions")}</span>
                 </th>
@@ -139,10 +139,7 @@ export function TenantsPage() {
                     </td>
                   ))}
                   <td className={`${td} whitespace-nowrap`}>
-                    <div>{formatDateTime(tenant.lastUpdated)}</div>
-                    <div className="text-xs text-slate-400">
-                      {tenant.lastActive ? formatDateTime(tenant.lastActive) : "—"}
-                    </div>
+                    {tenant.lastActive ? formatDateTime(tenant.lastActive) : "—"}
                   </td>
                   <td className={`${td} text-right whitespace-nowrap`}>
                     <DropdownMenu
