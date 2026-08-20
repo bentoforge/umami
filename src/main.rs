@@ -392,6 +392,7 @@ async fn app() -> anyhow::Result<()> {
             user_repository.clone(),
             tenant_repository.clone(),
             config_repository.clone(),
+            audit_repository.clone(),
             authenticator.clone()
         ),
         delete_user_route(user_repository.clone(), authenticator.clone()),

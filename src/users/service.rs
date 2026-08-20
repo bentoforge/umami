@@ -253,6 +253,7 @@ pub fn patch_user_route(
     users: Arc<dyn UserRepository>,
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
+    audit: Arc<dyn AuditRepository>,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("users" / String)
@@ -261,6 +262,7 @@ pub fn patch_user_route(
         .and(with_cloneable(users))
         .and(with_cloneable(tenants))
         .and(with_cloneable(config))
+        .and(with_cloneable(audit))
         .and(with_user_with_any_permission(
             authenticator,
             REQUIRE_MANAGE_USERS,
@@ -361,9 +363,10 @@ async fn handle_patch_user_route(
     users: Arc<dyn UserRepository>,
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
+    audit: Arc<dyn AuditRepository>,
     caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(patch_user(user_id, request, users, tenants, config, caller).await)
+    into_response(patch_user(user_id, request, users, tenants, config, audit, caller).await)
 }
 
 #[tracing::instrument(level = "debug", name = "DELETE /users/{id}", skip_all)]
@@ -525,6 +528,7 @@ async fn patch_user(
     users: Arc<dyn UserRepository>,
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
+    audit: Arc<dyn AuditRepository>,
     caller: AuthUser,
 ) -> anyhow::Result<UserView> {
     let tenant_id = caller.tenant_id()?;
@@ -534,6 +538,8 @@ async fn patch_user(
         Some(user) if user.tenant_id == tenant_id => user,
         _ => client_bail!("No such user in this tenant"),
     };
+    // Remember whether this request flips the lock state — a security event worth auditing.
+    let lock_event = request.locked.filter(|&locked| locked != user.locked);
 
     let config = config.current().await?;
     if let Some(username) = request.username {
@@ -581,6 +587,30 @@ async fn patch_user(
     user.last_changed_by = Some(caller.user_id()?.to_owned());
 
     let updated = users.put_user(user).await?;
+
+    // Audit a lock/unlock (best-effort). Locking reads as "bad" (access removed), unlocking "good".
+    if let Some(locked) = lock_event {
+        let action = if locked { "locked" } else { "unlocked" };
+        record_best_effort(
+            &audit,
+            NewAuditEntry::new(
+                if locked {
+                    AuditSeverity::Bad
+                } else {
+                    AuditSeverity::Good
+                },
+                Some(updated.tenant_id.clone()),
+                Some(updated.user_id.clone()),
+                format!(
+                    "User '{}' {action} by admin {}",
+                    updated.username,
+                    caller.user_id()?
+                ),
+            ),
+        )
+        .await;
+    }
+
     Ok(UserView::build(updated, &config.salutations))
 }
 
