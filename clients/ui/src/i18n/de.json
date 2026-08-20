@@ -42,7 +42,6 @@
     "detailsTitle": "Stammdaten",
     "rolesTitle": "Rollen",
     "auditTitle": "Letzte Aktivitäten",
-    "showAllActivity": "Alle Aktivitäten anzeigen",
     "sessionsTitle": "Sitzungen",
     "logoutAll": "Überall abmelden",
     "logoutAllConfirm": "Alle Sitzungen von „{{name}}“ beenden? Alle Geräte verlieren beim nächsten Refresh den Zugang.",
@@ -82,7 +81,6 @@
   },
   "login": {
     "heading": "Anmelden",
-    "email": "E-Mail",
     "username": "Benutzername",
     "password": "Passwort",
     "totp": "Authenticator-Code",
@@ -92,22 +90,12 @@
     "failed": "Anmeldung fehlgeschlagen"
   },
   "dashboard": {
-    "signedInAs": "Angemeldet als",
-    "tenant": "Mandant",
-    "role": "Rollen",
-    "permissions": "Berechtigungen",
-    "registerPasskey": "Passkey registrieren",
-    "logout": "Abmelden",
-    "logoutAll": "Überall abmelden",
     "passkeyAdded": "Passkey registriert."
   },
   "tenants": {
     "title": "Mandanten",
-    "search": "Name, Kundennr., Adresse suchen…",
     "new": "Neuer Mandant",
     "colName": "Name",
-    "colUpdated": "Zuletzt aktualisiert",
-    "loading": "Lädt…",
     "empty": "Keine Mandanten.",
     "truncated": "Es werden die ersten {{count}} Treffer angezeigt — Suche verfeinern, um die Liste einzugrenzen.",
     "system": "System",
@@ -120,7 +108,6 @@
     "create": "Erstellen",
     "cancel": "Abbrechen",
     "nameLabel": "Name",
-    "created": "Mandant erstellt.",
     "editTitle": "Mandant bearbeiten",
     "detailsTitle": "Stammdaten",
     "lastActive": "Zuletzt aktiv",
@@ -131,10 +118,7 @@
     "save": "Speichern",
     "saved": "Änderungen gespeichert.",
     "featuresTitle": "Merkmale verwalten",
-    "featuresGranted": "Zugewiesene Merkmale",
-    "featuresGrantable": "Jetzt zuweisbar",
     "featuresNone": "keine",
-    "featuresNothing": "nichts weiteres zuweisbar",
     "back": "Zurück",
     "notFound": "Mandant nicht gefunden."
   },

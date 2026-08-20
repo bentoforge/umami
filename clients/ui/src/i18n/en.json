@@ -42,7 +42,6 @@
     "detailsTitle": "Details",
     "rolesTitle": "Roles",
     "auditTitle": "Recent activity",
-    "showAllActivity": "Show all activity",
     "sessionsTitle": "Sessions",
     "logoutAll": "Log out everywhere",
     "logoutAllConfirm": "End all sessions of “{{name}}”? Every device loses access on its next refresh.",
@@ -82,7 +81,6 @@
   },
   "login": {
     "heading": "Sign in",
-    "email": "Email",
     "username": "Username",
     "password": "Password",
     "totp": "Authenticator code",
@@ -92,22 +90,12 @@
     "failed": "Sign-in failed"
   },
   "dashboard": {
-    "signedInAs": "Signed in as",
-    "tenant": "Tenant",
-    "role": "Roles",
-    "permissions": "Permissions",
-    "registerPasskey": "Register a passkey",
-    "logout": "Log out",
-    "logoutAll": "Log out everywhere",
     "passkeyAdded": "Passkey registered."
   },
   "tenants": {
     "title": "Tenants",
-    "search": "Search name, customer no., address…",
     "new": "New tenant",
     "colName": "Name",
-    "colUpdated": "Last updated",
-    "loading": "Loading…",
     "empty": "No tenants.",
     "truncated": "Showing the first {{count}} matches — refine your search to narrow the list.",
     "system": "System",
@@ -120,7 +108,6 @@
     "create": "Create",
     "cancel": "Cancel",
     "nameLabel": "Name",
-    "created": "Tenant created.",
     "editTitle": "Edit tenant",
     "detailsTitle": "Details",
     "lastActive": "Last active",
@@ -131,10 +118,7 @@
     "save": "Save",
     "saved": "Changes saved.",
     "featuresTitle": "Manage features",
-    "featuresGranted": "Granted features",
-    "featuresGrantable": "Grantable now",
     "featuresNone": "none",
-    "featuresNothing": "nothing else grantable",
     "back": "Back",
     "notFound": "Tenant not found."
   },
