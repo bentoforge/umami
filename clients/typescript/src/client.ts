@@ -534,6 +534,11 @@ export class UmamiClient {
   async deleteMyPat(keyId: string): Promise<void> {
     await this.request(`/auth/me/api-keys/${enc(keyId)}`, { method: "DELETE" });
   }
+  /** A tenant user's personal access tokens, read-only (requires `manage:users`; own tenant). */
+  async listUserPats(userId: string): Promise<ApiKeyView[]> {
+    const data = await this.request<{ keys: ApiKeyView[] }>(`/users/${enc(userId)}/pats`);
+    return data.keys;
+  }
 }
 
 function enc(value: string): string {

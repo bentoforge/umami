@@ -436,25 +436,18 @@ function SessionsCard({ user, onError }: { user: UserView; onError: (msg: string
   );
 }
 
-/** Read-only list of the user's personal access tokens (needs `manage:service-keys` to read). */
+/** Read-only list of the user's personal access tokens (requires `manage:users`). */
 function PatsCard({ userId }: { userId: string }) {
-  const { client, me, activeTenantId } = useUmami();
+  const { client } = useUmami();
   const { t } = useTranslation();
   const [pats, setPats] = useState<ApiKeyView[] | null>(null);
 
-  const canRead = client.hasPermission("manage:service-keys");
-  const tenantId = activeTenantId ?? me?.user.tenantId;
-
   useEffect(() => {
-    if (!canRead || !tenantId) {
-      setPats([]);
-      return;
-    }
     client
-      .listApiKeys(tenantId)
-      .then((keys) => setPats(keys.filter((k) => k.userId === userId)))
+      .listUserPats(userId)
+      .then(setPats)
       .catch(() => setPats([]));
-  }, [client, tenantId, userId, canRead]);
+  }, [client, userId]);
 
   return (
     <section className={`${card} overflow-x-auto`}>

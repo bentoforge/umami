@@ -57,7 +57,7 @@ use crate::audit::service::{my_audit_route, tenant_audit_route};
 use crate::auth::apikeys::repository::{ApiKeyRepository, DynamoApiKeyRepository};
 use crate::auth::apikeys::{
     create_api_key_route, create_my_pat_route, delete_api_key_route, delete_my_pat_route,
-    exchange_route, list_api_keys_route, list_my_pats_route,
+    exchange_route, list_api_keys_route, list_my_pats_route, list_user_pats_route,
 };
 use crate::auth::exchange::{ExchangeDeps, exchange_route as user_exchange_route};
 use crate::auth::login::{login_route, logout_route, refresh_route};
@@ -300,6 +300,7 @@ async fn app() -> anyhow::Result<()> {
             authenticator.clone()
         ),
         list_api_keys_route(api_key_repository.clone(), authenticator.clone()),
+        list_user_pats_route(api_key_repository.clone(), authenticator.clone()),
         delete_api_key_route(api_key_repository.clone(), authenticator.clone()),
         // personal access tokens (self-service)
         create_my_pat_route(api_key_repository.clone(), authenticator.clone()),

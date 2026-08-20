@@ -21,7 +21,10 @@ use crate::auth::broker::{MintParams, mint_for_api};
 use crate::auth::session::{generate_refresh_secret, hash_refresh_secret, verify_refresh_secret};
 use crate::auth::tokens::TokenIssuer;
 use crate::config::repository::ConfigRepository;
-use crate::constants::{MANAGE_PAT_PERMISSION, MANAGE_SERVICE_KEYS_PERMISSION, MAX_TEXT_BODY_SIZE};
+use crate::constants::{
+    MANAGE_PAT_PERMISSION, MANAGE_SERVICE_KEYS_PERMISSION, MANAGE_USERS_PERMISSION,
+    MAX_TEXT_BODY_SIZE,
+};
 use crate::tenants::repository::TenantRepository;
 use crate::users::repository::UserRepository;
 use anyhow::Context;
@@ -48,6 +51,9 @@ const KEY_ID_LEN: usize = 32;
 
 /// Permission required to manage a tenant's service keys.
 const REQUIRE_MANAGE_SERVICE_KEYS: &[&str] = &[MANAGE_SERVICE_KEYS_PERMISSION];
+
+/// Permission required to read a tenant user's personal access tokens (admin, read-only view).
+const REQUIRE_MANAGE_USERS: &[&str] = &[MANAGE_USERS_PERMISSION];
 
 /// Permission required to manage one's own personal access tokens.
 const REQUIRE_MANAGE_PAT: &[&str] = &[MANAGE_PAT_PERMISSION];
@@ -233,6 +239,23 @@ pub fn list_api_keys_route(
         .boxed()
 }
 
+/// `GET /users/{id}/pats` — a tenant user's personal access tokens, read-only (requires
+/// `manage:users`). PATs are user-centric; tenant service keys live under `/tenants/{id}/api-keys`.
+pub fn list_user_pats_route(
+    keys: Arc<dyn ApiKeyRepository>,
+    authenticator: Arc<Authenticator>,
+) -> BoxedFilter<(impl warp::Reply,)> {
+    warp::path!("users" / String / "pats")
+        .and(warp::get())
+        .and(with_cloneable(keys))
+        .and(with_user_with_any_permission(
+            authenticator,
+            REQUIRE_MANAGE_USERS,
+        ))
+        .and_then(handle_list_user_pats_route)
+        .boxed()
+}
+
 /// `DELETE /tenants/{id}/api-keys/{keyId}` — revoke a key (requires `manage:service-keys`).
 pub fn delete_api_key_route(
     keys: Arc<dyn ApiKeyRepository>,
@@ -386,6 +409,33 @@ async fn handle_list_api_keys_route(
     caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
     into_response(list_api_keys(tenant_id, keys, caller).await)
+}
+
+#[tracing::instrument(level = "debug", name = "GET /users/{id}/pats", skip_all)]
+async fn handle_list_user_pats_route(
+    user_id: String,
+    keys: Arc<dyn ApiKeyRepository>,
+    caller: AuthUser,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    into_response(list_user_pats(user_id, keys, caller).await)
+}
+
+/// Lists a user's PATs by scanning the caller's tenant keys (which scopes the result to the caller's
+/// tenant) and keeping the ones acting as that user. Read-only.
+async fn list_user_pats(
+    user_id: String,
+    keys: Arc<dyn ApiKeyRepository>,
+    caller: AuthUser,
+) -> anyhow::Result<ApiKeyListResponse> {
+    let tenant_id = caller.tenant_id()?;
+    let list = keys.list_by_tenant(tenant_id).await?;
+    Ok(ApiKeyListResponse {
+        keys: list
+            .into_iter()
+            .filter(|key| key.user_id.as_deref() == Some(user_id.as_str()))
+            .map(ApiKeyView::from)
+            .collect(),
+    })
 }
 
 #[tracing::instrument(
