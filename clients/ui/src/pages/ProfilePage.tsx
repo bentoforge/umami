@@ -25,11 +25,13 @@ import { card, dangerButton, ghostButton, input, primaryButton } from "../ui";
 /** Profile: base data (editable), recent activity, sessions, security, and personal tokens. */
 export function ProfilePage() {
   const { client, me } = useUmami();
+  const { t } = useTranslation();
 
   if (!me) return null;
 
   return (
     <div className="space-y-6">
+      <h1 className="text-xl font-semibold text-slate-900 dark:text-white">{t("profile.title")}</h1>
       <BaseDataCard />
       <AuditCard />
       <SessionsPanel />

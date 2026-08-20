@@ -98,7 +98,11 @@ impl DynamoAuditRepository {
             .expression_attribute_values(":v", str(key_value))
             .scan_index_forward(false)
             .limit(limit.max(1));
-        find_all(query).await.context("Error listing 'audit-log'")
+        // `.limit(..)` is only the page size; `find_all` paginates every page. Truncate to the
+        // requested cap so callers get at most `limit` (newest-first) entries.
+        let mut entries = find_all(query).await.context("Error listing 'audit-log'")?;
+        entries.truncate(limit.max(1) as usize);
+        Ok(entries)
     }
 }
 

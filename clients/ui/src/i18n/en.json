@@ -138,6 +138,7 @@
     "notFound": "Tenant not found."
   },
   "profile": {
+    "title": "Your profile",
     "detailsTitle": "Details",
     "saved": "Profile updated.",
     "securityTitle": "Security",

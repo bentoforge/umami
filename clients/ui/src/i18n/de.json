@@ -138,6 +138,7 @@
     "notFound": "Mandant nicht gefunden."
   },
   "profile": {
+    "title": "Ihr Benutzerprofil",
     "detailsTitle": "Stammdaten",
     "saved": "Profil aktualisiert.",
     "securityTitle": "Sicherheit",
