@@ -511,6 +511,7 @@ async fn maybe_auto_init(
             lastname: Some("Root Admin".to_owned()),
             password_hash: Some(password_hash),
             custom_fields: std::collections::BTreeMap::new(),
+            created_by: None,
         })
         .await?;
 

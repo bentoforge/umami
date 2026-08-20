@@ -16,7 +16,7 @@ use crate::constants::{
 use crate::search::{query_matches, value_search_text};
 use crate::tenants::repository::TenantRepository;
 use crate::users::repository::{NewUser, UserRepository};
-use crate::users::{DisplayNames, Salutation, User, normalize_name};
+use crate::users::{DisplayNames, Salutation, User, normalize_email, normalize_name};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -61,6 +61,10 @@ struct CreateUserRequest {
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct PatchUserRequest {
+    /// New login username (globally unique). Absent = unchanged; must not be empty.
+    username: Option<String>,
+    /// Contact email. Absent = unchanged; empty string clears it.
+    email: Option<String>,
     roles: Option<Vec<String>>,
     locked: Option<bool>,
     title: Option<String>,
@@ -106,7 +110,11 @@ struct UserView {
     locked: bool,
     custom_fields: BTreeMap<String, Value>,
     created: DateTime<Utc>,
+    last_updated: DateTime<Utc>,
     last_seen: Option<DateTime<Utc>>,
+    /// User id that created / last changed this user (audit; not surfaced in the UI yet).
+    created_by: Option<String>,
+    last_changed_by: Option<String>,
     /// Whether TOTP MFA is configured (secret confirmed) — never exposes the secret.
     mfa_enabled: bool,
     /// Whether the current password came from an admin reset and the user has not changed it since.
@@ -143,7 +151,10 @@ impl UserView {
             locked: user.locked,
             custom_fields: user.custom_fields,
             created: user.created,
+            last_updated: user.last_updated,
             last_seen: user.last_seen,
+            created_by: user.created_by,
+            last_changed_by: user.last_changed_by,
         }
     }
 }
@@ -413,6 +424,7 @@ async fn create_user(
             lastname: request.lastname,
             password_hash: Some(password_hash),
             custom_fields,
+            created_by: Some(caller.user_id()?.to_owned()),
         })
         .await?;
 
@@ -501,6 +513,25 @@ async fn patch_user(
     };
 
     let config = config.current().await?;
+    if let Some(username) = request.username {
+        let username = username.trim().to_owned();
+        if username.is_empty() {
+            client_bail!("Username must not be empty");
+        }
+        // Move the uniqueness guard (fails if taken), then record the new login name.
+        users
+            .rename_username(&user.user_id, &user.username, &username)
+            .await?;
+        user.username = username;
+    }
+    if let Some(email) = request.email {
+        let email = email.trim();
+        user.email = if email.is_empty() {
+            None
+        } else {
+            Some(normalize_email(email))
+        };
+    }
     if let Some(roles) = request.roles {
         validate_roles(&config, &tenants, tenant_id, &roles).await?;
         user.roles = roles;
@@ -524,6 +555,7 @@ async fn patch_user(
         Config::validate_custom_fields(&config.custom_user_fields, &custom_fields)?;
         user.custom_fields = custom_fields;
     }
+    user.last_changed_by = Some(caller.user_id()?.to_owned());
 
     let updated = users.put_user(user).await?;
     Ok(UserView::build(updated, &config.salutations))

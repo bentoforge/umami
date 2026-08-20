@@ -2,6 +2,7 @@ import type {
   ApiKeyView,
   AuditEntry,
   CustomFieldDef,
+  RoleDef,
   Salutation,
   SessionView,
   UserView,
@@ -12,13 +13,13 @@ import { useNavigate, useParams } from "react-router-dom";
 import { useUmami } from "../auth/UmamiProvider";
 import {
   Banner,
-  CheckboxTags,
   CustomFieldsForm,
   errMsg,
   Field,
   formatDateTime,
   formatFieldValue,
   Loader,
+  Toggle,
 } from "../components";
 import { card, ghostButton, input, primaryButton, td, th } from "../ui";
 
@@ -130,6 +131,8 @@ function DetailsCard({
   const { client } = useUmami();
   const { t } = useTranslation();
   const [editing, setEditing] = useState(false);
+  const [username, setUsername] = useState(user.username);
+  const [email, setEmail] = useState(user.email ?? "");
   const [title, setTitle] = useState(user.title ?? "");
   const [salutation, setSalutation] = useState<Salutation>(user.salutation);
   const [firstname, setFirstname] = useState(user.firstname ?? "");
@@ -138,7 +141,9 @@ function DetailsCard({
   const [fields, setFields] = useState<Record<string, unknown>>({ ...user.customFields });
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
+  const reset = useCallback(() => {
+    setUsername(user.username);
+    setEmail(user.email ?? "");
     setTitle(user.title ?? "");
     setSalutation(user.salutation);
     setFirstname(user.firstname ?? "");
@@ -147,14 +152,11 @@ function DetailsCard({
     setFields({ ...user.customFields });
   }, [user]);
 
+  useEffect(() => reset(), [reset]);
+
   const cancel = () => {
     setEditing(false);
-    setTitle(user.title ?? "");
-    setSalutation(user.salutation);
-    setFirstname(user.firstname ?? "");
-    setLastname(user.lastname ?? "");
-    setLocked(user.locked);
-    setFields({ ...user.customFields });
+    reset();
   };
 
   const save = async () => {
@@ -162,6 +164,8 @@ function DetailsCard({
     onError("");
     try {
       await client.patchUser(user.userId, {
+        username,
+        email,
         title,
         salutation,
         firstname,
@@ -194,6 +198,21 @@ function DetailsCard({
       {editing ? (
         <>
           <div className="grid grid-cols-2 gap-3">
+            <Field label={t("users.username")}>
+              <input
+                className={input}
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+              />
+            </Field>
+            <Field label={t("users.email")}>
+              <input
+                className={input}
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </Field>
             <Field label={t("users.salutation")}>
               <select
                 className={input}
@@ -248,10 +267,9 @@ function DetailsCard({
         <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-2 text-sm">
           <DetailRow label={t("users.username")}>{user.username}</DetailRow>
           <DetailRow label={t("users.email")}>{user.email ?? "—"}</DetailRow>
-          <DetailRow label={t("users.salutation")}>{user.salutation || "—"}</DetailRow>
-          <DetailRow label={t("users.nameTitle")}>{user.title ?? "—"}</DetailRow>
-          <DetailRow label={t("users.firstname")}>{user.firstname ?? "—"}</DetailRow>
-          <DetailRow label={t("users.lastname")}>{user.lastname ?? "—"}</DetailRow>
+          <DetailRow label={t("users.name")}>
+            {user.firstname || user.lastname ? user.fullName : "—"}
+          </DetailRow>
           {defs.map((def) => (
             <DetailRow key={def.key} label={def.label}>
               {formatFieldValue(user.customFields[def.key])}
@@ -273,7 +291,9 @@ function DetailRow({ label, children }: { label: string; children: ReactNode }) 
   );
 }
 
-/** Assign/unassign the user's roles (chips). Each toggle persists immediately. */
+/** Assign/unassign the user's roles as a toggle list: a switch on the left, the role name in bold,
+ * its description (or code) muted below. A role that is neither assigned nor currently assignable
+ * (unmet feature gate) shows disabled. Each toggle persists immediately. */
 function RolesCard({
   user,
   onChanged,
@@ -285,8 +305,16 @@ function RolesCard({
 }) {
   const { client } = useUmami();
   const { t } = useTranslation();
+  const [defs, setDefs] = useState<RoleDef[]>([]);
   const [assignable, setAssignable] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    client
+      .getConfig()
+      .then((c) => setDefs(c.roles))
+      .catch(() => setDefs([]));
+  }, [client]);
 
   useEffect(() => {
     client
@@ -295,11 +323,12 @@ function RolesCard({
       .catch(() => setAssignable([]));
   }, [client, user.userId]);
 
-  const change = async (roles: string[]) => {
+  const toggle = async (code: string, assigned: boolean) => {
+    const next = assigned ? user.roles.filter((r) => r !== code) : [...user.roles, code];
     setBusy(true);
     onError("");
     try {
-      await client.patchUser(user.userId, { roles });
+      await client.patchUser(user.userId, { roles: next });
       await onChanged();
     } catch (err) {
       onError(errMsg(err));
@@ -308,17 +337,48 @@ function RolesCard({
     }
   };
 
+  // The catalog, plus any already-assigned code the catalog no longer defines (never hide a grant).
+  const catalog: RoleDef[] = [
+    ...defs,
+    ...user.roles
+      .filter((code) => !defs.some((d) => d.code === code))
+      .map((code) => ({ code, name: code })),
+  ];
+
   return (
     <section className={`${card} space-y-3`}>
       <h2 className="font-medium text-slate-800 dark:text-slate-200">{t("users.rolesTitle")}</h2>
-      <div className={busy ? "opacity-50 pointer-events-none" : ""}>
-        <CheckboxTags
-          options={assignable}
-          selected={user.roles}
-          onChange={(next) => void change(next)}
-          empty={t("users.rolesEmpty")}
-        />
-      </div>
+      {catalog.length === 0 ? (
+        <span className="text-xs text-slate-400">{t("users.rolesEmpty")}</span>
+      ) : (
+        <ul className="divide-y divide-slate-100 dark:divide-slate-700/50">
+          {catalog.map((def) => {
+            const assigned = user.roles.includes(def.code);
+            const canToggle = assigned || assignable.includes(def.code);
+            const subtitle = def.description || def.code;
+            return (
+              <li key={def.code} className="flex items-start gap-3 py-3">
+                <div className="pt-0.5">
+                  <Toggle
+                    checked={assigned}
+                    disabled={busy || !canToggle}
+                    label={def.name}
+                    onChange={() => void toggle(def.code, assigned)}
+                  />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold text-slate-900 dark:text-white">
+                    {def.name}
+                  </div>
+                  {subtitle && (
+                    <div className="text-xs text-slate-400 dark:text-slate-500">{subtitle}</div>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </section>
   );
 }
@@ -496,6 +556,7 @@ function MetaBox({ user }: { user: UserView }) {
       label: t("users.colLastActive"),
       value: user.lastSeen ? formatDateTime(user.lastSeen) : "—",
     },
+    { label: t("users.lastUpdated"), value: formatDateTime(user.lastUpdated) },
     { label: t("users.created"), value: formatDateTime(user.created) },
   ];
   return (

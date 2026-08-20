@@ -91,6 +91,8 @@ pub struct NewUser {
     pub password_hash: Option<String>,
     /// Values for the config-defined custom user fields.
     pub custom_fields: std::collections::BTreeMap<String, serde_json::Value>,
+    /// User id creating this user (audit); `None` for the auto-init bootstrap owner.
+    pub created_by: Option<String>,
 }
 
 /// Persistence interface for user identities.
@@ -121,6 +123,16 @@ pub trait UserRepository: Send + Sync {
 
     /// Marks the user as having at least one passkey (denormalized flag; idempotent).
     async fn set_has_passkey(&self, user_id: &str) -> anyhow::Result<()>;
+
+    /// Moves the username-uniqueness guard from `old_username` to `new_username` (reserve new, then
+    /// release old). A no-op when the normalized name is unchanged (case-only edit). Fails if the
+    /// new name is already taken. The caller still writes `user.username` via [`Self::put_user`].
+    async fn rename_username(
+        &self,
+        user_id: &str,
+        old_username: &str,
+        new_username: &str,
+    ) -> anyhow::Result<()>;
 
     /// Hard-deletes a user and releases its username-uniqueness guard so the name can be reused.
     /// `username` is the user's stored login username.
@@ -223,6 +235,8 @@ impl UserRepository for DynamoUserRepository {
             last_password_reset: None,
             last_password_change: None,
             has_passkey: false,
+            created_by: new_user.created_by.clone(),
+            last_changed_by: new_user.created_by,
         };
 
         // Claim the username first: a conditional put fails if it's already taken, giving strict
@@ -396,6 +410,55 @@ impl UserRepository for DynamoUserRepository {
     }
 
     #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    async fn rename_username(
+        &self,
+        user_id: &str,
+        old_username: &str,
+        new_username: &str,
+    ) -> anyhow::Result<()> {
+        let normalized_new = normalize_username(new_username);
+        let normalized_old = normalize_username(old_username);
+        if normalized_new == normalized_old {
+            // Only the display form (case/spacing) changed — the guard key is unchanged.
+            return Ok(());
+        }
+
+        // Reserve the new name (fails if already taken), then release the old one.
+        let guard = UserName {
+            username: normalized_new,
+            user_id: user_id.to_owned(),
+            created: Utc::now(),
+        };
+        let reserved = self
+            .client
+            .put_entity(TABLE_USER_USERNAMES, &guard)?
+            .condition_expression("attribute_not_exists(#username)")
+            .expression_attribute_names("#username", FIELD_USERNAME)
+            .send()
+            .await;
+        if let Err(err) = reserved {
+            if err
+                .as_service_error()
+                .map(|service_err| service_err.is_conditional_check_failed_exception())
+                .unwrap_or(false)
+            {
+                client_bail!("A user with this username already exists");
+            }
+            return Err(
+                anyhow::Error::new(err).context("Error reserving username in 'user-usernames'")
+            );
+        }
+
+        let _ = self
+            .client
+            .delete_item(TABLE_USER_USERNAMES)
+            .key(FIELD_USERNAME, str(normalized_old))
+            .send()
+            .await
+            .context("Error releasing old username in 'user-usernames'")?;
+        Ok(())
+    }
+
     async fn delete_user(&self, user_id: &str, username: &str) -> anyhow::Result<()> {
         // Remove the user row, then release the username guard so the name can be reused.
         let _ = self

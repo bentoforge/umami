@@ -54,6 +54,8 @@
     "noAudit": "No activity.",
     "noSessions": "No active sessions.",
     "noPats": "No access tokens.",
+    "name": "Name",
+    "lastUpdated": "Last changed",
     "rolesEmpty": "no roles assignable"
   },
   "login": {

@@ -180,6 +180,9 @@ pub struct RoleDef {
     pub code: String,
     /// Human-readable name.
     pub name: String,
+    /// Optional human-readable description (shown muted under the name in the admin UI).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     /// DSL over the tenant's features (`feature:*`/`is:*`) — the role is assignable to a user in a
     /// tenant only when this holds. `None` = always assignable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -546,6 +549,7 @@ impl Default for Config {
         let role = |code: &str, name: &str| RoleDef {
             code: code.to_owned(),
             name: name.to_owned(),
+            description: None,
             assignable_if: None,
         };
         let rule = |when: &str, grant: &[&str]| PermissionRule {
@@ -802,6 +806,7 @@ mod tests {
             roles: vec![RoleDef {
                 code: "role:ai".to_owned(),
                 name: "AI".to_owned(),
+                description: None,
                 assignable_if: Some("feature:ai".to_owned()),
             }],
             features: vec![

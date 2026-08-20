@@ -118,6 +118,13 @@ pub struct User {
     /// users needs no per-user credential lookup. (No passkey-removal path exists yet.)
     #[serde(default)]
     pub has_passkey: bool,
+    /// User id that created this user (audit; not surfaced in the UI yet). `None` for the
+    /// auto-init bootstrap owner.
+    #[serde(default)]
+    pub created_by: Option<String>,
+    /// User id of the last change to this user (audit; not surfaced in the UI yet).
+    #[serde(default)]
+    pub last_changed_by: Option<String>,
 }
 
 /// The Unix epoch — the `last_active_or_created` fallback for user records predating the field.

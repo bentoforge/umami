@@ -93,8 +93,13 @@ export interface UserView extends NameParts {
   customFields: Record<string, unknown>;
   /** RFC3339 creation timestamp. */
   created: string;
+  /** RFC3339 timestamp of the last change to this record. */
+  lastUpdated: string;
   /** RFC3339 timestamp of the user's last authentication (login/refresh); null until first active. */
   lastSeen: string | null;
+  /** User id that created / last changed this user (audit; not surfaced in the UI yet). */
+  createdBy?: string | null;
+  lastChangedBy?: string | null;
   /** Whether TOTP MFA is configured (never exposes the secret). */
   mfaEnabled: boolean;
   /** Whether the current password came from an admin reset and hasn't been changed since. */
@@ -122,6 +127,10 @@ export interface CreateUserRequest extends NameInput {
 }
 
 export interface PatchUserRequest extends NameInput {
+  /** New login username (globally unique). Omit to leave unchanged; must not be empty. */
+  username?: string;
+  /** Contact email. Omit to leave unchanged; empty string clears it. */
+  email?: string;
   roles?: string[];
   locked?: boolean;
   customFields?: Record<string, unknown>;
@@ -209,6 +218,8 @@ export interface CreateTenantResponse {
 export interface RoleDef {
   code: string;
   name: string;
+  /** Optional human-readable description (shown muted under the name in the admin UI). */
+  description?: string | null;
   /** Boolean expression over the tenant's `feature:*`/`is:*` gating whether it may be assigned. */
   assignableIf?: string | null;
 }
