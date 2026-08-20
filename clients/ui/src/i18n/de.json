@@ -68,6 +68,15 @@
     "no": "Nein",
     "rolesEmpty": "keine Rollen zuweisbar"
   },
+  "sessions": {
+    "logoutAll": "Überall abmelden",
+    "logoutAllConfirm": "Alle Sitzungen abmelden? Andere Geräte verlieren beim nächsten Refresh den Zugang.",
+    "revoke": "Abmelden",
+    "revokeConfirm": "Diese Sitzung abmelden? Das Gerät verliert beim nächsten Refresh den Zugang.",
+    "none": "Keine aktiven Sitzungen.",
+    "current": "aktuelle Sitzung",
+    "unknownDevice": "Unbekanntes Gerät"
+  },
   "login": {
     "heading": "Anmelden",
     "email": "E-Mail",

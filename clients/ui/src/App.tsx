@@ -10,7 +10,6 @@ import { EditTenantPage } from "./pages/EditTenantPage";
 import { EditUserPage } from "./pages/EditUserPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ProfilePage } from "./pages/ProfilePage";
-import { SessionsPage } from "./pages/SessionsPage";
 import { StartPage } from "./pages/StartPage";
 import { TenantsPage } from "./pages/TenantsPage";
 import { UsersPage } from "./pages/UsersPage";
@@ -35,7 +34,6 @@ export function App() {
       <Route element={<AdminLayout />}>
         <Route index element={<StartPage />} />
         <Route path="profile" element={<ProfilePage />} />
-        <Route path="sessions" element={<SessionsPage />} />
         <Route
           path="tenants"
           element={can("manage:tenants") ? <TenantsPage /> : <Navigate to="/" replace />}

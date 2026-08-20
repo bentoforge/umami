@@ -4,11 +4,12 @@ import type {
   MessagingCodeResponse,
   MessagingLink,
   Salutation,
+  SessionView,
 } from "@bentoforge/umami-iam";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useUmami } from "../auth/UmamiProvider";
-import { Banner, CustomFieldsForm, errMsg, Field, formatDateTime } from "../components";
+import { Banner, CustomFieldsForm, errMsg, Field, formatDateTime, Loader } from "../components";
 import { card, dangerButton, ghostButton, input, primaryButton } from "../ui";
 
 /** Profile tab: signed-in user, tenant, decoded permissions, passkey enrolment. */
@@ -81,9 +82,107 @@ export function ProfilePage() {
 
       {!client.hasPermission("self:readonly") && <ProfileFieldsPanel />}
       {!client.hasPermission("self:readonly") && <ChangePasswordPanel />}
+      <SessionsPanel />
       {client.hasPermission("manage:pat") && <PatsPanel />}
       {client.hasPermission("messaging:self") && <MessagingPanel />}
     </div>
+  );
+}
+
+/** Self-service device management: the caller's active login sessions + "log out everywhere". */
+function SessionsPanel() {
+  const { client } = useUmami();
+  const { t } = useTranslation();
+  const [sessions, setSessions] = useState<SessionView[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    setError(null);
+    try {
+      setSessions(await client.listSessions());
+    } catch (err) {
+      setError(errMsg(err));
+      setSessions([]);
+    }
+  }, [client]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const revoke = async (session: SessionView) => {
+    if (!window.confirm(t("sessions.revokeConfirm"))) {
+      return;
+    }
+    setError(null);
+    try {
+      await client.deleteSession(session.sessionId);
+      await load();
+    } catch (err) {
+      setError(errMsg(err));
+    }
+  };
+
+  const logoutAll = async () => {
+    if (!window.confirm(t("sessions.logoutAllConfirm"))) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await client.logoutAll();
+      await load();
+    } catch (err) {
+      setError(errMsg(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className={`${card} space-y-3`}>
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="font-medium text-slate-800 dark:text-slate-200">{t("nav.sessions")}</h2>
+        {sessions && sessions.length > 0 && (
+          <button className={ghostButton} disabled={busy} onClick={() => void logoutAll()}>
+            {t("sessions.logoutAll")}
+          </button>
+        )}
+      </div>
+      {error && <Banner tone="error">{error}</Banner>}
+      {sessions === null ? (
+        <Loader />
+      ) : sessions.length === 0 ? (
+        <p className="text-sm text-slate-500">{t("sessions.none")}</p>
+      ) : (
+        <ul className="divide-y divide-slate-100 dark:divide-slate-700/50">
+          {sessions.map((session) => (
+            <li key={session.sessionId} className="flex items-center justify-between gap-3 py-3">
+              <div className="min-w-0">
+                <div className="text-sm font-medium text-slate-900 dark:text-white truncate">
+                  {session.userAgent || t("sessions.unknownDevice")}
+                  {session.current && (
+                    <span className="ml-2 rounded bg-brand/10 text-brand px-1.5 py-0.5 text-[10px] align-middle">
+                      {t("sessions.current")}
+                    </span>
+                  )}
+                </div>
+                <div className="text-xs text-slate-400">
+                  {session.ip ? `${session.ip} · ` : ""}
+                  {formatDateTime(session.lastSeen)}
+                </div>
+              </div>
+              {!session.current && (
+                <button className={dangerButton} onClick={() => void revoke(session)}>
+                  {t("sessions.revoke")}
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 

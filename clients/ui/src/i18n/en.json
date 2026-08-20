@@ -64,6 +64,15 @@
     "no": "No",
     "rolesEmpty": "no roles assignable"
   },
+  "sessions": {
+    "logoutAll": "Log out everywhere",
+    "logoutAllConfirm": "Log out all sessions? Other devices lose access on their next refresh.",
+    "revoke": "Log out",
+    "revokeConfirm": "Log this session out? The device loses access on its next refresh.",
+    "none": "No active sessions.",
+    "current": "current session",
+    "unknownDevice": "Unknown device"
+  },
   "login": {
     "heading": "Sign in",
     "email": "Email",
