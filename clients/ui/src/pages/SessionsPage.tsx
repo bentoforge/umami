@@ -1,7 +1,7 @@
 import type { SessionView } from "@bentoforge/umami-iam";
 import { useCallback, useEffect, useState } from "react";
 import { useUmami } from "../auth/UmamiProvider";
-import { Banner, errMsg, formatDateTime } from "../components";
+import { Banner, errMsg, formatDateTime, Loader } from "../components";
 import { card, dangerButton, ghostButton } from "../ui";
 
 /** Sessions: list the caller's active login sessions (devices), revoke one, or log out everywhere. */
@@ -69,7 +69,7 @@ export function SessionsPage() {
       <section className={`${card} space-y-3`}>
         {error && <Banner tone="error">{error}</Banner>}
         {sessions === null ? (
-          <p className="text-sm text-slate-500">Lädt…</p>
+          <Loader />
         ) : sessions.length === 0 ? (
           <p className="text-sm text-slate-500">Keine aktiven Sitzungen.</p>
         ) : (

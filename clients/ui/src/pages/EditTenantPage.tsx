@@ -11,6 +11,7 @@ import {
   Field,
   formatDateTime,
   formatFieldValue,
+  Loader,
   Toggle,
 } from "../components";
 import { card, ghostButton, input, primaryButton } from "../ui";
@@ -119,7 +120,7 @@ export function EditTenantPage() {
       {notice && <Banner tone="ok">{notice}</Banner>}
 
       {tenant === null ? (
-        <p className="text-slate-500">{t("tenants.loading")}</p>
+        <Loader />
       ) : (
         <>
           <DetailsCard

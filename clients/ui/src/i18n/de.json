@@ -1,5 +1,6 @@
 {
   "app": { "title": "umami" },
+  "common": { "loading": "Lade Daten…" },
   "login": {
     "heading": "Anmelden",
     "email": "E-Mail",

@@ -9,6 +9,7 @@ import {
   Field,
   formatDateTime,
   formatFieldValue,
+  Loader,
 } from "../components";
 import { card, dangerButton, ghostButton, input, primaryButton, td, th } from "../ui";
 
@@ -139,7 +140,7 @@ export function UsersPage() {
 
       <section className={`${card} overflow-x-auto`}>
         {users === null ? (
-          <p className="text-slate-500">Loading…</p>
+          <Loader />
         ) : users.length === 0 ? (
           <p className="text-slate-500">No users.</p>
         ) : (

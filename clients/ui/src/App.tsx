@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { useUmami } from "./auth/UmamiProvider";
+import { Loader } from "./components";
 import { AdminLayout } from "./pages/AdminLayout";
 import { ApiTokensPage } from "./pages/ApiTokensPage";
 import { AuditPage } from "./pages/AuditPage";
@@ -18,8 +19,8 @@ export function App() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-100 dark:bg-slate-900 text-slate-500">
-        …
+      <div className="min-h-screen flex items-center justify-center bg-slate-100 dark:bg-slate-900">
+        <Loader />
       </div>
     );
   }

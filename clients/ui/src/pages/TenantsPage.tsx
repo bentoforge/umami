@@ -3,7 +3,14 @@ import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useNavigate } from "react-router-dom";
 import { useUmami } from "../auth/UmamiProvider";
-import { Banner, DropdownMenu, errMsg, formatDateTime, formatFieldValue } from "../components";
+import {
+  Banner,
+  DropdownMenu,
+  errMsg,
+  formatDateTime,
+  formatFieldValue,
+  Loader,
+} from "../components";
 import { card, input, primaryButton, td, th } from "../ui";
 
 /** System-admin screen: search / list tenants. Create opens a dedicated view; the name links to
@@ -94,7 +101,7 @@ export function TenantsPage() {
 
       <section className={`${card} overflow-x-auto`}>
         {tenants === null ? (
-          <p className="text-slate-500">{t("tenants.loading")}</p>
+          <Loader />
         ) : tenants.length === 0 ? (
           <p className="text-slate-500">{t("tenants.empty")}</p>
         ) : (

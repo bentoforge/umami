@@ -1,9 +1,21 @@
 import type { CustomFieldDef } from "@bentoforge/umami-iam";
 import { EllipsisVerticalIcon } from "@heroicons/react/24/outline";
 import { type ReactNode, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import i18n from "./i18n/i18n";
 import { resolvedDark, subscribeTheme } from "./theme";
 import { iconButton, input } from "./ui";
+
+/** A centered spinner with a caption below — the standard "content is loading" placeholder. */
+export function Loader({ label }: { label?: string }) {
+  const { t } = useTranslation();
+  return (
+    <div className="flex flex-col items-center justify-center gap-3 py-12 text-slate-500">
+      <div className="h-8 w-8 rounded-full border-2 border-slate-200 dark:border-slate-700 border-t-primary dark:border-t-primary animate-spin" />
+      <span className="text-sm">{label ?? t("common.loading")}</span>
+    </div>
+  );
+}
 
 /** Extracts a human-readable message from a thrown value (UmamiError, Error, or anything). */
 export const errMsg = (err: unknown): string => (err instanceof Error ? err.message : String(err));
