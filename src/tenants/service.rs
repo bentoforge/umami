@@ -140,11 +140,13 @@ pub fn list_tenants_route(
         .boxed()
 }
 
-/// `DELETE /tenants/{id}` — delete a tenant, but only when it has no users (requires `manage:tenants`).
+/// `DELETE /tenants/{id}` — delete a tenant (requires `manage:tenants`). Refused for the system
+/// tenant, the tenant the caller is currently in, and any tenant that still has users or API keys.
 pub fn delete_tenant_route(
     tenants: Arc<dyn TenantRepository>,
     users: Arc<dyn UserRepository>,
     api_keys: Arc<dyn ApiKeyRepository>,
+    system_tenant_id: Option<String>,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("tenants" / String)
@@ -152,6 +154,7 @@ pub fn delete_tenant_route(
         .and(with_cloneable(tenants))
         .and(with_cloneable(users))
         .and(with_cloneable(api_keys))
+        .and(with_cloneable(system_tenant_id))
         .and(with_user_with_any_permission(
             authenticator,
             REQUIRE_MANAGE_TENANTS,
@@ -223,9 +226,20 @@ async fn handle_delete_tenant_route(
     tenants: Arc<dyn TenantRepository>,
     users: Arc<dyn UserRepository>,
     api_keys: Arc<dyn ApiKeyRepository>,
-    _caller: AuthUser,
+    system_tenant_id: Option<String>,
+    caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(delete_tenant(tenant_id, tenants, users, api_keys).await)
+    into_response(
+        delete_tenant(
+            tenant_id,
+            tenants,
+            users,
+            api_keys,
+            system_tenant_id,
+            caller,
+        )
+        .await,
+    )
 }
 
 #[tracing::instrument(level = "debug", name = "GET /tenants/{id}", skip_all)]
@@ -361,7 +375,21 @@ async fn delete_tenant(
     tenants: Arc<dyn TenantRepository>,
     users: Arc<dyn UserRepository>,
     api_keys: Arc<dyn ApiKeyRepository>,
+    system_tenant_id: Option<String>,
+    caller: AuthUser,
 ) -> anyhow::Result<Value> {
+    // The system tenant is the root of cross-tenant administration — never deletable.
+    if system_tenant_id.as_deref() == Some(tenant_id.as_str()) {
+        status_bail!(StatusCode::FORBIDDEN, "The system tenant cannot be deleted");
+    }
+    // Don't delete the tenant the caller is currently acting in (would strand their own session).
+    if caller.tenant_id()? == tenant_id {
+        status_bail!(
+            StatusCode::FORBIDDEN,
+            "You cannot delete the tenant you are currently in"
+        );
+    }
+
     if tenants.get_tenant(&tenant_id).await?.is_none() {
         client_bail!("No such tenant");
     }

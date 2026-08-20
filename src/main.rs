@@ -359,6 +359,7 @@ async fn app() -> anyhow::Result<()> {
             tenant_repository.clone(),
             user_repository.clone(),
             api_key_repository.clone(),
+            system_tenant_id.clone(),
             authenticator.clone()
         ),
         get_tenant_route(tenant_repository.clone(), authenticator.clone()),

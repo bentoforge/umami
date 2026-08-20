@@ -17,7 +17,7 @@ import { card, ghostButton, input, primaryButton } from "../ui";
 
 /** Per-tenant edit view: a details card (read + inline edit), a features card, and an in-app Back. */
 export function EditTenantPage() {
-  const { client, switchTenant } = useUmami();
+  const { client, me, activeTenantId, switchTenant } = useUmami();
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { tenantId = "" } = useParams();
@@ -27,6 +27,11 @@ export function EditTenantPage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [missing, setMissing] = useState(false);
+
+  // The system tenant (home) and the tenant currently being acted in must not be deletable.
+  const homeTenantId = me?.user.tenantId;
+  const currentTenantId = activeTenantId ?? homeTenantId;
+  const isProtected = (id: string) => id === homeTenantId || id === currentTenantId;
 
   const reload = useCallback(async () => {
     setError(null);
@@ -96,7 +101,15 @@ export function EditTenantPage() {
                 label: t("tenants.impersonate"),
                 onSelect: () => void switchTenant(tenant.tenantId, tenant.name),
               },
-              { label: t("tenants.delete"), danger: true, onSelect: () => void onDelete() },
+              ...(isProtected(tenant.tenantId)
+                ? []
+                : [
+                    {
+                      label: t("tenants.delete"),
+                      danger: true,
+                      onSelect: () => void onDelete(),
+                    },
+                  ]),
             ]}
           />
         )}

@@ -9,7 +9,7 @@ import { card, input, primaryButton, td, th } from "../ui";
 /** System-admin screen: search / list tenants. Create opens a dedicated view; the name links to
  * the per-tenant edit view; the row's 3-dot menu impersonates or deletes. */
 export function TenantsPage() {
-  const { client, me, switchTenant } = useUmami();
+  const { client, me, activeTenantId, switchTenant } = useUmami();
   const { t } = useTranslation();
   const navigate = useNavigate();
   const [tenants, setTenants] = useState<Tenant[] | null>(null);
@@ -20,6 +20,12 @@ export function TenantsPage() {
   const [notice, setNotice] = useState<string | null>(null);
 
   const tableDefs = defs.filter((d) => d.showInTable);
+
+  // The system tenant (the caller's home tenant) and the tenant currently being acted in must not
+  // be deletable — the server enforces this too.
+  const homeTenantId = me?.user.tenantId;
+  const currentTenantId = activeTenantId ?? homeTenantId;
+  const isProtected = (id: string) => id === homeTenantId || id === currentTenantId;
 
   useEffect(() => {
     client
@@ -141,11 +147,15 @@ export function TenantsPage() {
                           label: t("tenants.impersonate"),
                           onSelect: () => void switchTenant(tenant.tenantId, tenant.name),
                         },
-                        {
-                          label: t("tenants.delete"),
-                          danger: true,
-                          onSelect: () => void onDelete(tenant),
-                        },
+                        ...(isProtected(tenant.tenantId)
+                          ? []
+                          : [
+                              {
+                                label: t("tenants.delete"),
+                                danger: true,
+                                onSelect: () => void onDelete(tenant),
+                              },
+                            ]),
                       ]}
                     />
                   </td>
