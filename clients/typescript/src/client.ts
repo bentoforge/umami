@@ -64,6 +64,8 @@ export class UmamiClient {
   private readonly baseUrl: string;
   private readonly onTokenChange?: (token: string | null) => void;
   private accessToken: string | null = null;
+  /** In-flight refresh, if any — coalesces concurrent 401s into a single rotation. */
+  private refreshing: Promise<boolean> | null = null;
 
   constructor(options: UmamiClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, "");
@@ -157,8 +159,20 @@ export class UmamiClient {
     return data;
   }
 
-  /** Silent refresh via the cookie. Returns whether a fresh token was obtained. */
+  /** Silent refresh via the cookie. Returns whether a fresh token was obtained.
+   *
+   * Single-flighted: concurrent callers (e.g. several requests that 401 at once) all await one
+   * rotation. Without this, the second refresh would send the just-rotated-out cookie secret, which
+   * the server treats as token reuse and revokes the whole session. */
   async refresh(): Promise<boolean> {
+    if (this.refreshing) return this.refreshing;
+    this.refreshing = this.doRefresh().finally(() => {
+      this.refreshing = null;
+    });
+    return this.refreshing;
+  }
+
+  private async doRefresh(): Promise<boolean> {
     const response = await this.doFetch("/auth/refresh", { method: "POST" }, false);
     if (!response.ok) {
       this.setToken(null);
