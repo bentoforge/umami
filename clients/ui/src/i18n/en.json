@@ -145,5 +145,13 @@
     "totpActivate": "Activate",
     "totpDisable": "Disable",
     "totpDisableHint": "Enter a current code to disable the authenticator app."
+  },
+  "audit": {
+    "title": "Audit log",
+    "reload": "Reload",
+    "empty": "No audit entries.",
+    "severity": "Severity",
+    "when": "When",
+    "event": "Event"
   }
 }

@@ -145,5 +145,13 @@
     "totpActivate": "Aktivieren",
     "totpDisable": "Deaktivieren",
     "totpDisableHint": "Gib einen aktuellen Code ein, um die Authenticator-App zu deaktivieren."
+  },
+  "audit": {
+    "title": "Audit-Log",
+    "reload": "Neu laden",
+    "empty": "Keine Einträge im Audit-Log.",
+    "severity": "Schweregrad",
+    "when": "Zeitpunkt",
+    "event": "Ereignis"
   }
 }
