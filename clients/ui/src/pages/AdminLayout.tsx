@@ -9,8 +9,7 @@ import {
   UserCircleIcon,
   XMarkIcon,
 } from "@heroicons/react/24/outline";
-import type { SVGProps } from "react";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, type SVGProps, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { NavLink, Outlet } from "react-router-dom";
 import { useUmami } from "../auth/UmamiProvider";
@@ -294,9 +293,11 @@ function MobileMenu({
   const linkClass =
     "block rounded-lg px-3 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700";
 
+  const divider = <div className="my-1 border-t border-slate-200 dark:border-slate-700" />;
+
   return (
     <div className="md:hidden border-t border-slate-200 dark:border-slate-700 px-4 py-2 space-y-0.5">
-      {[...navItems, ...menuItems].map((item) => (
+      {navItems.map((item) => (
         <NavLink
           key={item.to}
           to={item.to}
@@ -306,6 +307,15 @@ function MobileMenu({
         >
           {item.label}
         </NavLink>
+      ))}
+      {/* Account items below a rule; the system config gets its own rule above it. */}
+      {menuItems.map((item, index) => (
+        <Fragment key={item.to}>
+          {(index === 0 || item.to === "/config") && divider}
+          <NavLink to={item.to} end={item.end} className={linkClass} onClick={onNavigate}>
+            {item.label}
+          </NavLink>
+        </Fragment>
       ))}
       {switched && homeTenantId && (
         <>
