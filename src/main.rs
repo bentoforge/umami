@@ -183,7 +183,12 @@ async fn app() -> anyhow::Result<()> {
         let s3_client = S3Client::from_env().await?;
         Arc::new(S3ConfigRepository::from_env(s3_client).await?)
     } else {
-        tracing::info!("UMAMI_CONFIG_BUCKET not set — using the built-in default config");
+        tracing::warn!(
+            "UMAMI_CONFIG_BUCKET not set — using the in-memory config repository. Config edits \
+             (features, custom fields, PUT /config) are NOT persisted and are lost on restart \
+             (reset to the built-in default). Set UMAMI_CONFIG_BUCKET (+ S3_BUCKET_SUFFIX) to \
+             persist config in S3."
+        );
         Arc::new(StaticConfigRepository::with_default())
     };
 
