@@ -438,15 +438,56 @@ async fn app() -> anyhow::Result<()> {
     ];
 
     // Optionally serve the built management UI (SPA) under /app from the same origin. Mounted only
-    // when UMAMI_UI_DIR contains a built index.html; otherwise umami runs API-only.
+    // when UMAMI_UI_DIR contains a built index.html; otherwise umami runs API-only. Optional CORS
+    // (from CORS_ALLOWED_ORIGINS) is applied for cross-origin — typically same-site subdomain — SPAs.
     let ui_dir = env::var("UMAMI_UI_DIR").unwrap_or_else(|_| "clients/ui/dist".to_owned());
+    let cors = cors_from_env();
     match ui_routes(&ui_dir, config_repository.clone()) {
         Some(ui) => {
             tracing::info!("Serving management UI from '{ui_dir}' under /app");
-            run_webserver(api.or(ui)).await
+            serve(api.or(ui), cors).await
         }
-        None => run_webserver(api).await,
+        None => serve(api, cors).await,
     }
+}
+
+/// Runs the web server, wrapping the routes in the optional credentialed CORS layer when present.
+/// Generic over the route filter so the UI / API-only branches don't need a unified filter type.
+async fn serve<F>(routes: F, cors: Option<warp::filters::cors::Cors>) -> anyhow::Result<()>
+where
+    F: warp::Filter<Error = warp::Rejection> + Clone + Send + Sync + 'static,
+    F::Extract: warp::Reply,
+{
+    match cors {
+        Some(cors) => run_webserver(routes.with(cors)).await,
+        None => run_webserver(routes).await,
+    }
+}
+
+/// Builds a credentialed CORS layer from `CORS_ALLOWED_ORIGINS` (comma-separated exact origins, e.g.
+/// `https://spa.myapp.com,https://admin.myapp.com`). Returns `None` when the var is unset/empty, so
+/// umami stays CORS-free by default. Credentialed CORS forbids `*`, so origins are an explicit
+/// allow-list; the browser must also send `credentials: "include"` for the cookie to travel.
+fn cors_from_env() -> Option<warp::filters::cors::Cors> {
+    let raw = env::var("CORS_ALLOWED_ORIGINS").ok()?;
+    let origins: Vec<String> = raw
+        .split(',')
+        .map(|s| s.trim().to_owned())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if origins.is_empty() {
+        return None;
+    }
+    tracing::info!("CORS enabled for origins: {}", origins.join(", "));
+    Some(
+        warp::cors()
+            .allow_origins(origins.iter().map(String::as_str))
+            .allow_credentials(true)
+            .allow_methods(["GET", "POST", "PATCH", "DELETE", "OPTIONS"])
+            .allow_headers(["content-type", "authorization"])
+            .max_age(600)
+            .build(),
+    )
 }
 
 /// Bootstraps the first tenant + owner on an empty deployment when `UMAMI_AUTO_INIT=true`.
