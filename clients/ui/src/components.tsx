@@ -1,7 +1,8 @@
 import type { CustomFieldDef } from "@bentoforge/umami-iam";
-import { type ReactNode, useEffect, useState } from "react";
+import { EllipsisVerticalIcon } from "@heroicons/react/24/outline";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { resolvedDark, subscribeTheme } from "./theme";
-import { input } from "./ui";
+import { card, iconButton, input } from "./ui";
 
 /** Extracts a human-readable message from a thrown value (UmamiError, Error, or anything). */
 export const errMsg = (err: unknown): string => (err instanceof Error ? err.message : String(err));
@@ -144,6 +145,63 @@ export function CheckboxTags({
           </label>
         );
       })}
+    </div>
+  );
+}
+
+/** One entry in a {@link DropdownMenu}. */
+export type MenuAction = { label: string; onSelect: () => void; danger?: boolean };
+
+/** A vertical-3-dots menu (row actions / page actions). Closes on outside-click or after a pick. */
+export function DropdownMenu({ actions, label }: { actions: MenuAction[]; label: string }) {
+  const [open, setOpen] = useState(false);
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const onClick = (e: MouseEvent) => {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [open]);
+
+  return (
+    <div className="relative inline-block" ref={boxRef}>
+      <button
+        type="button"
+        className={iconButton}
+        aria-label={label}
+        aria-haspopup="menu"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <EllipsisVerticalIcon className="h-5 w-5" />
+      </button>
+      {open && (
+        <div className={`${card} absolute right-0 mt-2 w-48 z-20 p-1.5 shadow-lg`}>
+          {actions.map((action) => (
+            <button
+              key={action.label}
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                action.onSelect();
+              }}
+              className={`block w-full text-left rounded-lg px-3 py-2 text-sm ${
+                action.danger
+                  ? "text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950"
+                  : "text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700"
+              }`}
+            >
+              {action.label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

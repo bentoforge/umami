@@ -1,24 +1,25 @@
 import type { CustomFieldDef, Tenant } from "@bentoforge/umami-iam";
-import { Fragment, useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { Link, useNavigate } from "react-router-dom";
 import { useUmami } from "../auth/UmamiProvider";
-import { Banner, CustomFieldsForm, errMsg, Field, formatFieldValue } from "../components";
-import { card, dangerButton, ghostButton, input, primaryButton, td, th } from "../ui";
+import { Banner, DropdownMenu, errMsg, formatFieldValue } from "../components";
+import { card, input, primaryButton, td, th } from "../ui";
 
-/** System-admin screen: list / create / edit / delete tenants. */
+/** System-admin screen: search / list tenants. Create opens a dedicated view; the name links to
+ * the per-tenant edit view; the row's 3-dot menu impersonates or deletes. */
 export function TenantsPage() {
   const { client, me, switchTenant } = useUmami();
+  const { t } = useTranslation();
+  const navigate = useNavigate();
   const [tenants, setTenants] = useState<Tenant[] | null>(null);
   const [defs, setDefs] = useState<CustomFieldDef[]>([]);
   const [truncated, setTruncated] = useState(false);
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
-  const [editing, setEditing] = useState<string | null>(null);
-  const [featuresFor, setFeaturesFor] = useState<string | null>(null);
 
   const tableDefs = defs.filter((d) => d.showInTable);
-  const colCount = 3 + tableDefs.length;
 
   useEffect(() => {
     client
@@ -46,14 +47,14 @@ export function TenantsPage() {
   }, [load]);
 
   const onDelete = async (tenant: Tenant) => {
-    if (!window.confirm(`Delete tenant "${tenant.name}"? This only works when it has no users.`)) {
+    if (!window.confirm(t("tenants.deleteConfirm", { name: tenant.name }))) {
       return;
     }
     setError(null);
     setNotice(null);
     try {
       await client.deleteTenant(tenant.tenantId);
-      setNotice(`Deleted "${tenant.name}".`);
+      setNotice(t("tenants.deleted", { name: tenant.name }));
       await load();
     } catch (err) {
       setError(errMsg(err));
@@ -63,15 +64,17 @@ export function TenantsPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-4">
-        <h1 className="text-xl font-semibold text-slate-900 dark:text-white">Tenants</h1>
+        <h1 className="text-xl font-semibold text-slate-900 dark:text-white">
+          {t("tenants.title")}
+        </h1>
         <input
           className={`${input} max-w-xs`}
-          placeholder="Search name, customer no., address…"
+          placeholder={t("tenants.search")}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
-        <button className={primaryButton} onClick={() => setCreating((v) => !v)}>
-          {creating ? "Cancel" : "New tenant"}
+        <button className={primaryButton} onClick={() => navigate("/tenants/new")}>
+          {t("tenants.new")}
         </button>
       </div>
 
@@ -79,350 +82,79 @@ export function TenantsPage() {
       {notice && <Banner tone="ok">{notice}</Banner>}
       {truncated && (
         <p className="text-xs text-amber-600 dark:text-amber-400">
-          Showing the first 250 matches — refine your search to narrow the list.
+          {t("tenants.truncated", { count: tenants?.length ?? 0 })}
         </p>
-      )}
-
-      {creating && (
-        <CreateTenant
-          defs={defs}
-          onDone={async () => {
-            setCreating(false);
-            setNotice("Tenant created.");
-            await load();
-          }}
-          onError={setError}
-        />
       )}
 
       <section className={`${card} overflow-x-auto`}>
         {tenants === null ? (
-          <p className="text-slate-500">Loading…</p>
+          <p className="text-slate-500">{t("tenants.loading")}</p>
         ) : tenants.length === 0 ? (
-          <p className="text-slate-500">No tenants.</p>
+          <p className="text-slate-500">{t("tenants.empty")}</p>
         ) : (
           <table className="w-full border-collapse">
             <thead>
               <tr className="border-b border-slate-200 dark:border-slate-700">
-                <th className={th}>Name</th>
-                <th className={th}>Updated</th>
+                <th className={th}>{t("tenants.colName")}</th>
+                <th className={th}>{t("tenants.colUpdated")}</th>
                 {tableDefs.map((def) => (
                   <th key={def.key} className={th}>
                     {def.label}
                   </th>
                 ))}
-                <th className={th}></th>
+                <th className={`${th} text-right`}>
+                  <span className="sr-only">{t("tenants.actions")}</span>
+                </th>
               </tr>
             </thead>
             <tbody>
               {tenants.map((tenant) => (
-                <Fragment key={tenant.tenantId}>
-                  <tr className="border-b border-slate-100 dark:border-slate-700/50">
-                    <td className={td}>
-                      <div className="font-medium text-slate-900 dark:text-white">
-                        {tenant.name}
-                        {tenant.tenantId === me?.user.tenantId && (
-                          <span className="ml-2 rounded bg-brand/10 text-brand px-1.5 py-0.5 text-[10px] align-middle">
-                            system
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-xs text-slate-400 font-mono">{tenant.tenantId}</div>
+                <tr
+                  key={tenant.tenantId}
+                  className="border-b border-slate-100 dark:border-slate-700/50"
+                >
+                  <td className={td}>
+                    <Link
+                      to={`/tenants/${encodeURIComponent(tenant.tenantId)}`}
+                      className="font-medium text-primary hover:underline"
+                    >
+                      {tenant.name}
+                    </Link>
+                    {tenant.tenantId === me?.user.tenantId && (
+                      <span className="ml-2 rounded bg-brand/10 text-brand px-1.5 py-0.5 text-[10px] align-middle">
+                        {t("tenants.system")}
+                      </span>
+                    )}
+                    <div className="text-xs text-slate-400 font-mono">{tenant.tenantId}</div>
+                  </td>
+                  <td className={td}>{new Date(tenant.lastUpdated).toLocaleString()}</td>
+                  {tableDefs.map((def) => (
+                    <td key={def.key} className={td}>
+                      {formatFieldValue(tenant.customFields[def.key])}
                     </td>
-                    <td className={td}>{new Date(tenant.lastUpdated).toLocaleString()}</td>
-                    {tableDefs.map((def) => (
-                      <td key={def.key} className={td}>
-                        {formatFieldValue(tenant.customFields[def.key])}
-                      </td>
-                    ))}
-                    <td className={`${td} text-right whitespace-nowrap`}>
-                      <button
-                        className={ghostButton}
-                        onClick={() => void switchTenant(tenant.tenantId, tenant.name)}
-                      >
-                        Switch to
-                      </button>{" "}
-                      <button
-                        className={ghostButton}
-                        onClick={() =>
-                          setFeaturesFor((id) => (id === tenant.tenantId ? null : tenant.tenantId))
-                        }
-                      >
-                        Features
-                      </button>{" "}
-                      <button
-                        className={ghostButton}
-                        onClick={() =>
-                          setEditing((id) => (id === tenant.tenantId ? null : tenant.tenantId))
-                        }
-                      >
-                        Edit
-                      </button>{" "}
-                      <button className={dangerButton} onClick={() => void onDelete(tenant)}>
-                        Delete
-                      </button>
-                    </td>
-                  </tr>
-                  {editing === tenant.tenantId && (
-                    <tr className="border-b border-slate-100 dark:border-slate-700/50 bg-slate-50 dark:bg-slate-900/40">
-                      <td className={td} colSpan={colCount}>
-                        <EditTenantPanel
-                          tenant={tenant}
-                          defs={defs}
-                          onCancel={() => setEditing(null)}
-                          onSaved={async () => {
-                            setEditing(null);
-                            await load();
-                          }}
-                          onError={setError}
-                        />
-                      </td>
-                    </tr>
-                  )}
-                  {featuresFor === tenant.tenantId && (
-                    <tr className="border-b border-slate-100 dark:border-slate-700/50 bg-slate-50 dark:bg-slate-900/40">
-                      <td className={td} colSpan={colCount}>
-                        <FeaturesPanel tenant={tenant} onChanged={load} onError={setError} />
-                      </td>
-                    </tr>
-                  )}
-                </Fragment>
+                  ))}
+                  <td className={`${td} text-right whitespace-nowrap`}>
+                    <DropdownMenu
+                      label={t("tenants.actions")}
+                      actions={[
+                        {
+                          label: t("tenants.impersonate"),
+                          onSelect: () => void switchTenant(tenant.tenantId, tenant.name),
+                        },
+                        {
+                          label: t("tenants.delete"),
+                          danger: true,
+                          onSelect: () => void onDelete(tenant),
+                        },
+                      ]}
+                    />
+                  </td>
+                </tr>
               ))}
             </tbody>
           </table>
         )}
       </section>
     </div>
-  );
-}
-
-function EditTenantPanel({
-  tenant,
-  defs,
-  onCancel,
-  onSaved,
-  onError,
-}: {
-  tenant: Tenant;
-  defs: CustomFieldDef[];
-  onCancel: () => void;
-  onSaved: () => Promise<void>;
-  onError: (msg: string) => void;
-}) {
-  const { client } = useUmami();
-  const [name, setName] = useState(tenant.name);
-  const [fields, setFields] = useState<Record<string, unknown>>({ ...tenant.customFields });
-  const [saving, setSaving] = useState(false);
-
-  const save = async () => {
-    setSaving(true);
-    onError("");
-    try {
-      await client.patchTenant(tenant.tenantId, { name, customFields: fields });
-      await onSaved();
-    } catch (err) {
-      onError(errMsg(err));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className="space-y-3 py-1">
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Name">
-          <input className={input} value={name} onChange={(e) => setName(e.target.value)} />
-        </Field>
-        <CustomFieldsForm defs={defs} values={fields} onChange={setFields} />
-      </div>
-      <div>
-        <button className={primaryButton} disabled={saving} onClick={() => void save()}>
-          Save
-        </button>{" "}
-        <button className={ghostButton} disabled={saving} onClick={onCancel}>
-          Cancel
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/** Grant/revoke a tenant's authorization features (`feature:*`). Current features are revocable
- * chips; the backend's assignable set (respecting dependencies) is offered as grantable chips. */
-function FeaturesPanel({
-  tenant,
-  onChanged,
-  onError,
-}: {
-  tenant: Tenant;
-  onChanged: () => Promise<void>;
-  onError: (msg: string) => void;
-}) {
-  const { client } = useUmami();
-  const [grantable, setGrantable] = useState<string[]>([]);
-  const [busy, setBusy] = useState(false);
-
-  const loadGrantable = useCallback(() => {
-    client
-      .assignableFeatures(tenant.tenantId)
-      .then((r) => setGrantable(r.codes))
-      .catch(() => setGrantable([]));
-  }, [client, tenant.tenantId]);
-
-  useEffect(() => loadGrantable(), [loadGrantable]);
-
-  const grant = async (code: string) => {
-    setBusy(true);
-    onError("");
-    try {
-      await client.grantFeature(tenant.tenantId, code);
-      await onChanged();
-      loadGrantable();
-    } catch (err) {
-      onError(errMsg(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const revoke = async (code: string) => {
-    setBusy(true);
-    onError("");
-    try {
-      await client.revokeFeature(tenant.tenantId, code);
-      await onChanged();
-      loadGrantable();
-    } catch (err) {
-      onError(errMsg(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="space-y-3 py-1">
-      <div>
-        <div className="text-xs text-slate-500 mb-1">Granted features</div>
-        {tenant.features.length === 0 ? (
-          <span className="text-xs text-slate-400">none</span>
-        ) : (
-          <div className="flex flex-wrap gap-1.5">
-            {tenant.features.map((code) => (
-              <button
-                key={code}
-                disabled={busy}
-                onClick={() => void revoke(code)}
-                title="Revoke"
-                className="inline-flex items-center gap-1 rounded-full border border-brand bg-brand/10 text-brand px-2 py-0.5 text-xs disabled:opacity-50"
-              >
-                {code} <span aria-hidden>×</span>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-      <div>
-        <div className="text-xs text-slate-500 mb-1">Grantable now</div>
-        {grantable.length === 0 ? (
-          <span className="text-xs text-slate-400">nothing else grantable</span>
-        ) : (
-          <div className="flex flex-wrap gap-1.5">
-            {grantable.map((code) => (
-              <button
-                key={code}
-                disabled={busy}
-                onClick={() => void grant(code)}
-                title="Grant"
-                className="inline-flex items-center gap-1 rounded-full border border-slate-300 dark:border-slate-600 text-slate-500 px-2 py-0.5 text-xs disabled:opacity-50"
-              >
-                <span aria-hidden>+</span> {code}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function CreateTenant({
-  defs,
-  onDone,
-  onError,
-}: {
-  defs: CustomFieldDef[];
-  onDone: () => Promise<void>;
-  onError: (msg: string) => void;
-}) {
-  const { client } = useUmami();
-  const [name, setName] = useState("");
-  const [ownerUsername, setOwnerUsername] = useState("");
-  const [ownerEmail, setOwnerEmail] = useState("");
-  const [ownerPassword, setOwnerPassword] = useState("");
-  const [fields, setFields] = useState<Record<string, unknown>>({});
-  const [busy, setBusy] = useState(false);
-
-  const submit = async () => {
-    setBusy(true);
-    onError("");
-    try {
-      await client.createTenant({
-        name,
-        owner: {
-          username: ownerUsername.trim() || undefined,
-          email: ownerEmail.trim() || undefined,
-          password: ownerPassword,
-        },
-        customFields: fields,
-      });
-      setName("");
-      setOwnerUsername("");
-      setOwnerEmail("");
-      setOwnerPassword("");
-      setFields({});
-      await onDone();
-    } catch (err) {
-      onError(errMsg(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <section className={`${card} space-y-3`}>
-      <h2 className="font-medium text-slate-800 dark:text-slate-200">New tenant + owner</h2>
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Tenant name">
-          <input className={input} value={name} onChange={(e) => setName(e.target.value)} />
-        </Field>
-        <Field label="Owner username (defaults to email)">
-          <input
-            className={input}
-            value={ownerUsername}
-            onChange={(e) => setOwnerUsername(e.target.value)}
-          />
-        </Field>
-        <Field label="Owner email (optional)">
-          <input
-            className={input}
-            type="email"
-            value={ownerEmail}
-            onChange={(e) => setOwnerEmail(e.target.value)}
-          />
-        </Field>
-        <Field label="Owner password">
-          <input
-            className={input}
-            type="password"
-            value={ownerPassword}
-            onChange={(e) => setOwnerPassword(e.target.value)}
-          />
-        </Field>
-        <CustomFieldsForm defs={defs} values={fields} onChange={setFields} />
-      </div>
-      <button className={primaryButton} disabled={busy} onClick={() => void submit()}>
-        Create tenant
-      </button>
-    </section>
   );
 }

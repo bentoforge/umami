@@ -4,6 +4,8 @@ import { AdminLayout } from "./pages/AdminLayout";
 import { ApiTokensPage } from "./pages/ApiTokensPage";
 import { AuditPage } from "./pages/AuditPage";
 import { ConfigPage } from "./pages/ConfigPage";
+import { CreateTenantPage } from "./pages/CreateTenantPage";
+import { EditTenantPage } from "./pages/EditTenantPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ProfilePage } from "./pages/ProfilePage";
 import { SessionsPage } from "./pages/SessionsPage";
@@ -35,6 +37,14 @@ export function App() {
         <Route
           path="tenants"
           element={can("manage:tenants") ? <TenantsPage /> : <Navigate to="/" replace />}
+        />
+        <Route
+          path="tenants/new"
+          element={can("manage:tenants") ? <CreateTenantPage /> : <Navigate to="/" replace />}
+        />
+        <Route
+          path="tenants/:tenantId"
+          element={can("manage:tenants") ? <EditTenantPage /> : <Navigate to="/" replace />}
         />
         <Route
           path="users"

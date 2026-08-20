@@ -5,6 +5,7 @@
 //! guarded by the `manage:tenants` permission, projected from `is:system-tenant` (see docs/CONFIG.md). `GET`/`PATCH /tenants/{id}` require `admin:tenant` and operate only on
 //! the caller's own tenant.
 
+use crate::auth::apikeys::repository::ApiKeyRepository;
 use crate::config::Config;
 use crate::config::repository::ConfigRepository;
 use crate::constants::{
@@ -28,8 +29,10 @@ use wasabi::web::auth::with_user_with_any_permission;
 use wasabi::web::warp::{into_response, with_body_as_json, with_cloneable};
 use wasabi::{client_bail, status_bail};
 
-/// Permission required to read/administer a tenant.
-const REQUIRE_ADMIN_TENANT: &[&str] = &[ADMIN_TENANT_PERMISSION];
+/// Permission required to read/administer a tenant: own-tenant self-service (`admin:tenant`) **or**
+/// cross-tenant administration (`manage:tenants`). [`enforce_own_tenant`] then narrows an
+/// `admin:tenant`-only caller to their own tenant.
+const REQUIRE_ADMIN_TENANT: &[&str] = &[ADMIN_TENANT_PERMISSION, MANAGE_TENANTS_PERMISSION];
 
 /// Permission required for cross-tenant administration (list/create/delete tenants). Held only by
 /// system-tenant members via the `is:system-tenant` → `manage:tenants` projection.
@@ -58,17 +61,20 @@ struct OwnerSpec {
 #[serde(rename_all = "camelCase")]
 struct CreateTenantRequest {
     name: String,
-    owner: OwnerSpec,
+    /// Optional first owner. When omitted the tenant is created empty — add users afterwards
+    /// (e.g. impersonate the tenant on the Tenants screen, then create its users).
+    #[serde(default)]
+    owner: Option<OwnerSpec>,
     /// Optional custom-field values for the new tenant (validated against `customTenantFields`).
     custom_fields: Option<BTreeMap<String, Value>>,
 }
 
-/// Response echoing the new tenant and its owner user id.
+/// Response echoing the new tenant and (when an owner was created) its owner user id.
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct CreateTenantResponse {
     tenant_id: String,
-    owner_user_id: String,
+    owner_user_id: Option<String>,
 }
 
 /// Optional search for the list endpoint (`?q=`).
@@ -138,12 +144,14 @@ pub fn list_tenants_route(
 pub fn delete_tenant_route(
     tenants: Arc<dyn TenantRepository>,
     users: Arc<dyn UserRepository>,
+    api_keys: Arc<dyn ApiKeyRepository>,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("tenants" / String)
         .and(warp::delete())
         .and(with_cloneable(tenants))
         .and(with_cloneable(users))
+        .and(with_cloneable(api_keys))
         .and(with_user_with_any_permission(
             authenticator,
             REQUIRE_MANAGE_TENANTS,
@@ -214,9 +222,10 @@ async fn handle_delete_tenant_route(
     tenant_id: String,
     tenants: Arc<dyn TenantRepository>,
     users: Arc<dyn UserRepository>,
+    api_keys: Arc<dyn ApiKeyRepository>,
     _caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(delete_tenant(tenant_id, tenants, users).await)
+    into_response(delete_tenant(tenant_id, tenants, users, api_keys).await)
 }
 
 #[tracing::instrument(level = "debug", name = "GET /tenants/{id}", skip_all)]
@@ -250,26 +259,46 @@ async fn create_tenant(
     if request.name.trim().is_empty() {
         client_bail!("Tenant 'name' is required");
     }
-    // Owner login identifier: explicit username, else the email; at least one is required.
-    let owner_email = request
-        .owner
-        .email
-        .map(|email| email.trim().to_owned())
-        .filter(|email| !email.is_empty());
-    let owner_username = request
-        .owner
-        .username
-        .map(|username| username.trim().to_owned())
-        .filter(|username| !username.is_empty())
-        .or_else(|| owner_email.clone());
-    let owner_username = match owner_username {
-        Some(username) => username,
-        None => client_bail!("Owner 'username' (or 'email' to use as the username) is required"),
-    };
     let config = config.current().await?;
-    config.validate_password(&request.owner.password)?;
     let custom_fields = request.custom_fields.unwrap_or_default();
     Config::validate_custom_fields(&config.custom_tenant_fields, &custom_fields)?;
+
+    // Resolve the owner up-front (fail before creating the tenant) when one was requested.
+    let owner = match request.owner {
+        Some(owner) => {
+            // Owner login identifier: explicit username, else the email; at least one is required.
+            let email = owner
+                .email
+                .map(|email| email.trim().to_owned())
+                .filter(|email| !email.is_empty());
+            let username = owner
+                .username
+                .map(|username| username.trim().to_owned())
+                .filter(|username| !username.is_empty())
+                .or_else(|| email.clone());
+            let username = match username {
+                Some(username) => username,
+                None => {
+                    client_bail!("Owner 'username' (or 'email' to use as the username) is required")
+                }
+            };
+            config.validate_password(&owner.password)?;
+            let password_hash = crate::auth::password::hash(&owner.password)?;
+            Some(NewUser {
+                tenant_id: String::new(), // filled in once the tenant exists
+                roles: vec![ROLE_OWNER.to_owned()],
+                username,
+                email,
+                title: owner.title,
+                salutation: owner.salutation.unwrap_or_default(),
+                firstname: owner.firstname,
+                lastname: owner.lastname,
+                password_hash: Some(password_hash),
+                custom_fields: BTreeMap::new(),
+            })
+        }
+        None => None,
+    };
 
     let tenant = tenants
         .create_tenant(request.name.trim(), &slugify(&request.name))
@@ -282,25 +311,17 @@ async fn create_tenant(
         let _ = tenants.put_tenant(with_fields).await?;
     }
 
-    let password_hash = crate::auth::password::hash(&request.owner.password)?;
-    let owner = users
-        .create_user(NewUser {
-            tenant_id: tenant.tenant_id.clone(),
-            roles: vec![ROLE_OWNER.to_owned()],
-            username: owner_username,
-            email: owner_email,
-            title: request.owner.title,
-            salutation: request.owner.salutation.unwrap_or_default(),
-            firstname: request.owner.firstname,
-            lastname: request.owner.lastname,
-            password_hash: Some(password_hash),
-            custom_fields: BTreeMap::new(),
-        })
-        .await?;
+    let owner_user_id = match owner {
+        Some(mut new_user) => {
+            new_user.tenant_id = tenant.tenant_id.clone();
+            Some(users.create_user(new_user).await?.user_id)
+        }
+        None => None,
+    };
 
     Ok(CreateTenantResponse {
         tenant_id: tenant.tenant_id,
-        owner_user_id: owner.user_id,
+        owner_user_id,
     })
 }
 
@@ -339,6 +360,7 @@ async fn delete_tenant(
     tenant_id: String,
     tenants: Arc<dyn TenantRepository>,
     users: Arc<dyn UserRepository>,
+    api_keys: Arc<dyn ApiKeyRepository>,
 ) -> anyhow::Result<Value> {
     if tenants.get_tenant(&tenant_id).await?.is_none() {
         client_bail!("No such tenant");
@@ -349,6 +371,14 @@ async fn delete_tenant(
         status_bail!(
             StatusCode::CONFLICT,
             "Tenant still has users — remove them before deleting the tenant"
+        );
+    }
+
+    // Likewise its API keys (service keys / PATs) would be orphaned.
+    if !api_keys.list_by_tenant(&tenant_id).await?.is_empty() {
+        status_bail!(
+            StatusCode::CONFLICT,
+            "Tenant still has API keys — remove them before deleting the tenant"
         );
     }
 
@@ -397,8 +427,12 @@ async fn patch_tenant(
     tenants.put_tenant(tenant).await
 }
 
-/// Ensures the caller is acting on their own tenant (a foreign tenant reads as forbidden).
+/// Ensures the caller may act on `tenant_id`. Cross-tenant admins (`manage:tenants`) may act on any
+/// tenant; everyone else (`admin:tenant` self-service) is confined to their own tenant.
 fn enforce_own_tenant(tenant_id: &str, caller: &AuthUser) -> anyhow::Result<()> {
+    if caller.has_any_permission(REQUIRE_MANAGE_TENANTS) {
+        return Ok(());
+    }
     if caller.tenant_id()? != tenant_id {
         status_bail!(
             StatusCode::FORBIDDEN,

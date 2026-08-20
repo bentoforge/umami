@@ -169,7 +169,9 @@ export interface Tenant {
 
 export interface CreateTenantRequest {
   name: string;
-  owner: {
+  /** Optional first owner. Omit to create an empty tenant (add users afterwards by impersonating
+   * it on the Tenants screen). */
+  owner?: {
     /** Owner login username (unique). If omitted, `email` is used as the username. */
     username?: string;
     /** Optional contact email (not unique). */
@@ -182,7 +184,8 @@ export interface CreateTenantRequest {
 
 export interface CreateTenantResponse {
   tenantId: string;
-  ownerUserId: string;
+  /** The created owner's user id — only present when an `owner` was supplied. */
+  ownerUserId: string | null;
 }
 
 // ── Config ────────────────────────────────────────────────────────────────────

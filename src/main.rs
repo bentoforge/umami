@@ -293,7 +293,7 @@ async fn app() -> anyhow::Result<()> {
         // personal access tokens (self-service)
         create_my_pat_route(api_key_repository.clone(), authenticator.clone()),
         list_my_pats_route(api_key_repository.clone(), authenticator.clone()),
-        delete_my_pat_route(api_key_repository, authenticator.clone()),
+        delete_my_pat_route(api_key_repository.clone(), authenticator.clone()),
         // messaging links (self-service code + own links)
         my_code_route(
             messaging_repository.clone(),
@@ -349,6 +349,7 @@ async fn app() -> anyhow::Result<()> {
         delete_tenant_route(
             tenant_repository.clone(),
             user_repository.clone(),
+            api_key_repository.clone(),
             authenticator.clone()
         ),
         get_tenant_route(tenant_repository.clone(), authenticator.clone()),
