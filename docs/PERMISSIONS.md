@@ -40,8 +40,8 @@ policy evolves in config.
 
   The auth-strength markers (`is:passkey`/`is:totp`/`is:2fa`) reflect **how this session logged in**:
   they are recorded on the session at login, re-applied on refresh, and carried across
-  `POST /auth/exchange` / `POST /auth/switch-tenant` via the token's `amr` claim. API-key / M2M
-  tokens never carry them (no interactive second factor).
+  `POST /auth/switch-tenant` via the token's `amr` claim. API-key / M2M tokens never carry them
+  (no interactive second factor).
 
 ### Subject set `S`
 At token-issue time the mint layer builds `S` from the principal + tenant + computed markers:
@@ -141,14 +141,14 @@ granted — enabling chaining like `role:admin → write:blocks`, then `write:bl
 ## 4. Mint flow (per token)
 
 *("mint" = issue + sign a JWT — the `mint_for_api` broker step every login / refresh / API-key
-exchange / downstream exchange runs through.)*
+exchange runs through.)*
 
 1. Build the subject set `subjects`:
    - user / PAT → the user's `role:*` (a PAT with a non-empty `roles` restriction uses
      `user.roles ∩ pat.roles`); service key → the key's `scope:*`;
    - ∪ the tenant's `feature:*`; ∪ computed `is:*` (e.g. `is:system-tenant`).
-2. Resolve the target `ApiDef` (login/refresh → `umami` or the session's `api_code`; api-key/PAT →
-   the key's chosen api; downstream → the requested api).
+2. Resolve the target `ApiDef` (login/refresh → the requested `api`, default `umami`; api-key/PAT →
+   the key's chosen api).
 3. **Permissions (ordered accumulate):** `granted = {}`; for each rule in `api.permissions` in order,
    if `rule.when` holds against `subjects ∪ granted`, add `rule.grant` to `granted`. Result = `granted`
    (deduped, sorted).

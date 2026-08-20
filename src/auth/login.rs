@@ -41,6 +41,13 @@ struct LoginRequest {
     api: Option<String>,
 }
 
+/// Query for `POST /auth/refresh` — the target API to mint the fresh access token for.
+#[derive(Deserialize, Debug)]
+struct RefreshQuery {
+    /// Target API code from the config `apis` catalog. Defaults to `umami` (the admin API).
+    api: Option<String>,
+}
+
 /// Refresh success body — the access token is returned in the body (kept in memory by the client);
 /// the refresh token travels only in the `HttpOnly` cookie.
 #[derive(Serialize, Debug)]
@@ -75,12 +82,15 @@ pub fn login_route(context: AuthContext) -> BoxedFilter<(impl warp::Reply,)> {
         .boxed()
 }
 
-/// `POST /auth/refresh` — rotate the refresh cookie and issue a fresh access token.
+/// `POST /auth/refresh` — trade the refresh cookie for a fresh access token (and rotate the cookie).
+/// Optional `?api=` picks the target API from the config catalog (default `umami`); the session is
+/// audience-agnostic, so the same cookie can mint tokens for any API the user is eligible for.
 pub fn refresh_route(context: AuthContext) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("auth" / "refresh")
         .and(warp::post())
         .and(with_cloneable(Arc::new(context)))
         .and(warp::header::optional::<String>("cookie"))
+        .and(warp::query::<RefreshQuery>())
         .and_then(handle_refresh_route)
         .boxed()
 }
@@ -119,8 +129,9 @@ async fn handle_login_route(
 async fn handle_refresh_route(
     context: Arc<AuthContext>,
     cookie_header: Option<String>,
+    query: RefreshQuery,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    match refresh(&context, cookie_header.as_deref()).await {
+    match refresh(&context, cookie_header.as_deref(), query.api.as_deref()).await {
         Ok((body, set_cookie)) => {
             json_with_optional_cookie(StatusCode::OK, &body, set_cookie).map_err(into_rejection)
         }
@@ -335,9 +346,9 @@ async fn login(
 }
 
 /// Creates a session and issues an access token + refresh cookie for an already-authenticated user.
-/// `api_code` selects the target API the access token (and every later refresh) is minted for; the
-/// session records it. Shared by password login and the WebAuthn passkey login. Returns
-/// `(access_token, set_cookie)`.
+/// `api_code` selects the target API for the *initial* access token only — the session is
+/// audience-agnostic, so later `/auth/refresh` calls pick their own `api`. Shared by password login
+/// and the WebAuthn passkey login. Returns `(access_token, set_cookie)`.
 pub(crate) async fn issue_session(
     context: &AuthContext,
     user: &User,
@@ -370,7 +381,6 @@ pub(crate) async fn issue_session(
         .create_session(NewSession {
             user_id: user.user_id.clone(),
             active_tenant_id: Some(user.tenant_id.clone()),
-            api_code: api_code.to_owned(),
             refresh_hash,
             token_version_at_issue: user.token_version,
             mfa_passkey,
@@ -399,6 +409,7 @@ pub(crate) async fn issue_session(
 async fn refresh(
     context: &AuthContext,
     cookie_header: Option<&str>,
+    api: Option<&str>,
 ) -> anyhow::Result<(TokenResponse, Option<String>)> {
     let (session_id, secret) = match parse_refresh_cookie(cookie_header) {
         Some(parsed) => parsed,
@@ -486,14 +497,16 @@ async fn refresh(
         .active_tenant_id
         .as_deref()
         .unwrap_or(&user.tenant_id);
-    // Re-mint for the API this session was opened against, so the audience stays stable; carry the
+    // Mint for the API the caller asked for (default `umami`) — the session is audience-agnostic, so
+    // the same cookie can be traded for a token for any API the user is eligible for. Carry the
     // session's original auth-strength markers (is:passkey/is:totp/is:2fa) across the rotation.
+    let api_code = api.unwrap_or("umami");
     let access_token = mint_access_token(
         context,
         &config,
         &user,
         tenant_id,
-        &session.api_code,
+        api_code,
         session.mfa_passkey,
         session.mfa_totp,
     )

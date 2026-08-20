@@ -58,31 +58,34 @@ Each `ApiDef`:
 
 Machine tokens (API-key exchange) additionally carry `kind: "api_key"`.
 
-## The exchange paths
+## The minting paths
 
 All resolve the target `ApiDef`, evaluate eligibility against the requester's S, project the
 permissions, apply the claim mapping, and mint a token with `aud = api.audience`. **One token = one
-audience** (a JWT has one `aud`).
+audience** (a JWT has one `aud`). The two user paths differ only in *how the caller authenticates* —
+by refresh cookie vs. by API key.
 
-1. **Login, minting directly** — `POST /auth/login { …, api? }` (and passkey login
-   `POST /auth/webauthn/login/finish { …, api? }`). When a user works mostly against one product
-   API, `api` mints the access token for it right away — no follow-up `/auth/exchange` round-trip.
-   The **session records `api_code`**, so `POST /auth/refresh` keeps re-minting for the same
-   audience. `api` defaults to `"umami"` (the admin API). Ineligibility fails the login (403) before
-   a session is created.
+1. **Cookie → access token** — `POST /auth/refresh?api=<code>`, authenticated by the `HttpOnly`
+   refresh cookie. This is the one operation a logged-in user (or their same-site SPA) uses to obtain
+   an access token, whether it's the *first* one for an API or a *renewal* of an expired one — the
+   session is **audience-agnostic**, so the same cookie mints for any API the user is eligible for.
+   `api` defaults to `"umami"` (the admin API); an ineligible `api` is `403`. `POST /auth/login
+   { …, api? }` (and passkey `POST /auth/webauthn/login/finish { …, api? }`) is just the convenience
+   of setting the cookie *and* handing back that first access token in one round-trip; the session
+   does **not** remember `api`. To hold tokens for several APIs at once, a SPA simply calls
+   `/auth/refresh?api=` once per API — concurrent calls are safe (see the refresh grace window).
 
 2. **API-key exchange** — `POST /auth/token { apiKey, api? }`. A key carries `apis: [code,…]` (the
    set it may mint for; default `["umami"]`). `api` selects one of them (required when the key
    allows more than one; a not-allowed `api` is 403). The requester's S comes from the key's roles
-   (+ its tenant's effective features). Machine tokens also carry `kind: "api_key"`.
+   (+ its tenant's effective features). Machine tokens also carry `kind: "api_key"`. No cookie, no
+   session — this is the machine/BFF path.
 
-3. **User → downstream exchange** — `POST /auth/exchange { api }`, authenticated by the caller's
-   umami access token. Lets an already-logged-in user/SPA obtain a token for *another* product API
-   without a fresh login. Does **not** touch the session or the stored umami token. The requester's
-   S comes from the user's roles (+ tenant features). (RFC-8693-style token exchange.)
-
-Use path 1 when the SPA targets one API; path 3 when a umami-admin session occasionally needs a
-downstream token too.
+> **Cross-*site* SPAs** (a product SPA on a genuinely different registrable domain, where
+> `SameSite=Lax` withholds the umami cookie on background `fetch`) are **not** served by a
+> bearer-based token exchange in v1; they use the enterprise **OIDC redirect** flow (a top-level
+> navigation, which `Lax` does carry). Same-*site* subdomains (`spa.myapp.com` → `iam.myapp.com`)
+> use path 1 directly with `fetch(..., { credentials: "include" })` + CORS.
 
 ## Worked example
 
@@ -101,9 +104,9 @@ Key targets `dbx-core`; its roles resolve to `{member, write:blocks}`; its tenan
   the old `tokenClaims` behaviour folded into its `claims`). The top-level `tokenClaims` is
   superseded by per-API `claims`.
 - **api-keys**: add `apis: [code]` (allowed targets; default `["umami"]`).
-- **token issuance**: `aud` is now per-call (from the resolved API). `login`/`refresh` mint for the
-  `umami` API. API-key exchange mints for the key's chosen API. New `POST /auth/exchange` mints a
-  downstream token for the authenticated user.
+- **token issuance**: `aud` is now per-call (from the resolved API). `login` and `refresh` mint for
+  the requested `api` (default `umami`); the session no longer pins an audience. API-key exchange
+  mints for the key's chosen API.
 - **`UMAMI_DEFAULT_AUDIENCE`** env is superseded by the `umami` API's `audience` in config.
 
 ## Deferred

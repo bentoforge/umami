@@ -2,7 +2,6 @@ import type {
   AccessClaims,
   ApiErrorBody,
   ApiKeyView,
-  AuditEntry,
   AuditPage,
   Config,
   CreateApiKeyRequest,
@@ -308,16 +307,6 @@ export class UmamiClient {
     );
     this.setToken(data.accessToken);
     return data;
-  }
-
-  /** Downstream token exchange: mints a token for a product API (`api` from the config catalog)
-   * for the currently-logged-in user, WITHOUT replacing the stored umami token. Returns the
-   * downstream token for the caller to use against that API. */
-  exchange(api: string): Promise<ExchangeResponse> {
-    return this.request<ExchangeResponse>("/auth/exchange", {
-      method: "POST",
-      body: JSON.stringify({ api }),
-    });
   }
 
   // ── tenants ────────────────────────────────────────────────────────────────────

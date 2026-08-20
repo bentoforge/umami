@@ -59,7 +59,6 @@ use crate::auth::apikeys::{
     create_api_key_route, create_my_pat_route, delete_api_key_route, delete_my_pat_route,
     exchange_route, list_api_keys_route, list_my_pats_route, list_user_pats_route,
 };
-use crate::auth::exchange::{ExchangeDeps, exchange_route as user_exchange_route};
 use crate::auth::login::{login_route, logout_route, refresh_route};
 use crate::auth::me::{
     change_password_route, delete_session_route, logout_all_route, me_route, patch_me_route,
@@ -335,18 +334,6 @@ async fn app() -> anyhow::Result<()> {
                 tenants: tenant_repository.clone(),
                 config: config_repository.clone(),
                 tokens: token_issuer.clone(),
-            },
-            authenticator.clone()
-        ),
-        // downstream token exchange (authenticated user → product API)
-        user_exchange_route(
-            ExchangeDeps {
-                users: user_repository.clone(),
-                tenants: tenant_repository.clone(),
-                config: config_repository.clone(),
-                tokens: token_issuer,
-                audit: audit_repository.clone(),
-                system_tenant_id: system_tenant_id.clone(),
             },
             authenticator.clone()
         ),

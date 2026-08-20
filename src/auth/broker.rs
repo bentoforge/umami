@@ -1,6 +1,6 @@
 //! Token brokering: resolve a target API (audience), check eligibility, project permissions, apply
-//! the claim mapping, and mint an access token. Shared by login, API-key exchange, and the user
-//! downstream exchange. See `docs/AUDIENCES.md`.
+//! the claim mapping, and mint an access token. Shared by login, `/auth/refresh` (which picks its
+//! own target API), and API-key exchange. See `docs/AUDIENCES.md`.
 
 use crate::auth::tokens::{AccessTokenClaims, TokenIssuer};
 use crate::config::Config;

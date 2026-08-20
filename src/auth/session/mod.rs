@@ -18,11 +18,6 @@ use subtle::ConstantTimeEq;
 /// Number of random bytes in a refresh secret (256 bits of entropy).
 const REFRESH_SECRET_BYTES: usize = 32;
 
-/// Default target API for sessions created before `api_code` existed: the umami admin API.
-fn default_session_api() -> String {
-    "umami".to_owned()
-}
-
 /// A persisted login session.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -34,10 +29,6 @@ pub struct Session {
     /// Tenant the session is currently scoped to (drives the token's `tenant` claim). `None`
     /// until the user selects/has a tenant (memberships arrive in Phase 3).
     pub active_tenant_id: Option<String>,
-    /// Target API code this session mints access tokens for (see `docs/AUDIENCES.md`), chosen at
-    /// login. `refresh` re-mints for the same API. Defaults to `"umami"` for older rows.
-    #[serde(default = "default_session_api")]
-    pub api_code: String,
     /// SHA-256 (base64url) of the current refresh secret. The secret itself is never stored.
     pub refresh_hash: String,
     /// The immediately-previous refresh hash, kept briefly after a rotation so a racing/retried

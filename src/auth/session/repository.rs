@@ -39,8 +39,6 @@ pub struct NewSession {
     pub user_id: String,
     /// Tenant the session is scoped to, if any.
     pub active_tenant_id: Option<String>,
-    /// Target API code this session mints tokens for (`refresh` reuses it).
-    pub api_code: String,
     /// SHA-256 (base64url) of the initial refresh secret.
     pub refresh_hash: String,
     /// Snapshot of `user.tokenVersion` at issue.
@@ -140,7 +138,6 @@ impl SessionRepository for DynamoSessionRepository {
             session_id: generate_id(),
             user_id: new_session.user_id,
             active_tenant_id: new_session.active_tenant_id,
-            api_code: new_session.api_code,
             refresh_hash: new_session.refresh_hash,
             prev_refresh_hash: None,
             prev_refresh_expires_at: None,

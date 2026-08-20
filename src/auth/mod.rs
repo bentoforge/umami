@@ -6,7 +6,6 @@
 pub mod apikeys;
 pub mod broker;
 pub mod cookies;
-pub mod exchange;
 pub mod login;
 pub mod me;
 pub mod password;

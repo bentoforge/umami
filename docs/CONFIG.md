@@ -145,8 +145,7 @@ define their own.
 | `messaging:resolve` | `GET /messaging/resolve` (identity → user info / token) |
 
 **Authenticated but permission-free** (any valid token): `GET /auth/me`, `POST /auth/logout-all`,
-`POST /auth/exchange`, `GET /config/custom-fields`, plus login/refresh/logout, JWKS and the MFA
-ceremonies. (`POST /auth/me/password` and `PATCH /auth/me` are authenticated too, but blocked when
+`GET /config/custom-fields`, plus login/refresh/logout, JWKS and the MFA ceremonies. (`POST /auth/me/password` and `PATCH /auth/me` are authenticated too, but blocked when
 `self:readonly` is present.)
 
 ---
