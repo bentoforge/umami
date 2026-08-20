@@ -1,88 +1,39 @@
 import type {
   ApiKeyView,
+  AuditEntry,
   CustomFieldDef,
   MessagingCodeResponse,
   MessagingLink,
   Salutation,
   SessionView,
+  TotpSetup,
 } from "@bentoforge/umami-iam";
-import { useCallback, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useUmami } from "../auth/UmamiProvider";
-import { Banner, CustomFieldsForm, errMsg, Field, formatDateTime, Loader } from "../components";
+import {
+  Banner,
+  CustomFieldsForm,
+  errMsg,
+  Field,
+  formatDateTime,
+  formatFieldValue,
+  Loader,
+} from "../components";
 import { card, dangerButton, ghostButton, input, primaryButton } from "../ui";
 
-/** Profile tab: signed-in user, tenant, decoded permissions, passkey enrolment. */
+/** Profile: base data (editable), recent activity, sessions, security, and personal tokens. */
 export function ProfilePage() {
-  const { t } = useTranslation();
   const { client, me } = useUmami();
-  const [notice, setNotice] = useState<string | null>(null);
-  const claims = client.getClaims();
 
   if (!me) return null;
 
-  const onRegisterPasskey = async () => {
-    setNotice(null);
-    try {
-      await client.registerPasskey();
-      setNotice(t("dashboard.passkeyAdded"));
-    } catch (err) {
-      setNotice(err instanceof Error ? err.message : String(err));
-    }
-  };
-
   return (
     <div className="space-y-6">
-      <section className={card}>
-        <p className="text-sm text-slate-500">{t("dashboard.signedInAs")}</p>
-        <p className="text-xl font-semibold text-slate-900 dark:text-white">{me.user.username}</p>
-        <p className="text-slate-500">
-          {me.user.username}
-          {me.user.email ? ` · ${me.user.email}` : ""}
-        </p>
-        <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
-          <div>
-            <dt className="text-slate-500">{t("dashboard.tenant")}</dt>
-            <dd className="text-slate-900 dark:text-white font-medium">
-              {me.tenant?.name ?? me.user.tenantId}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-slate-500">{t("dashboard.role")}</dt>
-            <dd className="text-slate-900 dark:text-white font-medium">
-              {me.user.roles.join(", ") || "—"}
-            </dd>
-          </div>
-        </dl>
-      </section>
-
-      <section className={card}>
-        <p className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-          {t("dashboard.permissions")}
-        </p>
-        <div className="flex flex-wrap gap-2">
-          {(claims?.permissions ?? []).length === 0 && <span className="text-slate-400">—</span>}
-          {(claims?.permissions ?? []).map((p) => (
-            <span
-              key={p}
-              className="rounded-full bg-brand/10 text-brand px-3 py-1 text-xs font-medium"
-            >
-              {p}
-            </span>
-          ))}
-        </div>
-      </section>
-
-      <section className={card}>
-        <button onClick={() => void onRegisterPasskey()} className={ghostButton}>
-          {t("dashboard.registerPasskey")}
-        </button>
-        {notice && <p className="mt-3 text-sm text-slate-600 dark:text-slate-300">{notice}</p>}
-      </section>
-
-      {!client.hasPermission("self:readonly") && <ProfileFieldsPanel />}
-      {!client.hasPermission("self:readonly") && <ChangePasswordPanel />}
+      <BaseDataCard />
+      <AuditCard />
       <SessionsPanel />
+      <SecurityCard />
       {client.hasPermission("manage:pat") && <PatsPanel />}
       {client.hasPermission("messaging:self") && <MessagingPanel />}
     </div>
@@ -288,147 +239,367 @@ function MessagingPanel() {
   );
 }
 
-/** Self-service edit of the caller's own `selfEditable` custom fields (profile). Hidden entirely
- * when the deployment marks no user field self-editable. */
-function ProfileFieldsPanel() {
+function DetailRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <>
+      <dt className="text-slate-500">{label}</dt>
+      <dd className="text-slate-800 dark:text-slate-200">{children}</dd>
+    </>
+  );
+}
+
+/** Base data: read view (identity + name + tenant/roles + custom fields) with an Edit toggle that
+ * turns the name parts and self-editable custom fields into inputs (patchMe). */
+function BaseDataCard() {
   const { client, me, refreshMe } = useUmami();
   const { t } = useTranslation();
   const [defs, setDefs] = useState<CustomFieldDef[]>([]);
+  const [editing, setEditing] = useState(false);
   const [values, setValues] = useState<Record<string, unknown>>({});
   const [title, setTitle] = useState("");
   const [salutation, setSalutation] = useState<Salutation>("");
   const [firstname, setFirstname] = useState("");
   const [lastname, setLastname] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState(false);
 
+  const canEdit = !client.hasPermission("self:readonly");
+
   useEffect(() => {
-    void (async () => {
-      try {
-        const schema = await client.getCustomFields();
-        setDefs(schema.user.filter((def) => def.selfEditable));
-      } catch (err) {
-        setError(errMsg(err));
-      }
-    })();
+    client
+      .getCustomFields()
+      .then((schema) => setDefs(schema.user))
+      .catch(() => setDefs([]));
   }, [client]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: seed the form once from the fetched profile
-  useEffect(() => {
+  const reset = useCallback(() => {
     setValues((me?.user.customFields ?? {}) as Record<string, unknown>);
     setTitle(me?.user.title ?? "");
     setSalutation(me?.user.salutation ?? "");
     setFirstname(me?.user.firstname ?? "");
     setLastname(me?.user.lastname ?? "");
-  }, [me?.user.customFields]);
+  }, [me?.user]);
+
+  useEffect(() => reset(), [reset]);
+
+  if (!me) return null;
+  const u = me.user;
+  const editableDefs = defs.filter((def) => def.selfEditable);
 
   const save = async () => {
-    setBusy(true);
+    setSaving(true);
     setError(null);
     setOk(false);
     try {
-      // Send only the self-editable keys — the server rejects anything else anyway.
       const customFields: Record<string, unknown> = {};
-      for (const def of defs) {
+      for (const def of editableDefs) {
         customFields[def.key] = values[def.key];
       }
       await client.patchMe({ title, salutation, firstname, lastname, customFields });
       await refreshMe();
       setOk(true);
+      setEditing(false);
     } catch (err) {
       setError(errMsg(err));
     } finally {
-      setBusy(false);
+      setSaving(false);
     }
   };
 
   return (
-    <section className={`${card} space-y-3`}>
-      <h2 className="font-medium text-slate-800 dark:text-slate-200">Profile</h2>
-      {me?.user.fullName && (
-        <p className="text-sm text-slate-500">
-          Name: <span className="text-slate-800 dark:text-slate-200">{me.user.fullName}</span>
-        </p>
-      )}
-      {error && <Banner tone="error">{error}</Banner>}
-      {ok && <Banner tone="ok">Profile updated.</Banner>}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <Field label="Salutation">
-          <select
-            className={input}
-            value={salutation}
-            onChange={(e) => setSalutation(e.target.value as Salutation)}
+    <section className={`${card} space-y-4`}>
+      <div className="flex items-center justify-between">
+        <h2 className="font-medium text-slate-800 dark:text-slate-200">
+          {t("profile.detailsTitle")}
+        </h2>
+        {!editing && canEdit && (
+          <button
+            className={ghostButton}
+            onClick={() => {
+              setOk(false);
+              setEditing(true);
+            }}
           >
-            <option value="">—</option>
-            <option value="SIR">{t("users.salutationSir")}</option>
-            <option value="MADAM">{t("users.salutationMadam")}</option>
-          </select>
-        </Field>
-        <Field label="Title">
-          <input className={input} value={title} onChange={(e) => setTitle(e.target.value)} />
-        </Field>
-        <Field label="First name">
-          <input
-            className={input}
-            value={firstname}
-            onChange={(e) => setFirstname(e.target.value)}
-          />
-        </Field>
-        <Field label="Last name">
-          <input className={input} value={lastname} onChange={(e) => setLastname(e.target.value)} />
-        </Field>
+            {t("users.edit")}
+          </button>
+        )}
       </div>
-      {defs.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <CustomFieldsForm defs={defs} values={values} onChange={setValues} />
-        </div>
+      {error && <Banner tone="error">{error}</Banner>}
+      {ok && <Banner tone="ok">{t("profile.saved")}</Banner>}
+
+      {editing ? (
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <Field label={t("users.salutation")}>
+              <select
+                className={input}
+                value={salutation}
+                onChange={(e) => setSalutation(e.target.value as Salutation)}
+              >
+                <option value="">—</option>
+                <option value="SIR">{t("users.salutationSir")}</option>
+                <option value="MADAM">{t("users.salutationMadam")}</option>
+              </select>
+            </Field>
+            <Field label={t("users.nameTitle")}>
+              <input className={input} value={title} onChange={(e) => setTitle(e.target.value)} />
+            </Field>
+            <Field label={t("users.firstname")}>
+              <input
+                className={input}
+                value={firstname}
+                onChange={(e) => setFirstname(e.target.value)}
+              />
+            </Field>
+            <Field label={t("users.lastname")}>
+              <input
+                className={input}
+                value={lastname}
+                onChange={(e) => setLastname(e.target.value)}
+              />
+            </Field>
+            {editableDefs.length > 0 && (
+              <CustomFieldsForm defs={editableDefs} values={values} onChange={setValues} />
+            )}
+          </div>
+          <div className="flex gap-2">
+            <button className={primaryButton} disabled={saving} onClick={() => void save()}>
+              {t("users.save")}
+            </button>
+            <button
+              className={ghostButton}
+              disabled={saving}
+              onClick={() => {
+                reset();
+                setEditing(false);
+              }}
+            >
+              {t("users.cancel")}
+            </button>
+          </div>
+        </>
+      ) : (
+        <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-2 text-sm">
+          <DetailRow label={t("users.username")}>{u.username}</DetailRow>
+          <DetailRow label={t("users.email")}>{u.email ?? "—"}</DetailRow>
+          <DetailRow label={t("users.name")}>
+            {u.firstname || u.lastname ? u.fullName : "—"}
+          </DetailRow>
+          <DetailRow label={t("dashboard.tenant")}>{me.tenant?.name ?? u.tenantId}</DetailRow>
+          <DetailRow label={t("dashboard.role")}>{u.roles.join(", ") || "—"}</DetailRow>
+          {defs.map((def) => (
+            <DetailRow key={def.key} label={def.label}>
+              {formatFieldValue(u.customFields[def.key])}
+            </DetailRow>
+          ))}
+        </dl>
       )}
-      <button className={primaryButton} disabled={busy} onClick={() => void save()}>
-        Save
-      </button>
     </section>
   );
 }
 
-/** Self-service password change (verifies the current password; logs out other sessions). */
-function ChangePasswordPanel() {
+/** The caller's own recent audit entries (up to 10). */
+function AuditCard() {
   const { client } = useUmami();
+  const { t } = useTranslation();
+  const [entries, setEntries] = useState<AuditEntry[] | null>(null);
+
+  useEffect(() => {
+    client
+      .myAudit(10)
+      .then(setEntries)
+      .catch(() => setEntries([]));
+  }, [client]);
+
+  const dot: Record<string, string> = {
+    good: "bg-emerald-500",
+    neutral: "bg-slate-400",
+    bad: "bg-red-500",
+  };
+
+  return (
+    <section className={`${card} space-y-3`}>
+      <h2 className="font-medium text-slate-800 dark:text-slate-200">{t("users.auditTitle")}</h2>
+      {entries === null ? (
+        <Loader />
+      ) : entries.length === 0 ? (
+        <p className="text-sm text-slate-500">{t("users.noAudit")}</p>
+      ) : (
+        <ul className="divide-y divide-slate-100 dark:divide-slate-700/50">
+          {entries.map((entry) => (
+            <li key={entry.id} className="flex items-start gap-3 py-2">
+              <span
+                className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${dot[entry.severity] ?? dot.neutral}`}
+              />
+              <div className="min-w-0">
+                <div className="text-sm text-slate-800 dark:text-slate-200">{entry.message}</div>
+                <div className="text-xs text-slate-400">{formatDateTime(entry.timestamp)}</div>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+/** Security: three actions (change password / passkey / authenticator app). Password and TOTP
+ * expand inline within the card; passkey enrols immediately. */
+function SecurityCard() {
+  const { client, me, refreshMe } = useUmami();
+  const { t } = useTranslation();
+  const [mode, setMode] = useState<"menu" | "password" | "totp">("menu");
+  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const canPassword = !client.hasPermission("self:readonly");
+  const mfaEnabled = me?.user.mfaEnabled ?? false;
+
+  const enrolPasskey = async () => {
+    setNotice(null);
+    setError(null);
+    try {
+      await client.registerPasskey();
+      await refreshMe();
+      setNotice(t("dashboard.passkeyAdded"));
+    } catch (err) {
+      setError(errMsg(err));
+    }
+  };
+
+  return (
+    <section className={`${card} space-y-4`}>
+      <h2 className="font-medium text-slate-800 dark:text-slate-200">
+        {t("profile.securityTitle")}
+      </h2>
+      {error && <Banner tone="error">{error}</Banner>}
+      {notice && <Banner tone="ok">{notice}</Banner>}
+
+      {mode === "menu" && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {canPassword && (
+            <SecurityAction
+              label={t("profile.changePassword")}
+              desc={t("profile.changePasswordDesc")}
+              onClick={() => {
+                setNotice(null);
+                setError(null);
+                setMode("password");
+              }}
+            />
+          )}
+          <SecurityAction
+            label={t("profile.passkey")}
+            desc={t("profile.passkeyDesc")}
+            onClick={() => void enrolPasskey()}
+          />
+          <SecurityAction
+            label={t("profile.totp")}
+            desc={t("profile.totpDesc")}
+            badge={mfaEnabled ? t("profile.totpActive") : undefined}
+            onClick={() => {
+              setNotice(null);
+              setError(null);
+              setMode("totp");
+            }}
+          />
+        </div>
+      )}
+
+      {mode === "password" && (
+        <ChangePasswordForm
+          onDone={(msg) => {
+            setMode("menu");
+            setNotice(msg);
+          }}
+          onCancel={() => setMode("menu")}
+          onError={setError}
+        />
+      )}
+
+      {mode === "totp" && (
+        <TotpSection
+          enabled={mfaEnabled}
+          onDone={(msg) => {
+            setMode("menu");
+            setNotice(msg);
+          }}
+          onCancel={() => setMode("menu")}
+          onError={setError}
+        />
+      )}
+    </section>
+  );
+}
+
+/** One column in the security menu: a full-width outline button + a description below. */
+function SecurityAction({
+  label,
+  desc,
+  onClick,
+  badge,
+}: {
+  label: string;
+  desc: string;
+  onClick: () => void;
+  badge?: string;
+}) {
+  return (
+    <div className="space-y-2">
+      <button
+        type="button"
+        className={`${ghostButton} w-full inline-flex items-center justify-center gap-2`}
+        onClick={onClick}
+      >
+        {label}
+        {badge && (
+          <span className="rounded bg-brand/10 text-brand px-1.5 py-0.5 text-[10px]">{badge}</span>
+        )}
+      </button>
+      <p className="text-xs text-slate-500">{desc}</p>
+    </div>
+  );
+}
+
+/** Inline password-change form (verifies the current password; logs out other sessions). */
+function ChangePasswordForm({
+  onDone,
+  onCancel,
+  onError,
+}: {
+  onDone: (msg: string) => void;
+  onCancel: () => void;
+  onError: (msg: string) => void;
+}) {
+  const { client } = useUmami();
+  const { t } = useTranslation();
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [ok, setOk] = useState(false);
 
   const submit = async () => {
-    setError(null);
-    setOk(false);
     if (next !== confirm) {
-      setError("New password and confirmation do not match.");
+      onError(t("profile.passwordMismatch"));
       return;
     }
     setBusy(true);
+    onError("");
     try {
       await client.changePassword(current, next);
-      setOk(true);
-      setCurrent("");
-      setNext("");
-      setConfirm("");
+      onDone(t("profile.passwordChanged"));
     } catch (err) {
-      setError(errMsg(err));
+      onError(errMsg(err));
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <section className={`${card} space-y-3`}>
-      <h2 className="font-medium text-slate-800 dark:text-slate-200">Change password</h2>
-      {error && <Banner tone="error">{error}</Banner>}
-      {ok && <Banner tone="ok">Password changed. Other sessions have been logged out.</Banner>}
-      <div className="grid grid-cols-3 gap-3">
-        <Field label="Current password">
+    <div className="space-y-3">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <Field label={t("profile.currentPassword")}>
           <input
             className={input}
             type="password"
@@ -436,7 +607,7 @@ function ChangePasswordPanel() {
             onChange={(e) => setCurrent(e.target.value)}
           />
         </Field>
-        <Field label="New password">
+        <Field label={t("profile.newPassword")}>
           <input
             className={input}
             type="password"
@@ -444,7 +615,7 @@ function ChangePasswordPanel() {
             onChange={(e) => setNext(e.target.value)}
           />
         </Field>
-        <Field label="Confirm new password">
+        <Field label={t("profile.confirmPassword")}>
           <input
             className={input}
             type="password"
@@ -453,14 +624,114 @@ function ChangePasswordPanel() {
           />
         </Field>
       </div>
-      <button
-        className={primaryButton}
-        disabled={busy || !current || !next}
-        onClick={() => void submit()}
-      >
-        Change password
-      </button>
-    </section>
+      <div className="flex gap-2">
+        <button
+          className={primaryButton}
+          disabled={busy || !current || !next}
+          onClick={() => void submit()}
+        >
+          {t("profile.changePassword")}
+        </button>
+        <button className={ghostButton} disabled={busy} onClick={onCancel}>
+          {t("users.cancel")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Inline TOTP setup / teardown. When enabled, offers a code-gated disable; otherwise fetches a
+ * fresh secret to enrol and verify. */
+function TotpSection({
+  enabled,
+  onDone,
+  onCancel,
+  onError,
+}: {
+  enabled: boolean;
+  onDone: (msg: string) => void;
+  onCancel: () => void;
+  onError: (msg: string) => void;
+}) {
+  const { client, refreshMe } = useUmami();
+  const { t } = useTranslation();
+  const [setup, setSetup] = useState<TotpSetup | null>(null);
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (enabled) {
+      return;
+    }
+    client
+      .totpSetup()
+      .then(setSetup)
+      .catch((err) => onError(errMsg(err)));
+    // onError is stable enough for this one-shot setup fetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, client]);
+
+  const run = async (fn: () => Promise<unknown>) => {
+    setBusy(true);
+    onError("");
+    try {
+      await fn();
+      await refreshMe();
+      onDone(t("profile.saved"));
+    } catch (err) {
+      onError(errMsg(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      {enabled ? (
+        <p className="text-sm text-slate-500">{t("profile.totpDisableHint")}</p>
+      ) : (
+        <>
+          <p className="text-sm text-slate-500">{t("profile.totpSetupHint")}</p>
+          <div>
+            <div className="text-xs text-slate-500 mb-1">{t("profile.totpSecret")}</div>
+            <code className="block break-all rounded bg-slate-100 dark:bg-slate-900 px-3 py-2 text-sm font-mono tracking-wider text-slate-900 dark:text-white">
+              {setup?.secret ?? "…"}
+            </code>
+          </div>
+        </>
+      )}
+      <div className="flex flex-wrap items-end gap-3">
+        <Field label={t("profile.totpCode")}>
+          <input
+            className={`${input} max-w-40`}
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+          />
+        </Field>
+        {enabled ? (
+          <button
+            className={dangerButton}
+            disabled={busy || code.length < 6}
+            onClick={() => void run(() => client.totpDisable(code))}
+          >
+            {t("profile.totpDisable")}
+          </button>
+        ) : (
+          <button
+            className={primaryButton}
+            disabled={busy || code.length < 6}
+            onClick={() => void run(() => client.totpVerify(code))}
+          >
+            {t("profile.totpActivate")}
+          </button>
+        )}
+        <button className={ghostButton} disabled={busy} onClick={onCancel}>
+          {t("users.cancel")}
+        </button>
+      </div>
+    </div>
   );
 }
 

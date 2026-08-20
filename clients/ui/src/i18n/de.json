@@ -1,5 +1,7 @@
 {
-  "app": { "title": "umami" },
+  "app": {
+    "title": "umami"
+  },
   "common": {
     "loading": "Lade Daten…",
     "search": "Suchbegriff…",
@@ -134,5 +136,28 @@
     "featuresNothing": "nichts weiteres zuweisbar",
     "back": "Zurück",
     "notFound": "Mandant nicht gefunden."
+  },
+  "profile": {
+    "detailsTitle": "Stammdaten",
+    "saved": "Profil aktualisiert.",
+    "securityTitle": "Sicherheit",
+    "changePassword": "Passwort ändern",
+    "changePasswordDesc": "Setze ein neues Passwort — andere Sitzungen werden dabei abgemeldet.",
+    "passwordChanged": "Passwort geändert. Andere Sitzungen wurden abgemeldet.",
+    "currentPassword": "Aktuelles Passwort",
+    "newPassword": "Neues Passwort",
+    "confirmPassword": "Neues Passwort bestätigen",
+    "passwordMismatch": "Neues Passwort und Bestätigung stimmen nicht überein.",
+    "passkey": "Passkey registrieren",
+    "passkeyDesc": "Melde dich passwortlos per Face-/Touch-ID oder Sicherheitsschlüssel an.",
+    "totp": "Authenticator-App",
+    "totpDesc": "Zusätzlicher Schutz mit zeitbasierten Einmalcodes (TOTP).",
+    "totpActive": "Aktiv",
+    "totpSetupHint": "Gib das Geheimnis in deiner Authenticator-App ein und bestätige mit einem 6-stelligen Code.",
+    "totpSecret": "Geheimnis",
+    "totpCode": "6-stelliger Code",
+    "totpActivate": "Aktivieren",
+    "totpDisable": "Deaktivieren",
+    "totpDisableHint": "Gib einen aktuellen Code ein, um die Authenticator-App zu deaktivieren."
   }
 }

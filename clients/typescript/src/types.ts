@@ -154,6 +154,10 @@ export interface MeUser extends NameParts {
   email: string | null;
   locked: boolean;
   customFields: Record<string, unknown>;
+  /** Whether TOTP MFA is configured (never exposes the secret). */
+  mfaEnabled: boolean;
+  /** Whether the caller has at least one registered passkey. */
+  hasPasskey: boolean;
 }
 
 export interface MeResponse {

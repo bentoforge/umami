@@ -1,6 +1,12 @@
 {
-  "app": { "title": "umami" },
-  "common": { "loading": "Loading data…", "search": "Search…", "moreActions": "More actions" },
+  "app": {
+    "title": "umami"
+  },
+  "common": {
+    "loading": "Loading data…",
+    "search": "Search…",
+    "moreActions": "More actions"
+  },
   "nav": {
     "start": "Start",
     "tenants": "Tenants",
@@ -130,5 +136,28 @@
     "featuresNothing": "nothing else grantable",
     "back": "Back",
     "notFound": "Tenant not found."
+  },
+  "profile": {
+    "detailsTitle": "Details",
+    "saved": "Profile updated.",
+    "securityTitle": "Security",
+    "changePassword": "Change password",
+    "changePasswordDesc": "Set a new password — other sessions are logged out.",
+    "passwordChanged": "Password changed. Other sessions were logged out.",
+    "currentPassword": "Current password",
+    "newPassword": "New password",
+    "confirmPassword": "Confirm new password",
+    "passwordMismatch": "New password and confirmation do not match.",
+    "passkey": "Register a passkey",
+    "passkeyDesc": "Sign in passwordless with Face/Touch ID or a security key.",
+    "totp": "Authenticator app",
+    "totpDesc": "Extra protection with time-based one-time codes (TOTP).",
+    "totpActive": "Active",
+    "totpSetupHint": "Add the secret to your authenticator app and confirm with a 6-digit code.",
+    "totpSecret": "Secret",
+    "totpCode": "6-digit code",
+    "totpActivate": "Activate",
+    "totpDisable": "Disable",
+    "totpDisableHint": "Enter a current code to disable the authenticator app."
   }
 }

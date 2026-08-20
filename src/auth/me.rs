@@ -48,6 +48,10 @@ struct MeUser {
     names: DisplayNames,
     locked: bool,
     custom_fields: BTreeMap<String, Value>,
+    /// Whether TOTP MFA is configured (secret confirmed) — never exposes the secret.
+    mfa_enabled: bool,
+    /// Whether the caller has at least one registered passkey.
+    has_passkey: bool,
 }
 
 impl MeUser {
@@ -63,6 +67,8 @@ impl MeUser {
             salutation: user.salutation,
             firstname: user.firstname,
             lastname: user.lastname,
+            mfa_enabled: user.totp_secret.is_some(),
+            has_passkey: user.has_passkey,
             names,
             locked: user.locked,
             custom_fields: user.custom_fields,
