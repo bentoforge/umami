@@ -259,8 +259,18 @@ async fn app() -> anyhow::Result<()> {
         ),
         // MFA (TOTP)
         totp_setup_route(user_repository.clone(), mfa.clone(), authenticator.clone()),
-        totp_verify_route(user_repository.clone(), mfa.clone(), authenticator.clone()),
-        totp_disable_route(user_repository.clone(), mfa, authenticator.clone()),
+        totp_verify_route(
+            user_repository.clone(),
+            mfa.clone(),
+            audit_repository.clone(),
+            authenticator.clone()
+        ),
+        totp_disable_route(
+            user_repository.clone(),
+            mfa,
+            audit_repository.clone(),
+            authenticator.clone()
+        ),
         // MFA (WebAuthn passkeys)
         webauthn_register_start_route(
             webauthn_service.clone(),
@@ -272,6 +282,7 @@ async fn app() -> anyhow::Result<()> {
             webauthn_service.clone(),
             webauthn_repository.clone(),
             user_repository.clone(),
+            audit_repository.clone(),
             authenticator.clone()
         ),
         webauthn_login_start_route(

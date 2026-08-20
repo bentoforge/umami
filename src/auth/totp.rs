@@ -5,6 +5,8 @@
 //! /auth/mfa/totp/disable` turns it off (requires a current code). The login MFA challenge lives in
 //! `auth/login.rs`.
 
+use crate::audit::repository::{AuditRepository, record_best_effort};
+use crate::audit::{AuditSeverity, NewAuditEntry};
 use crate::auth::secretbox::SecretBox;
 use crate::constants::MAX_TEXT_BODY_SIZE;
 use crate::users::User;
@@ -19,7 +21,7 @@ use warp::http::StatusCode;
 use wasabi::web::auth::authenticator::Authenticator;
 use wasabi::web::auth::user::User as AuthUser;
 use wasabi::web::auth::with_user;
-use wasabi::web::warp::{into_response, with_body_as_json, with_cloneable};
+use wasabi::web::warp::{client_ip, into_response, with_body_as_json, with_cloneable};
 use wasabi::{client_bail, status_bail};
 
 /// Issuer label shown in authenticator apps.
@@ -91,6 +93,7 @@ pub fn totp_setup_route(
 pub fn totp_verify_route(
     users: Arc<dyn UserRepository>,
     secret_box: Arc<SecretBox>,
+    audit: Arc<dyn AuditRepository>,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("auth" / "mfa" / "totp" / "verify")
@@ -98,7 +101,9 @@ pub fn totp_verify_route(
         .and(with_body_as_json::<CodeRequest>(MAX_TEXT_BODY_SIZE))
         .and(with_cloneable(users))
         .and(with_cloneable(secret_box))
+        .and(with_cloneable(audit))
         .and(with_user(authenticator))
+        .and(client_ip())
         .and_then(handle_totp_verify_route)
         .boxed()
 }
@@ -107,6 +112,7 @@ pub fn totp_verify_route(
 pub fn totp_disable_route(
     users: Arc<dyn UserRepository>,
     secret_box: Arc<SecretBox>,
+    audit: Arc<dyn AuditRepository>,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("auth" / "mfa" / "totp" / "disable")
@@ -114,7 +120,9 @@ pub fn totp_disable_route(
         .and(with_body_as_json::<CodeRequest>(MAX_TEXT_BODY_SIZE))
         .and(with_cloneable(users))
         .and(with_cloneable(secret_box))
+        .and(with_cloneable(audit))
         .and(with_user(authenticator))
+        .and(client_ip())
         .and_then(handle_totp_disable_route)
         .boxed()
 }
@@ -133,9 +141,11 @@ async fn handle_totp_verify_route(
     request: CodeRequest,
     users: Arc<dyn UserRepository>,
     secret_box: Arc<SecretBox>,
+    audit: Arc<dyn AuditRepository>,
     caller: AuthUser,
+    ip: Option<String>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(totp_verify(request, users, secret_box, caller).await)
+    into_response(totp_verify(request, users, secret_box, audit, caller, ip).await)
 }
 
 #[tracing::instrument(level = "debug", name = "POST /auth/mfa/totp/disable", skip_all)]
@@ -143,9 +153,11 @@ async fn handle_totp_disable_route(
     request: CodeRequest,
     users: Arc<dyn UserRepository>,
     secret_box: Arc<SecretBox>,
+    audit: Arc<dyn AuditRepository>,
     caller: AuthUser,
+    ip: Option<String>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(totp_disable(request, users, secret_box, caller).await)
+    into_response(totp_disable(request, users, secret_box, audit, caller, ip).await)
 }
 
 /// Loads the caller's umami user record.
@@ -183,7 +195,9 @@ async fn totp_verify(
     request: CodeRequest,
     users: Arc<dyn UserRepository>,
     secret_box: Arc<SecretBox>,
+    audit: Arc<dyn AuditRepository>,
     caller: AuthUser,
+    ip: Option<String>,
 ) -> anyhow::Result<MfaStatusResponse> {
     let mut user = load_caller(&users, &caller).await?;
 
@@ -202,7 +216,21 @@ async fn totp_verify(
     }
 
     user.totp_secret = user.totp_pending.take();
+    let tenant_id = Some(user.tenant_id.clone());
+    let user_id = Some(user.user_id.clone());
     let _ = users.put_user(user).await?;
+
+    record_best_effort(
+        &audit,
+        NewAuditEntry::new(
+            AuditSeverity::Good,
+            tenant_id,
+            user_id,
+            "TOTP two-factor enabled".to_owned(),
+        )
+        .with_ip(ip),
+    )
+    .await;
 
     Ok(MfaStatusResponse { enabled: true })
 }
@@ -211,7 +239,9 @@ async fn totp_disable(
     request: CodeRequest,
     users: Arc<dyn UserRepository>,
     secret_box: Arc<SecretBox>,
+    audit: Arc<dyn AuditRepository>,
     caller: AuthUser,
+    ip: Option<String>,
 ) -> anyhow::Result<MfaStatusResponse> {
     let mut user = load_caller(&users, &caller).await?;
 
@@ -231,7 +261,22 @@ async fn totp_disable(
 
     user.totp_secret = None;
     user.totp_pending = None;
+    let tenant_id = Some(user.tenant_id.clone());
+    let user_id = Some(user.user_id.clone());
     let _ = users.put_user(user).await?;
+
+    // Disabling a second factor weakens the account → record it as a "bad"-severity security event.
+    record_best_effort(
+        &audit,
+        NewAuditEntry::new(
+            AuditSeverity::Bad,
+            tenant_id,
+            user_id,
+            "TOTP two-factor disabled".to_owned(),
+        )
+        .with_ip(ip),
+    )
+    .await;
 
     Ok(MfaStatusResponse { enabled: false })
 }

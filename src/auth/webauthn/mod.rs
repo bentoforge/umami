@@ -6,6 +6,8 @@
 
 pub mod repository;
 
+use crate::audit::repository::{AuditRepository, record_best_effort};
+use crate::audit::{AuditSeverity, NewAuditEntry};
 use crate::auth::AuthContext;
 use crate::auth::login::issue_session;
 use crate::auth::webauthn::repository::WebauthnRepository;
@@ -163,6 +165,7 @@ pub fn webauthn_register_finish_route(
     service: Arc<WebauthnService>,
     webauthn: Arc<dyn WebauthnRepository>,
     users: Arc<dyn UserRepository>,
+    audit: Arc<dyn AuditRepository>,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("auth" / "webauthn" / "register" / "finish")
@@ -173,7 +176,9 @@ pub fn webauthn_register_finish_route(
         .and(with_cloneable(service))
         .and(with_cloneable(webauthn))
         .and(with_cloneable(users))
+        .and(with_cloneable(audit))
         .and(with_user(authenticator))
+        .and(client_ip())
         .and_then(handle_register_finish)
         .boxed()
 }
@@ -284,9 +289,11 @@ async fn handle_register_finish(
     service: Arc<WebauthnService>,
     webauthn: Arc<dyn WebauthnRepository>,
     users: Arc<dyn UserRepository>,
+    audit: Arc<dyn AuditRepository>,
     caller: AuthUser,
+    ip: Option<String>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(register_finish(request, service, webauthn, users, caller).await)
+    into_response(register_finish(request, service, webauthn, users, audit, caller, ip).await)
 }
 
 #[tracing::instrument(level = "debug", name = "POST /auth/webauthn/login/start", skip_all)]
@@ -369,7 +376,9 @@ async fn register_finish(
     service: Arc<WebauthnService>,
     webauthn: Arc<dyn WebauthnRepository>,
     users: Arc<dyn UserRepository>,
+    audit: Arc<dyn AuditRepository>,
     caller: AuthUser,
+    ip: Option<String>,
 ) -> anyhow::Result<RegisterFinishResponse> {
     let ceremony = match webauthn.take_ceremony(&request.ceremony_id).await? {
         Some(ceremony) => ceremony,
@@ -396,6 +405,20 @@ async fn register_finish(
     if let Err(err) = users.set_has_passkey(&ceremony.user_id).await {
         tracing::warn!("failed to set hasPasskey for {}: {err:#}", ceremony.user_id);
     }
+
+    // A new second factor enrolled is a security-relevant change → audit it (with the client IP).
+    let tenant_id = caller.tenant_id().ok().map(str::to_owned);
+    record_best_effort(
+        &audit,
+        NewAuditEntry::new(
+            AuditSeverity::Good,
+            tenant_id,
+            Some(ceremony.user_id.clone()),
+            "Passkey registered".to_owned(),
+        )
+        .with_ip(ip),
+    )
+    .await;
 
     Ok(RegisterFinishResponse { credential_id })
 }
@@ -475,7 +498,22 @@ async fn login_finish(
     // Mint for the requested API (default: umami admin API); the session records it for refresh.
     // A passkey login is a strong factor → is:passkey + is:2fa.
     let api_code = request.api.as_deref().unwrap_or("umami");
-    issue_session(context, &user, api_code, true, false, user_agent, ip).await
+    let audit_ip = ip.clone();
+    let issued = issue_session(context, &user, api_code, true, false, user_agent, ip).await?;
+
+    record_best_effort(
+        &context.audit,
+        NewAuditEntry::new(
+            AuditSeverity::Good,
+            Some(user.tenant_id.clone()),
+            Some(user.user_id.clone()),
+            "Passkey login".to_owned(),
+        )
+        .with_ip(audit_ip),
+    )
+    .await;
+
+    Ok(issued)
 }
 
 #[cfg(test)]
