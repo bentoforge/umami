@@ -623,7 +623,7 @@ function MetaBox({ user }: { user: UserView }) {
     { label: t("users.created"), value: formatDateTime(user.created) },
   ];
   return (
-    <section className="rounded border border-slate-200 dark:border-slate-700/50 bg-slate-100 dark:bg-slate-900/50 p-6">
+    <section className="rounded border border-slate-200 dark:border-slate-700/50 bg-slate-200/60 dark:bg-slate-950/50 p-6">
       <dl className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3">
         {rows.map((row) => (
           <div key={row.label}>
