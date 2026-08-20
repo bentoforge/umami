@@ -7,7 +7,7 @@
 use crate::audit::AuditEntry;
 use crate::audit::repository::{AuditRepository, record_best_effort};
 use crate::audit::{AuditSeverity, NewAuditEntry};
-use crate::auth::session::SessionRepository;
+use crate::auth::session::repository::SessionRepository;
 use crate::config::Config;
 use crate::config::repository::ConfigRepository;
 use crate::constants::{

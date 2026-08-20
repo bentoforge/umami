@@ -19,7 +19,7 @@ pub mod webauthn;
 
 use crate::audit::repository::AuditRepository;
 use crate::auth::secretbox::SecretBox;
-use crate::auth::session::SessionRepository;
+use crate::auth::session::repository::SessionRepository;
 use crate::auth::tokens::TokenIssuer;
 use crate::config::repository::ConfigRepository;
 use crate::tenants::repository::TenantRepository;

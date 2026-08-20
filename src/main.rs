@@ -66,7 +66,7 @@ use crate::auth::me::{
     sessions_route,
 };
 use crate::auth::secretbox::SecretBox;
-use crate::auth::session::DynamoSessionRepository;
+use crate::auth::session::repository::DynamoSessionRepository;
 use crate::auth::switch_tenant::switch_tenant_route;
 use crate::auth::tokens::{EnvKeyRepository, KeyRepository, TokenIssuer, jwks_route};
 use crate::auth::totp::{totp_disable_route, totp_setup_route, totp_verify_route};
@@ -76,7 +76,7 @@ use crate::auth::webauthn::{
     webauthn_login_finish_route, webauthn_login_start_route, webauthn_register_finish_route,
     webauthn_register_start_route,
 };
-use crate::auth::{AuthContext, session::SessionRepository};
+use crate::auth::{AuthContext, session::repository::SessionRepository};
 use crate::authz::{
     assignable_features_route, assignable_roles_route, assignable_scopes_route,
     grant_feature_route, revoke_feature_route,

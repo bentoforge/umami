@@ -10,9 +10,8 @@ use crate::auth::AuthContext;
 use crate::auth::broker::{MintParams, mint_for_api};
 use crate::auth::cookies::{build_refresh_cookie, clear_refresh_cookie, parse_refresh_cookie};
 use crate::auth::password;
-use crate::auth::session::{
-    NewSession, generate_refresh_secret, hash_refresh_secret, verify_refresh_secret,
-};
+use crate::auth::session::repository::NewSession;
+use crate::auth::session::{generate_refresh_secret, hash_refresh_secret, verify_refresh_secret};
 use crate::config::Config;
 use crate::constants::MAX_TEXT_BODY_SIZE;
 use crate::users::User;
