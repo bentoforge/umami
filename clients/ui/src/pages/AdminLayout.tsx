@@ -47,8 +47,8 @@ export function AdminLayout() {
   // Personal/account items — the user menu (desktop) and part of the mobile menu.
   const menuItems: NavItem[] = [
     { to: "/profile", label: t("nav.profile"), show: true },
-    { to: "/audit", label: t("nav.audit"), show: can("admin:tenant") },
     { to: "/sessions", label: t("nav.sessions"), show: true },
+    { to: "/audit", label: t("nav.audit"), show: can("admin:tenant") },
     { to: "/config", label: t("nav.config"), show: can("manage:config") },
   ].filter((item) => item.show);
 
@@ -251,7 +251,7 @@ function UserMenu({
           </div>
           {items.map((item) => (
             <Fragment key={item.to}>
-              {item.to === "/config" && (
+              {(item.to === "/audit" || item.to === "/config") && (
                 <div className="my-1 border-t border-slate-200 dark:border-slate-700" />
               )}
               <NavLink
@@ -315,7 +315,7 @@ function MobileMenu({
       {/* Account items below a rule; the system config gets its own rule above it. */}
       {menuItems.map((item, index) => (
         <Fragment key={item.to}>
-          {(index === 0 || item.to === "/config") && divider}
+          {(index === 0 || item.to === "/audit" || item.to === "/config") && divider}
           <NavLink to={item.to} end={item.end} className={linkClass} onClick={onNavigate}>
             {item.label}
           </NavLink>
