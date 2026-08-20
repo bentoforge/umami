@@ -1,7 +1,7 @@
 import type { Tenant } from "@bentoforge/umami-iam";
 import {
+  ArrowsRightLeftIcon,
   Bars3Icon,
-  BuildingOffice2Icon,
   ChevronDownIcon,
   ComputerDesktopIcon,
   MoonIcon,
@@ -9,11 +9,12 @@ import {
   UserCircleIcon,
   XMarkIcon,
 } from "@heroicons/react/24/outline";
+import type { SVGProps } from "react";
 import { useEffect, useRef, useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { useUmami } from "../auth/UmamiProvider";
 import { errMsg, Logo } from "../components";
-import { getTheme, setTheme } from "../theme";
+import { getTheme, setTheme, type Theme } from "../theme";
 import { card, iconButton, input } from "../ui";
 
 type NavItem = { to: string; label: string; show: boolean; end?: boolean };
@@ -117,21 +118,86 @@ export function AdminLayout() {
   );
 }
 
-/** Icon-only theme toggle cycling light → dark → auto. */
+/** A half-filled circle — the theme/appearance glyph (Heroicons has no half-circle). */
+function HalfCircleIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.6}
+      role="img"
+      aria-hidden="true"
+      {...props}
+    >
+      <title>Darstellung</title>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+const THEME_OPTIONS: { value: Theme; label: string; Icon: typeof SunIcon }[] = [
+  { value: "auto", label: "Automatisch", Icon: ComputerDesktopIcon },
+  { value: "light", label: "Hell", Icon: SunIcon },
+  { value: "dark", label: "Dunkel", Icon: MoonIcon },
+];
+
+/** Theme menu: half-circle trigger opening auto / hell / dunkel, the active one highlighted. */
 function ThemeSwitcher() {
   const [theme, setThemeState] = useState(getTheme());
-  const cycle = () => {
-    const next = theme === "light" ? "dark" : theme === "dark" ? "auto" : "light";
-    setTheme(next);
-    setThemeState(next);
+  const [open, setOpen] = useState(false);
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const onClick = (e: MouseEvent) => {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [open]);
+
+  const choose = (value: Theme) => {
+    setTheme(value);
+    setThemeState(value);
+    setOpen(false);
   };
-  const Icon = theme === "light" ? SunIcon : theme === "dark" ? MoonIcon : ComputerDesktopIcon;
-  const label =
-    theme === "light" ? "Theme: hell" : theme === "dark" ? "Theme: dunkel" : "Theme: automatisch";
+
   return (
-    <button type="button" className={iconButton} onClick={cycle} title={label} aria-label={label}>
-      <Icon className="h-5 w-5" />
-    </button>
+    <div className="relative" ref={boxRef}>
+      <button
+        type="button"
+        className={iconButton}
+        onClick={() => setOpen((v) => !v)}
+        title="Darstellung"
+        aria-label="Darstellung"
+      >
+        <HalfCircleIcon className="h-5 w-5" />
+      </button>
+      {open && (
+        <div className={`${card} absolute right-0 mt-2 w-40 z-20 p-1.5 shadow-lg`}>
+          {THEME_OPTIONS.map(({ value, label, Icon }) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => choose(value)}
+              className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm ${
+                theme === value
+                  ? "bg-primary/10 text-primary font-medium"
+                  : "text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700"
+              }`}
+            >
+              <Icon className="h-4 w-4" /> {label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -336,7 +402,7 @@ function TenantSwitcher() {
         title="Mandant wechseln"
         aria-label="Mandant wechseln"
       >
-        <BuildingOffice2Icon className="h-5 w-5" />
+        <ArrowsRightLeftIcon className="h-5 w-5" />
       </button>
       {open && (
         <div
