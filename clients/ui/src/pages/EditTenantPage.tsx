@@ -97,6 +97,7 @@ export function EditTenantPage() {
         {tenant && (
           <DropdownMenu
             label={t("tenants.actions")}
+            triggerLabel={t("common.moreActions")}
             actions={[
               {
                 label: t("tenants.impersonate"),

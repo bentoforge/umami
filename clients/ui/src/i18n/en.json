@@ -1,6 +1,6 @@
 {
   "app": { "title": "umami" },
-  "common": { "loading": "Loading data…", "search": "Search…" },
+  "common": { "loading": "Loading data…", "search": "Search…", "moreActions": "More actions" },
   "nav": {
     "start": "Start",
     "tenants": "Tenants",

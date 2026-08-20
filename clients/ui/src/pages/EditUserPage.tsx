@@ -132,6 +132,7 @@ export function EditUserPage() {
         {user && (
           <DropdownMenu
             label={t("users.actions")}
+            triggerLabel={t("common.moreActions")}
             actions={[
               { label: t("users.resetPassword"), onSelect: () => void onReset() },
               ...(isSelf

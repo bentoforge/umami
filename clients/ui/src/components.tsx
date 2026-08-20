@@ -4,7 +4,7 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import i18n from "./i18n/i18n";
 import { resolvedDark, subscribeTheme } from "./theme";
-import { iconButton, input } from "./ui";
+import { ghostButton, iconButton, input } from "./ui";
 
 /** A centered spinner with a caption below — the standard "content is loading" placeholder. */
 export function Loader({ label }: { label?: string }) {
@@ -215,8 +215,19 @@ export type MenuAction = { label: string; onSelect: () => void; danger?: boolean
 
 /** A vertical-3-dots menu (row actions / page actions). The panel is positioned `fixed` (anchored
  * to the trigger) so it escapes any `overflow`-clipping ancestor like a scrollable table card.
- * Closes on outside-click, scroll, resize, or after a pick. */
-export function DropdownMenu({ actions, label }: { actions: MenuAction[]; label: string }) {
+ * Closes on outside-click, scroll, resize, or after a pick.
+ *
+ * `triggerLabel` switches the trigger to an outline secondary button showing the dots + the label
+ * (the label collapses to just the dots below `md`); without it the trigger is a bare icon button. */
+export function DropdownMenu({
+  actions,
+  label,
+  triggerLabel,
+}: {
+  actions: MenuAction[];
+  label: string;
+  triggerLabel?: string;
+}) {
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -260,12 +271,13 @@ export function DropdownMenu({ actions, label }: { actions: MenuAction[]; label:
       <button
         ref={btnRef}
         type="button"
-        className={iconButton}
+        className={triggerLabel ? `${ghostButton} inline-flex items-center gap-1.5` : iconButton}
         aria-label={label}
         aria-haspopup="menu"
         onClick={toggle}
       >
         <EllipsisVerticalIcon className="h-5 w-5" />
+        {triggerLabel && <span className="hidden md:inline">{triggerLabel}</span>}
       </button>
       {pos && (
         <div

@@ -1,6 +1,10 @@
 {
   "app": { "title": "umami" },
-  "common": { "loading": "Lade Daten…", "search": "Suchbegriff…" },
+  "common": {
+    "loading": "Lade Daten…",
+    "search": "Suchbegriff…",
+    "moreActions": "Weitere Aktionen"
+  },
   "nav": {
     "start": "Start",
     "tenants": "Mandanten",
