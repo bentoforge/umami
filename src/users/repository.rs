@@ -51,6 +51,9 @@ const FIELD_LAST_ACTIVE_OR_CREATED: &str = "lastActiveOrCreated";
 /// Hash key of the `user-usernames` guard table (holds the normalized username).
 const FIELD_USERNAME: &str = "username";
 
+/// `hasPasskey` flag attribute — set by [`UserRepository::set_has_passkey`] on passkey registration.
+const FIELD_HAS_PASSKEY: &str = "hasPasskey";
+
 /// GSI listing a tenant's users (hash on `tenantId`).
 const INDEX_BY_TENANT: &str = "ByTenantIndex";
 
@@ -115,6 +118,9 @@ pub trait UserRepository: Send + Sync {
     /// Best-effort bump of `lastSeen` to now (called on authentication). Keeps the per-tenant
     /// listing GSI ordered by activity.
     async fn touch_last_seen(&self, user_id: &str) -> anyhow::Result<()>;
+
+    /// Marks the user as having at least one passkey (denormalized flag; idempotent).
+    async fn set_has_passkey(&self, user_id: &str) -> anyhow::Result<()>;
 
     /// Hard-deletes a user and releases its username-uniqueness guard so the name can be reused.
     /// `username` is the user's stored login username.
@@ -214,6 +220,9 @@ impl UserRepository for DynamoUserRepository {
             last_updated: now,
             last_seen: None,
             last_active_or_created: now,
+            last_password_reset: None,
+            last_password_change: None,
+            has_passkey: false,
         };
 
         // Claim the username first: a conditional put fails if it's already taken, giving strict
@@ -364,6 +373,24 @@ impl UserRepository for DynamoUserRepository {
             .send()
             .await
             .context("Error updating lastSeen in 'users' table")?;
+
+        Ok(())
+    }
+
+    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    async fn set_has_passkey(&self, user_id: &str) -> anyhow::Result<()> {
+        let _ = self
+            .client
+            .update_item(TABLE_USERS)
+            .key(FIELD_USER_ID, str(user_id))
+            .update_expression("SET #hasPasskey = :true")
+            .condition_expression("attribute_exists(#userId)")
+            .expression_attribute_names("#userId", FIELD_USER_ID)
+            .expression_attribute_names("#hasPasskey", FIELD_HAS_PASSKEY)
+            .expression_attribute_values(":true", AttributeValue::Bool(true))
+            .send()
+            .await
+            .context("Error updating hasPasskey in 'users' table")?;
 
         Ok(())
     }

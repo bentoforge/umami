@@ -107,6 +107,17 @@ pub struct User {
     /// for records written before this field existed.
     #[serde(default = "epoch")]
     pub last_active_or_created: chrono::DateTime<chrono::Utc>,
+    /// RFC 3339 timestamp of the last admin password reset. Combined with `last_password_change`
+    /// to flag a reset password the user has not changed yet.
+    #[serde(default)]
+    pub last_password_reset: Option<chrono::DateTime<chrono::Utc>>,
+    /// RFC 3339 timestamp of the last self-service password change.
+    #[serde(default)]
+    pub last_password_change: Option<chrono::DateTime<chrono::Utc>>,
+    /// Denormalized "has at least one passkey" flag — set when a passkey is registered, so listing
+    /// users needs no per-user credential lookup. (No passkey-removal path exists yet.)
+    #[serde(default)]
+    pub has_passkey: bool,
 }
 
 /// The Unix epoch — the `last_active_or_created` fallback for user records predating the field.

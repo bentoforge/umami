@@ -11,6 +11,26 @@
     "sessions": "Sessions",
     "config": "System configuration"
   },
+  "users": {
+    "title": "Users",
+    "new": "New user",
+    "cancel": "Cancel",
+    "empty": "No users.",
+    "colName": "Name",
+    "colLastActive": "Last active",
+    "actions": "Actions",
+    "you": "You",
+    "locked": "Locked",
+    "generatedPassword": "Generated password",
+    "twoFactor": "2FA",
+    "passkey": "Passkey",
+    "resetPassword": "Reset password",
+    "lock": "Lock",
+    "unlock": "Unlock",
+    "delete": "Delete",
+    "resetConfirm": "Reset the password for “{{name}}”? A temporary one will be generated.",
+    "deleteConfirm": "Delete user “{{name}}”? This cannot be undone."
+  },
   "login": {
     "heading": "Sign in",
     "email": "Email",

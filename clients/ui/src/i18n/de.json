@@ -11,6 +11,26 @@
     "sessions": "Sitzungen",
     "config": "Systemkonfiguration"
   },
+  "users": {
+    "title": "Benutzer",
+    "new": "Neuer Benutzer",
+    "cancel": "Abbrechen",
+    "empty": "Keine Benutzer.",
+    "colName": "Name",
+    "colLastActive": "Zuletzt aktiv",
+    "actions": "Aktionen",
+    "you": "Du",
+    "locked": "Gesperrt",
+    "generatedPassword": "Generiertes Passwort",
+    "twoFactor": "2FA",
+    "passkey": "Passkey",
+    "resetPassword": "Passwort zurücksetzen",
+    "lock": "Sperren",
+    "unlock": "Entsperren",
+    "delete": "Löschen",
+    "resetConfirm": "Passwort für „{{name}}“ zurücksetzen? Es wird ein temporäres Passwort erzeugt.",
+    "deleteConfirm": "Benutzer „{{name}}“ löschen? Das kann nicht rückgängig gemacht werden."
+  },
   "login": {
     "heading": "Anmelden",
     "email": "E-Mail",

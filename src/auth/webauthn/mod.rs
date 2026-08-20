@@ -161,6 +161,7 @@ pub fn webauthn_register_start_route(
 pub fn webauthn_register_finish_route(
     service: Arc<WebauthnService>,
     webauthn: Arc<dyn WebauthnRepository>,
+    users: Arc<dyn UserRepository>,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("auth" / "webauthn" / "register" / "finish")
@@ -170,6 +171,7 @@ pub fn webauthn_register_finish_route(
         ))
         .and(with_cloneable(service))
         .and(with_cloneable(webauthn))
+        .and(with_cloneable(users))
         .and(with_user(authenticator))
         .and_then(handle_register_finish)
         .boxed()
@@ -280,9 +282,10 @@ async fn handle_register_finish(
     request: RegisterFinishRequest,
     service: Arc<WebauthnService>,
     webauthn: Arc<dyn WebauthnRepository>,
+    users: Arc<dyn UserRepository>,
     caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(register_finish(request, service, webauthn, caller).await)
+    into_response(register_finish(request, service, webauthn, users, caller).await)
 }
 
 #[tracing::instrument(level = "debug", name = "POST /auth/webauthn/login/start", skip_all)]
@@ -365,6 +368,7 @@ async fn register_finish(
     request: RegisterFinishRequest,
     service: Arc<WebauthnService>,
     webauthn: Arc<dyn WebauthnRepository>,
+    users: Arc<dyn UserRepository>,
     caller: AuthUser,
 ) -> anyhow::Result<RegisterFinishResponse> {
     let ceremony = match webauthn.take_ceremony(&request.ceremony_id).await? {
@@ -387,6 +391,11 @@ async fn register_finish(
             serde_json::to_string(&passkey).context("Failed to serialize passkey")?,
         )
         .await?;
+
+    // Best-effort denormalized flag for the admin user list; a failure here just hides the badge.
+    if let Err(err) = users.set_has_passkey(&ceremony.user_id).await {
+        tracing::warn!("failed to set hasPasskey for {}: {err:#}", ceremony.user_id);
+    }
 
     Ok(RegisterFinishResponse { credential_id })
 }

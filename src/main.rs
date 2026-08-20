@@ -271,6 +271,7 @@ async fn app() -> anyhow::Result<()> {
         webauthn_register_finish_route(
             webauthn_service.clone(),
             webauthn_repository.clone(),
+            user_repository.clone(),
             authenticator.clone()
         ),
         webauthn_login_start_route(

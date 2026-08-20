@@ -105,13 +105,29 @@ struct UserView {
     custom_fields: BTreeMap<String, Value>,
     created: DateTime<Utc>,
     last_seen: Option<DateTime<Utc>>,
+    /// Whether TOTP MFA is configured (secret confirmed) — never exposes the secret.
+    mfa_enabled: bool,
+    /// Whether the current password came from an admin reset and the user has not changed it since.
+    password_generated: bool,
+    /// Whether the user has at least one registered passkey.
+    has_passkey: bool,
 }
 
 impl UserView {
     /// Builds a view, composing the derived display names with the config salutation labels.
     fn build(user: User, salutations: &BTreeMap<String, String>) -> Self {
         let names = user.display_names(salutations);
+        // "Generated password" = an admin reset the password and the user has not changed it since.
+        let password_generated = match user.last_password_reset {
+            Some(reset) => user
+                .last_password_change
+                .is_none_or(|changed| changed < reset),
+            None => false,
+        };
         UserView {
+            mfa_enabled: user.totp_secret.is_some(),
+            password_generated,
+            has_passkey: user.has_passkey,
             user_id: user.user_id,
             tenant_id: user.tenant_id,
             roles: user.roles,
@@ -520,6 +536,9 @@ async fn reset_password(
 
     user.password_hash = Some(crate::auth::password::hash(&password)?);
     user.token_version = user.token_version.saturating_add(1);
+    // Mark this as an admin-set password the user has not changed yet (drives the "generated
+    // password" flag in the admin list until the user changes it themselves).
+    user.last_password_reset = Some(Utc::now());
     let _ = users.put_user(user.clone()).await?;
 
     record_best_effort(

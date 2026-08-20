@@ -6,13 +6,14 @@ import {
   Banner,
   CheckboxTags,
   CustomFieldsForm,
+  DropdownMenu,
   errMsg,
   Field,
   formatDateTime,
   formatFieldValue,
   Loader,
 } from "../components";
-import { card, dangerButton, ghostButton, input, primaryButton, td, th } from "../ui";
+import { card, ghostButton, input, primaryButton, td, th } from "../ui";
 
 /** Own-tenant screen: list / create / edit / suspend / delete users. */
 export function UsersPage() {
@@ -30,7 +31,6 @@ export function UsersPage() {
 
   const myId = me?.user.userId;
   const tableDefs = defs.filter((d) => d.showInTable);
-  const colCount = 4 + tableDefs.length;
 
   useEffect(() => {
     client
@@ -40,10 +40,9 @@ export function UsersPage() {
   }, [client]);
 
   const resetPassword = async (user: UserView) => {
-    if (
-      !window.confirm(`Reset password for "${user.username}"? A temporary one will be generated.`)
-    )
+    if (!window.confirm(t("users.resetConfirm", { name: user.fullName || user.username }))) {
       return;
+    }
     setError(null);
     setResetPw(null);
     try {
@@ -83,7 +82,9 @@ export function UsersPage() {
   };
 
   const onDelete = async (user: UserView) => {
-    if (!window.confirm(`Delete user "${user.email}"? This cannot be undone.`)) return;
+    if (!window.confirm(t("users.deleteConfirm", { name: user.fullName || user.username }))) {
+      return;
+    }
     setError(null);
     setNotice(null);
     try {
@@ -98,7 +99,7 @@ export function UsersPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-4">
-        <h1 className="text-xl font-semibold text-slate-900 dark:text-white">Users</h1>
+        <h1 className="text-xl font-semibold text-slate-900 dark:text-white">{t("users.title")}</h1>
         <input
           className={`${input} max-w-xs`}
           placeholder={t("common.search")}
@@ -106,7 +107,7 @@ export function UsersPage() {
           onChange={(e) => setQuery(e.target.value)}
         />
         <button className={primaryButton} onClick={() => setCreating((v) => !v)}>
-          {creating ? "Cancel" : "New user"}
+          {creating ? t("users.cancel") : t("users.new")}
         </button>
       </div>
 
@@ -144,102 +145,131 @@ export function UsersPage() {
         {users === null ? (
           <Loader />
         ) : users.length === 0 ? (
-          <p className="text-slate-500">No users.</p>
+          <p className="text-slate-500">{t("users.empty")}</p>
         ) : (
           <table className="w-full border-collapse">
             <thead>
               <tr className="border-b border-slate-200 dark:border-slate-700">
-                <th className={th}>User</th>
-                <th className={th}>Roles</th>
-                <th className={th}>Locked</th>
-                <th className={th}>Last seen</th>
+                <th className={th}>{t("users.colName")}</th>
                 {tableDefs.map((def) => (
                   <th key={def.key} className={th}>
                     {def.label}
                   </th>
                 ))}
-                <th className={th}></th>
+                <th className={th}>{t("users.colLastActive")}</th>
+                <th className={th} />
+                <th className={`${th} text-right`}>
+                  <span className="sr-only">{t("users.actions")}</span>
+                </th>
               </tr>
             </thead>
             <tbody>
-              {users.map((user) => (
-                <Fragment key={user.userId}>
-                  <tr className="border-b border-slate-100 dark:border-slate-700/50">
-                    <td className={td}>
-                      <div className="font-medium text-slate-900 dark:text-white">
-                        {user.fullName || user.username}
-                        {user.userId === myId && (
-                          <span className="ml-2 rounded bg-brand/10 text-brand px-1.5 py-0.5 text-[10px] align-middle">
-                            you
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-xs text-slate-400">
-                        {user.fullName ? user.username : (user.email ?? "—")}
-                      </div>
-                    </td>
-                    <td className={td}>{user.roles.join(", ") || "—"}</td>
-                    <td className={td}>{user.locked ? "Locked" : "—"}</td>
-                    <td className={td}>{user.lastSeen ? formatDateTime(user.lastSeen) : "—"}</td>
-                    {tableDefs.map((def) => (
-                      <td key={def.key} className={td}>
-                        {formatFieldValue(user.customFields[def.key])}
+              {users.map((user) => {
+                const isSelf = user.userId === myId;
+                const displayName = user.fullName || user.username;
+                const sub = user.fullName ? user.username : (user.email ?? "");
+                return (
+                  <Fragment key={user.userId}>
+                    <tr className="border-b border-slate-100 dark:border-slate-700/50">
+                      <td className={td}>
+                        <button
+                          type="button"
+                          className="font-medium text-primary hover:underline text-left"
+                          onClick={() =>
+                            setEditing((id) => (id === user.userId ? null : user.userId))
+                          }
+                        >
+                          {displayName}
+                        </button>
+                        {sub && <div className="text-xs text-slate-400">{sub}</div>}
                       </td>
-                    ))}
-                    <td className={`${td} text-right whitespace-nowrap`}>
-                      <button
-                        className={ghostButton}
-                        onClick={() =>
-                          setEditing((id) => (id === user.userId ? null : user.userId))
-                        }
-                      >
-                        Edit
-                      </button>{" "}
-                      <button className={ghostButton} onClick={() => void resetPassword(user)}>
-                        Reset pw
-                      </button>{" "}
-                      {user.locked ? (
-                        <button className={ghostButton} onClick={() => void setLocked(user, false)}>
-                          Unlock
-                        </button>
-                      ) : (
-                        <button className={ghostButton} onClick={() => void setLocked(user, true)}>
-                          Suspend
-                        </button>
-                      )}{" "}
-                      <button
-                        className={dangerButton}
-                        disabled={user.userId === myId}
-                        title={user.userId === myId ? "You cannot delete yourself" : undefined}
-                        onClick={() => void onDelete(user)}
-                      >
-                        Delete
-                      </button>
-                    </td>
-                  </tr>
-                  {editing === user.userId && (
-                    <tr className="border-b border-slate-100 dark:border-slate-700/50 bg-slate-50 dark:bg-slate-900/40">
-                      <td className={td} colSpan={colCount}>
-                        <EditUserPanel
-                          user={user}
-                          defs={defs}
-                          onCancel={() => setEditing(null)}
-                          onSaved={async () => {
-                            setEditing(null);
-                            await load();
-                          }}
-                          onError={setError}
+                      {tableDefs.map((def) => (
+                        <td key={def.key} className={td}>
+                          {formatFieldValue(user.customFields[def.key])}
+                        </td>
+                      ))}
+                      <td className={td}>{user.lastSeen ? formatDateTime(user.lastSeen) : "—"}</td>
+                      <td className={td}>
+                        <div className="flex flex-wrap gap-1">
+                          {isSelf && <Tag tone="brand">{t("users.you")}</Tag>}
+                          {user.locked && <Tag tone="danger">{t("users.locked")}</Tag>}
+                          {user.passwordGenerated && <Tag>{t("users.generatedPassword")}</Tag>}
+                          {user.mfaEnabled && <Tag>{t("users.twoFactor")}</Tag>}
+                          {user.hasPasskey && <Tag>{t("users.passkey")}</Tag>}
+                        </div>
+                      </td>
+                      <td className={`${td} text-right`}>
+                        <DropdownMenu
+                          label={t("users.actions")}
+                          actions={[
+                            {
+                              label: t("users.resetPassword"),
+                              onSelect: () => void resetPassword(user),
+                            },
+                            ...(isSelf
+                              ? []
+                              : [
+                                  {
+                                    label: user.locked ? t("users.unlock") : t("users.lock"),
+                                    onSelect: () => void setLocked(user, !user.locked),
+                                  },
+                                  {
+                                    label: t("users.delete"),
+                                    danger: true,
+                                    onSelect: () => void onDelete(user),
+                                  },
+                                ]),
+                          ]}
                         />
                       </td>
                     </tr>
-                  )}
-                </Fragment>
-              ))}
+                    {editing === user.userId && (
+                      <tr className="border-b border-slate-100 dark:border-slate-700/50 bg-slate-50 dark:bg-slate-900/40">
+                        <td className={td} colSpan={4 + tableDefs.length}>
+                          <EditUserPanel
+                            user={user}
+                            defs={defs}
+                            onCancel={() => setEditing(null)}
+                            onSaved={async () => {
+                              setEditing(null);
+                              await load();
+                            }}
+                            onError={setError}
+                          />
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
             </tbody>
           </table>
         )}
       </section>
     </div>
+  );
+}
+
+/** A small status pill for the user row (you / locked / generated-pw / 2FA / passkey). */
+function Tag({
+  tone = "neutral",
+  children,
+}: {
+  tone?: "neutral" | "brand" | "danger";
+  children: string;
+}) {
+  const cls =
+    tone === "brand"
+      ? "bg-brand/10 text-brand"
+      : tone === "danger"
+        ? "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300"
+        : "bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300";
+  return (
+    <span
+      className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium ${cls}`}
+    >
+      {children}
+    </span>
   );
 }
 

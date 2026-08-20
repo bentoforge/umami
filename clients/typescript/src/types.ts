@@ -95,6 +95,12 @@ export interface UserView extends NameParts {
   created: string;
   /** RFC3339 timestamp of the user's last authentication (login/refresh); null until first active. */
   lastSeen: string | null;
+  /** Whether TOTP MFA is configured (never exposes the secret). */
+  mfaEnabled: boolean;
+  /** Whether the current password came from an admin reset and hasn't been changed since. */
+  passwordGenerated: boolean;
+  /** Whether the user has at least one registered passkey. */
+  hasPasskey: boolean;
 }
 
 /** The editable structured name parts (all optional; omitted = unset, `""` clears). */

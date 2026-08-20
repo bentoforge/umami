@@ -335,6 +335,8 @@ async fn change_password(
     // Set the new hash and bump the revocation counter so every other session is invalidated.
     user.password_hash = Some(password::hash(&request.new_password)?);
     user.token_version = user.token_version.saturating_add(1);
+    // The user chose this password themselves — clears the "generated password" flag.
+    user.last_password_change = Some(chrono::Utc::now());
     let _ = users.put_user(user.clone()).await?;
 
     record_best_effort(
