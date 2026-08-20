@@ -136,9 +136,15 @@ async fn exchange(
 
     let (access_token, _exp) = minted?;
 
-    // Success: mark the user active (best-effort), no audit row.
+    // Success: mark the user + tenant active (best-effort), no audit row.
     if let Err(err) = deps.users.touch_last_seen(&user.user_id).await {
         tracing::warn!("failed to update lastSeen for {}: {err:#}", user.user_id);
+    }
+    if let Err(err) = deps.tenants.touch_last_active(&user.tenant_id).await {
+        tracing::warn!(
+            "failed to update lastActive for tenant {}: {err:#}",
+            user.tenant_id
+        );
     }
 
     Ok(ExchangeResponse {

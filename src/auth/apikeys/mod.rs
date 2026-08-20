@@ -550,9 +550,15 @@ async fn exchange(
         }
     };
 
-    // Best-effort usage marker; failure to record must not fail the exchange.
+    // Best-effort usage markers; failure to record must not fail the exchange.
     if let Err(err) = keys.touch_last_used(key_id).await {
         tracing::warn!("failed to update api key lastUsedAt: {err:#}");
+    }
+    if let Err(err) = tenants.touch_last_active(&key.tenant_id).await {
+        tracing::warn!(
+            "failed to update lastActive for tenant {}: {err:#}",
+            key.tenant_id
+        );
     }
 
     // A successful credential exchange is a "good" security event. `key.user_id` is the PAT's user

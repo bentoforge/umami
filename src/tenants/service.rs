@@ -1,9 +1,10 @@
 //! Tenant routes: cross-tenant admin (list/create/delete) and per-tenant get/patch.
 //!
-//! `GET /tenants` (list all), `POST /tenants` (create tenant + first owner) and
-//! `DELETE /tenants/{id}` (only when the tenant has no users) are **cross-tenant** operations
-//! guarded by the `manage:tenants` permission, projected from `is:system-tenant` (see docs/CONFIG.md). `GET`/`PATCH /tenants/{id}` require `admin:tenant` and operate only on
-//! the caller's own tenant.
+//! `GET /tenants` (list all), `POST /tenants` (create tenant, optionally with a first owner) and
+//! `DELETE /tenants/{id}` (refused for the system tenant, the caller's current tenant, or a tenant
+//! that still has users/API keys) are **cross-tenant** operations guarded by the `manage:tenants`
+//! permission, projected from `is:system-tenant` (see docs/CONFIG.md). `GET`/`PATCH /tenants/{id}`
+//! accept `admin:tenant` (own tenant) or `manage:tenants` (any tenant, for system admins).
 
 use crate::auth::apikeys::repository::ApiKeyRepository;
 use crate::config::Config;
@@ -206,9 +207,9 @@ async fn handle_create_tenant_route(
     tenants: Arc<dyn TenantRepository>,
     users: Arc<dyn UserRepository>,
     config: Arc<dyn ConfigRepository>,
-    _caller: AuthUser,
+    caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(create_tenant(request, tenants, users, config).await)
+    into_response(create_tenant(request, tenants, users, config, caller).await)
 }
 
 #[tracing::instrument(level = "debug", name = "GET /tenants", skip_all)]
@@ -269,10 +270,12 @@ async fn create_tenant(
     tenants: Arc<dyn TenantRepository>,
     users: Arc<dyn UserRepository>,
     config: Arc<dyn ConfigRepository>,
+    caller: AuthUser,
 ) -> anyhow::Result<CreateTenantResponse> {
     if request.name.trim().is_empty() {
         client_bail!("Tenant 'name' is required");
     }
+    let created_by = caller.user_id()?.to_owned();
     let config = config.current().await?;
     let custom_fields = request.custom_fields.unwrap_or_default();
     Config::validate_custom_fields(&config.custom_tenant_fields, &custom_fields)?;
@@ -315,13 +318,18 @@ async fn create_tenant(
     };
 
     let tenant = tenants
-        .create_tenant(request.name.trim(), &slugify(&request.name))
+        .create_tenant(
+            request.name.trim(),
+            &slugify(&request.name),
+            Some(&created_by),
+        )
         .await?;
 
     // Persist any custom-field values (create_tenant starts them empty).
     if !custom_fields.is_empty() {
         let mut with_fields = tenant.clone();
         with_fields.custom_fields = custom_fields;
+        with_fields.last_changed_by = Some(created_by.clone());
         let _ = tenants.put_tenant(with_fields).await?;
     }
 
@@ -451,6 +459,7 @@ async fn patch_tenant(
         )?;
         tenant.custom_fields = custom_fields;
     }
+    tenant.last_changed_by = Some(caller.user_id()?.to_owned());
 
     tenants.put_tenant(tenant).await
 }

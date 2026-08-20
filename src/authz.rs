@@ -189,9 +189,9 @@ async fn handle_grant_feature_route(
     code: DecodedSegment,
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
-    _caller: AuthUser,
+    caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(grant_feature(tenant_id, code.0, tenants, config).await)
+    into_response(grant_feature(tenant_id, code.0, tenants, config, caller).await)
 }
 
 #[tracing::instrument(
@@ -204,9 +204,9 @@ async fn handle_revoke_feature_route(
     code: DecodedSegment,
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
-    _caller: AuthUser,
+    caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(revoke_feature(tenant_id, code.0, tenants, config).await)
+    into_response(revoke_feature(tenant_id, code.0, tenants, config, caller).await)
 }
 
 // ── Business logic ──────────────────────────────────────────────────────────────
@@ -269,6 +269,7 @@ async fn grant_feature(
     code: String,
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
+    caller: AuthUser,
 ) -> anyhow::Result<Value> {
     let config = config.current().await?;
     let mut tenant = match tenants.get_tenant(&tenant_id).await? {
@@ -284,6 +285,7 @@ async fn grant_feature(
     }
 
     tenant.features.push(code);
+    tenant.last_changed_by = Some(caller.user_id()?.to_owned());
     let _ = tenants.put_tenant(tenant).await?;
     Ok(json!({ "status": "granted" }))
 }
@@ -293,6 +295,7 @@ async fn revoke_feature(
     code: String,
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
+    caller: AuthUser,
 ) -> anyhow::Result<Value> {
     // Synthetic markers are computed at mint time — never stored, so never revocable.
     if is_synthetic(&code) {
@@ -328,6 +331,7 @@ async fn revoke_feature(
     }
 
     tenant.features = remaining;
+    tenant.last_changed_by = Some(caller.user_id()?.to_owned());
     let _ = tenants.put_tenant(tenant).await?;
     Ok(json!({ "status": "revoked" }))
 }

@@ -7,7 +7,7 @@ use aws_sdk_dynamodb::types::{
     AttributeValue, BillingMode, GlobalSecondaryIndex, KeySchemaElement, KeyType, Projection,
     ProjectionType,
 };
-use chrono::Utc;
+use chrono::{SecondsFormat, Utc};
 use std::collections::BTreeMap;
 use warp::http::StatusCode;
 use wasabi::aws::dynamodb::client::DynamoClient;
@@ -27,6 +27,9 @@ const FIELD_VERSION: &str = "version";
 /// `lastUpdated` attribute — range key of the listing GSI (sort tenants newest-first).
 const FIELD_LAST_UPDATED: &str = "lastUpdated";
 
+/// `lastActive` attribute — bumped by [`TenantRepository::touch_last_active`] on token activity.
+const FIELD_LAST_ACTIVE: &str = "lastActive";
+
 /// Constant partition attribute injected at write time so all tenants share one GSI partition,
 /// making "list every tenant, sorted by `lastUpdated`" a single query (no table scan). Kept out of
 /// the [`Tenant`] model — it's storage-only and never surfaces in API responses.
@@ -44,8 +47,14 @@ const LIST_PAGE_SIZE: i32 = 100;
 /// Persistence interface for tenants.
 #[async_trait]
 pub trait TenantRepository: Send + Sync {
-    /// Creates a tenant with sensible defaults (status `Active`, plan `free`), returning it.
-    async fn create_tenant(&self, name: &str, slug: &str) -> anyhow::Result<Tenant>;
+    /// Creates a tenant, returning it. `created_by` records the acting user id (`None` for
+    /// system/auto-init).
+    async fn create_tenant(
+        &self,
+        name: &str,
+        slug: &str,
+        created_by: Option<&str>,
+    ) -> anyhow::Result<Tenant>;
 
     /// Creates a tenant with a caller-supplied id (used by auto-init to materialise the configured
     /// system tenant). Same defaults as [`create_tenant`].
@@ -54,7 +63,12 @@ pub trait TenantRepository: Send + Sync {
         tenant_id: &str,
         name: &str,
         slug: &str,
+        created_by: Option<&str>,
     ) -> anyhow::Result<Tenant>;
+
+    /// Best-effort bump of the tenant's `lastActive` timestamp (token activity heartbeat). Does not
+    /// touch `version`/`lastUpdated` — it is not a logical change.
+    async fn touch_last_active(&self, tenant_id: &str) -> anyhow::Result<()>;
 
     /// Fetches a tenant by id. `None` if unknown.
     async fn get_tenant(&self, tenant_id: &str) -> anyhow::Result<Option<Tenant>>;
@@ -122,8 +136,14 @@ impl DynamoTenantRepository {
 #[async_trait]
 impl TenantRepository for DynamoTenantRepository {
     #[tracing::instrument(level = "debug", skip(self), err(Display))]
-    async fn create_tenant(&self, name: &str, slug: &str) -> anyhow::Result<Tenant> {
-        self.create_tenant_with_id(&generate_id(), name, slug).await
+    async fn create_tenant(
+        &self,
+        name: &str,
+        slug: &str,
+        created_by: Option<&str>,
+    ) -> anyhow::Result<Tenant> {
+        self.create_tenant_with_id(&generate_id(), name, slug, created_by)
+            .await
     }
 
     #[tracing::instrument(level = "debug", skip(self), err(Display))]
@@ -132,6 +152,7 @@ impl TenantRepository for DynamoTenantRepository {
         tenant_id: &str,
         name: &str,
         slug: &str,
+        created_by: Option<&str>,
     ) -> anyhow::Result<Tenant> {
         let now = Utc::now();
         let tenant = Tenant {
@@ -143,6 +164,9 @@ impl TenantRepository for DynamoTenantRepository {
             slug: slug.to_owned(),
             created: now,
             last_updated: now,
+            last_active: None,
+            created_by: created_by.map(str::to_owned),
+            last_changed_by: created_by.map(str::to_owned),
         };
 
         // Defensive: the id is the PK, so `attribute_not_exists` makes a (near-impossible) id
@@ -228,6 +252,27 @@ impl TenantRepository for DynamoTenantRepository {
         }
 
         Ok(tenant)
+    }
+
+    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    async fn touch_last_active(&self, tenant_id: &str) -> anyhow::Result<()> {
+        let _ = self
+            .client
+            .update_item(TABLE_TENANTS)
+            .key(FIELD_TENANT_ID, str(tenant_id))
+            .update_expression("SET #lastActive = :now")
+            .condition_expression("attribute_exists(#tenantId)")
+            .expression_attribute_names("#tenantId", FIELD_TENANT_ID)
+            .expression_attribute_names("#lastActive", FIELD_LAST_ACTIVE)
+            .expression_attribute_values(
+                ":now",
+                str(Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)),
+            )
+            .send()
+            .await
+            .context("Error updating lastActive in 'tenants' table")?;
+
+        Ok(())
     }
 
     #[tracing::instrument(level = "debug", skip(self), err(Display))]

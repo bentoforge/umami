@@ -38,6 +38,18 @@ pub struct Tenant {
     pub created: DateTime<Utc>,
     /// RFC 3339 timestamp of the last update.
     pub last_updated: DateTime<Utc>,
+    /// RFC 3339 timestamp of the last token activity scoped to this tenant — bumped on a user-token
+    /// refresh / downstream exchange and on an m2m api-key exchange. `None` until first activity.
+    #[serde(default)]
+    pub last_active: Option<DateTime<Utc>>,
+    /// User id that created this tenant (audit; not surfaced in the UI yet). `None` for the
+    /// system/auto-init tenant.
+    #[serde(default)]
+    pub created_by: Option<String>,
+    /// User id of the last change (name / custom fields / features) to this tenant (audit; not
+    /// surfaced in the UI yet).
+    #[serde(default)]
+    pub last_changed_by: Option<String>,
 }
 
 /// Derives a URL-friendly slug from a display name: lowercase, non-alphanumerics collapsed to

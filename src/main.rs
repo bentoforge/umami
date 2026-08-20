@@ -466,10 +466,10 @@ async fn maybe_auto_init(
     let tenant = match system_tenant_id {
         Some(id) => {
             tenants
-                .create_tenant_with_id(id, "System", "system")
+                .create_tenant_with_id(id, "System", "system", None)
                 .await?
         }
-        None => tenants.create_tenant("System", "system").await?,
+        None => tenants.create_tenant("System", "system", None).await?,
     };
 
     // Generated, single-use bootstrap credentials — never hard-coded. Logged once below; the

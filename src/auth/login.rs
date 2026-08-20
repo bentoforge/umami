@@ -449,6 +449,9 @@ async fn refresh(
     if let Err(err) = context.users.touch_last_seen(&user.user_id).await {
         tracing::warn!("failed to update lastSeen for {}: {err:#}", user.user_id);
     }
+    if let Err(err) = context.tenants.touch_last_active(tenant_id).await {
+        tracing::warn!("failed to update lastActive for tenant {tenant_id}: {err:#}");
+    }
 
     let set_cookie = build_refresh_cookie(
         &session_id,

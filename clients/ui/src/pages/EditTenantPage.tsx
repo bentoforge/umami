@@ -132,6 +132,7 @@ export function EditTenantPage() {
             onError={setError}
           />
           <FeaturesCard tenant={tenant} onChanged={reload} onError={setError} />
+          <MetaBox tenant={tenant} />
         </>
       )}
 
@@ -221,11 +222,6 @@ function DetailsCard({
       ) : (
         <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-2 text-sm">
           <DetailRow label={t("tenants.nameLabel")}>{tenant.name}</DetailRow>
-          <DetailRow label={t("tenants.createdAt")}>{formatDateTime(tenant.created)}</DetailRow>
-          <DetailRow label={t("tenants.updatedAt")}>{formatDateTime(tenant.lastUpdated)}</DetailRow>
-          <DetailRow label={t("tenants.id")}>
-            <span className="font-mono text-xs">{tenant.tenantId}</span>
-          </DetailRow>
           {defs.map((def) => (
             <DetailRow key={def.key} label={def.label}>
               {formatFieldValue(tenant.customFields[def.key])}
@@ -233,6 +229,36 @@ function DetailsCard({
           ))}
         </dl>
       )}
+    </section>
+  );
+}
+
+/** Muted gray box with the read-only system metadata: ID, last active, last updated, created.
+ * Two columns on desktop, one below. */
+function MetaBox({ tenant }: { tenant: Tenant }) {
+  const { t } = useTranslation();
+  const rows: { label: string; value: ReactNode }[] = [
+    {
+      label: t("tenants.id"),
+      value: <span className="font-mono text-xs break-all">{tenant.tenantId}</span>,
+    },
+    {
+      label: t("tenants.lastActive"),
+      value: tenant.lastActive ? formatDateTime(tenant.lastActive) : "—",
+    },
+    { label: t("tenants.updatedAt"), value: formatDateTime(tenant.lastUpdated) },
+    { label: t("tenants.createdAt"), value: formatDateTime(tenant.created) },
+  ];
+  return (
+    <section className="rounded-2xl border border-slate-200 dark:border-slate-700/50 bg-slate-50 dark:bg-slate-800/40 p-6">
+      <dl className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3">
+        {rows.map((row) => (
+          <div key={row.label}>
+            <dt className="text-xs text-slate-400">{row.label}</dt>
+            <dd className="text-sm text-slate-600 dark:text-slate-300">{row.value}</dd>
+          </div>
+        ))}
+      </dl>
     </section>
   );
 }

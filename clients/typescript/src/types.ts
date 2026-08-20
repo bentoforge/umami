@@ -165,6 +165,13 @@ export interface Tenant {
   slug: string;
   created: string;
   lastUpdated: string;
+  /** RFC3339 timestamp of the last token activity (refresh / exchange) scoped to this tenant;
+   * null until the first activity. */
+  lastActive?: string | null;
+  /** User id that created this tenant (audit; not surfaced in the UI yet). */
+  createdBy?: string | null;
+  /** User id of the last change to this tenant (audit; not surfaced in the UI yet). */
+  lastChangedBy?: string | null;
 }
 
 export interface CreateTenantRequest {
