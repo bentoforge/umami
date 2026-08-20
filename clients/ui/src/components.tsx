@@ -2,7 +2,7 @@ import type { CustomFieldDef } from "@bentoforge/umami-iam";
 import { EllipsisVerticalIcon } from "@heroicons/react/24/outline";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { resolvedDark, subscribeTheme } from "./theme";
-import { card, iconButton, input } from "./ui";
+import { iconButton, input } from "./ui";
 
 /** Extracts a human-readable message from a thrown value (UmamiError, Error, or anything). */
 export const errMsg = (err: unknown): string => (err instanceof Error ? err.message : String(err));
@@ -152,43 +152,72 @@ export function CheckboxTags({
 /** One entry in a {@link DropdownMenu}. */
 export type MenuAction = { label: string; onSelect: () => void; danger?: boolean };
 
-/** A vertical-3-dots menu (row actions / page actions). Closes on outside-click or after a pick. */
+/** A vertical-3-dots menu (row actions / page actions). The panel is positioned `fixed` (anchored
+ * to the trigger) so it escapes any `overflow`-clipping ancestor like a scrollable table card.
+ * Closes on outside-click, scroll, resize, or after a pick. */
 export function DropdownMenu({ actions, label }: { actions: MenuAction[]; label: string }) {
-  const [open, setOpen] = useState(false);
-  const boxRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  const WIDTH = 192; // 12rem — keep in sync with the panel's inline width.
+
+  const toggle = () => {
+    if (pos) {
+      setPos(null);
+      return;
+    }
+    const r = btnRef.current?.getBoundingClientRect();
+    if (r) {
+      setPos({ top: r.bottom + 4, left: Math.max(8, r.right - WIDTH) });
+    }
+  };
 
   useEffect(() => {
-    if (!open) {
+    if (!pos) {
       return;
     }
     const onClick = (e: MouseEvent) => {
-      if (boxRef.current && !boxRef.current.contains(e.target as Node)) {
-        setOpen(false);
+      const target = e.target as Node;
+      if (!menuRef.current?.contains(target) && !btnRef.current?.contains(target)) {
+        setPos(null);
       }
     };
+    const close = () => setPos(null);
     document.addEventListener("mousedown", onClick);
-    return () => document.removeEventListener("mousedown", onClick);
-  }, [open]);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      document.removeEventListener("mousedown", onClick);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [pos]);
 
   return (
-    <div className="relative inline-block" ref={boxRef}>
+    <>
       <button
+        ref={btnRef}
         type="button"
         className={iconButton}
         aria-label={label}
         aria-haspopup="menu"
-        onClick={() => setOpen((v) => !v)}
+        onClick={toggle}
       >
         <EllipsisVerticalIcon className="h-5 w-5" />
       </button>
-      {open && (
-        <div className={`${card} absolute right-0 mt-2 w-48 z-20 p-1.5 shadow-lg`}>
+      {pos && (
+        <div
+          ref={menuRef}
+          style={{ position: "fixed", top: pos.top, left: pos.left, width: WIDTH }}
+          className="z-50 rounded-2xl bg-white dark:bg-slate-800 p-1.5 shadow-lg ring-1 ring-black/5 dark:ring-white/10"
+        >
           {actions.map((action) => (
             <button
               key={action.label}
               type="button"
               onClick={() => {
-                setOpen(false);
+                setPos(null);
                 action.onSelect();
               }}
               className={`block w-full text-left rounded-lg px-3 py-2 text-sm ${
@@ -202,7 +231,7 @@ export function DropdownMenu({ actions, label }: { actions: MenuAction[]; label:
           ))}
         </div>
       )}
-    </div>
+    </>
   );
 }
 
