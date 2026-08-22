@@ -174,7 +174,6 @@
   },
   "apiTokens": {
     "title": "API-Tokens",
-    "subtitle": "Service-Keys handeln im Namen des Mandanten (M2M). Tausche einen unter POST /auth/token gegen ein kurzlebiges Access-Token.",
     "empty": "Keine Service-Keys vorhanden.",
     "newKey": "Neuer Service-Key",
     "name": "Name",

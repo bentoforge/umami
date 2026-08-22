@@ -49,12 +49,9 @@ export function ApiTokensPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-semibold text-slate-900 dark:text-white">
-            {t("apiTokens.title")}
-          </h1>
-          <p className="text-sm text-slate-500">{t("apiTokens.subtitle")}</p>
-        </div>
+        <h1 className="text-xl font-semibold text-slate-900 dark:text-white">
+          {t("apiTokens.title")}
+        </h1>
         {!creating && (
           <button className={primaryButton} onClick={() => setCreating(true)}>
             {t("apiTokens.new")}

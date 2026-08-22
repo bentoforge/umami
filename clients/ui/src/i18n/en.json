@@ -174,7 +174,6 @@
   },
   "apiTokens": {
     "title": "API tokens",
-    "subtitle": "Service keys act as the tenant (M2M). Exchange one at POST /auth/token for a short-lived access token.",
     "empty": "No service keys yet.",
     "newKey": "New service key",
     "name": "Name",
