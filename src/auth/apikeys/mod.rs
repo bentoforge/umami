@@ -75,9 +75,8 @@ fn parse_api_key(presented: &str) -> Option<(&str, &str)> {
 
 // ── Request/response types ───────────────────────────────────────────────────
 
-/// Exchange request: the presented API key and, optionally, which target API to mint for. `api` may
-/// be omitted only when the key restricts to exactly one audience (it's then the default); an
-/// unrestricted key (empty `apis`) may mint for any audience but must name it here.
+/// Exchange request: the presented API key and, optionally, which target API to mint for
+/// (default `umami`). The requested audience is bounded by the key's scopes + the API's eligibility.
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct ExchangeRequest {
@@ -100,8 +99,6 @@ struct CreateApiKeyRequest {
     name: String,
     /// The `scope:*` subjects this M2M key carries (must be assignable given the tenant's features).
     scopes: Option<Vec<String>>,
-    /// Optional audience allow-list (hardening); empty/omitted = no restriction (name `api` at exchange).
-    apis: Option<Vec<String>>,
     allowed_origins: Option<Vec<String>>,
     expires_at: Option<DateTime<Utc>>,
 }
@@ -113,8 +110,6 @@ struct CreatePatRequest {
     name: String,
     /// Optional restriction: limit the token to this subset of the user's own `role:*` (empty = all).
     roles: Option<Vec<String>>,
-    /// Optional audience allow-list (hardening); empty/omitted = no restriction (name `api` at exchange).
-    apis: Option<Vec<String>>,
     expires_at: Option<DateTime<Utc>>,
 }
 
@@ -138,7 +133,6 @@ struct ApiKeyView {
     name: String,
     roles: Vec<String>,
     scopes: Vec<String>,
-    apis: Vec<String>,
     status: ApiKeyStatus,
     allowed_origins: Vec<String>,
     expires_at: Option<DateTime<Utc>>,
@@ -155,7 +149,6 @@ impl From<ApiKey> for ApiKeyView {
             name: key.name,
             roles: key.roles,
             scopes: key.scopes,
-            apis: key.apis,
             status: key.status,
             allowed_origins: key.allowed_origins,
             expires_at: key.expires_at,
@@ -507,26 +500,9 @@ async fn exchange(
         }
     }
 
-    // Pick the target API. `key.apis` is an OPTIONAL hardening allow-list: empty = no restriction
-    // (the key may request any audience, still bounded by its scopes + the API's eligibility).
-    // A non-empty list restricts which audiences the key may mint for. When exactly one audience is
-    // listed and none is requested, it is used as the default.
-    let api_code = match request.api.as_deref() {
-        Some(requested) => {
-            if !key.apis.is_empty() && !key.apis.iter().any(|code| code == requested) {
-                status_bail!(
-                    StatusCode::FORBIDDEN,
-                    "This key may not mint tokens for API '{requested}'"
-                );
-            }
-            requested.to_owned()
-        }
-        None => match key.apis.as_slice() {
-            [only] => only.clone(),
-            // Unrestricted (or multi-audience) keys must name the target audience explicitly.
-            _ => client_bail!("Specify the target API via 'api'"),
-        },
-    };
+    // Pick the target API from the `api` param (default `umami`) — keys are not pinned to an
+    // audience; the requested audience is still bounded by the key's scopes + the API's eligibility.
+    let api_code = request.api.as_deref().unwrap_or("umami").to_owned();
 
     let config = config.current().await?;
     let access_ttl_secs = config.security.access_ttl_secs as i64;
@@ -679,8 +655,6 @@ async fn create_api_key(
     let secret = generate_refresh_secret();
     let key_id = generate_id();
     let api_key = format!("{KEY_PREFIX}{key_id}_{secret}");
-    // Optional audience allow-list; empty (the default) = no restriction.
-    let apis = request.apis.unwrap_or_default();
 
     keys.create(NewApiKey {
         key_id: key_id.clone(),
@@ -690,7 +664,6 @@ async fn create_api_key(
         user_id: None, // service key
         roles: Vec::new(),
         scopes,
-        apis,
         allowed_origins: request.allowed_origins.unwrap_or_default(),
         expires_at: request.expires_at,
     })
@@ -755,10 +728,6 @@ async fn create_my_pat(
     let secret = generate_refresh_secret();
     let key_id = generate_id();
     let api_key = format!("{KEY_PREFIX}{key_id}_{secret}");
-    let apis = match request.apis {
-        Some(apis) if !apis.is_empty() => apis,
-        _ => vec!["umami".to_owned()],
-    };
 
     keys.create(NewApiKey {
         key_id: key_id.clone(),
@@ -768,7 +737,6 @@ async fn create_my_pat(
         user_id: Some(user_id),                   // personal access token
         roles: request.roles.unwrap_or_default(), // restriction ∩ the user's own roles at mint time
         scopes: Vec::new(),
-        apis,
         allowed_origins: Vec::new(),
         expires_at: request.expires_at,
     })

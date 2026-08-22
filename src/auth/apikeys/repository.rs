@@ -55,10 +55,6 @@ pub struct ApiKey {
     /// permissions. Ignored for service keys.
     #[serde(default)]
     pub scopes: Vec<String>,
-    /// Target API codes this key may mint tokens for (see `docs/AUDIENCES.md`); one is chosen per
-    /// exchange. Defaults to `["umami"]` for keys created before this field existed.
-    #[serde(default = "default_apis")]
-    pub apis: Vec<String>,
     /// Lifecycle state.
     pub status: ApiKeyStatus,
     /// Origins permitted to exchange this key (Mode 1); empty = unrestricted.
@@ -72,11 +68,6 @@ pub struct ApiKey {
     pub created: DateTime<Utc>,
 }
 
-/// Default target APIs for a key that predates (or omits) the `apis` field: the umami admin API.
-fn default_apis() -> Vec<String> {
-    vec!["umami".to_owned()]
-}
-
 /// Parameters for creating an API key.
 pub struct NewApiKey {
     pub key_id: String,
@@ -88,7 +79,6 @@ pub struct NewApiKey {
     pub roles: Vec<String>,
     /// PAT down-scoping (ignored for service keys).
     pub scopes: Vec<String>,
-    pub apis: Vec<String>,
     pub allowed_origins: Vec<String>,
     pub expires_at: Option<DateTime<Utc>>,
 }
@@ -167,7 +157,6 @@ impl ApiKeyRepository for DynamoApiKeyRepository {
             user_id: new_key.user_id,
             roles: new_key.roles,
             scopes: new_key.scopes,
-            apis: new_key.apis,
             status: ApiKeyStatus::Active,
             allowed_origins: new_key.allowed_origins,
             expires_at: new_key.expires_at,

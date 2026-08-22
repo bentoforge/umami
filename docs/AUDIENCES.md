@@ -75,11 +75,11 @@ by refresh cookie vs. by API key.
    does **not** remember `api`. To hold tokens for several APIs at once, a SPA simply calls
    `/auth/refresh?api=` once per API — concurrent calls are safe (see the refresh grace window).
 
-2. **API-key exchange** — `POST /auth/token { apiKey, api? }`. A key carries `apis: [code,…]` (the
-   set it may mint for; default `["umami"]`). `api` selects one of them (required when the key
-   allows more than one; a not-allowed `api` is 403). The requester's S comes from the key's roles
-   (+ its tenant's effective features). Machine tokens also carry `kind: "api_key"`. No cookie, no
-   session — this is the machine/BFF path.
+2. **API-key exchange** — `POST /auth/token { apiKey, api? }`. `api` picks the target audience
+   (default `umami`); a key is not pinned to an audience, so the requested one is bounded only by
+   the key's scopes + the API's eligibility (an ineligible `api` is 403). The requester's S comes
+   from the key's roles (+ its tenant's effective features). Machine tokens also carry
+   `kind: "api_key"`. No cookie, no session — this is the machine/BFF path.
 
 > **Cross-*site* SPAs** (a product SPA on a genuinely different registrable domain, where
 > `SameSite=Lax` withholds the umami cookie on background `fetch`) are **not** served by a
@@ -89,7 +89,7 @@ by refresh cookie vs. by API key.
 
 ## Worked example
 
-Key targets `dbx-core`; its roles resolve to `{member, write:blocks}`; its tenant has feature
+A key requests `api=dbx-core`; its roles resolve to `{member, write:blocks}`; its tenant has feature
 `{ai}` → **S = {member, write:blocks, ai}**.
 
 - Eligibility `member,admin`: `member ∈ S` → **eligible**.
@@ -103,10 +103,9 @@ Key targets `dbx-core`; its roles resolve to `{member, write:blocks}`; its tenan
 - **config**: add `apis: [ApiDef]`; the default config ships the `umami` API (`passthrough`, with
   the old `tokenClaims` behaviour folded into its `claims`). The top-level `tokenClaims` is
   superseded by per-API `claims`.
-- **api-keys**: add `apis: [code]` (allowed targets; default `["umami"]`).
-- **token issuance**: `aud` is now per-call (from the resolved API). `login` and `refresh` mint for
-  the requested `api` (default `umami`); the session no longer pins an audience. API-key exchange
-  mints for the key's chosen API.
+- **token issuance**: `aud` is now per-call (from the resolved API). `login`, `refresh`, and
+  API-key exchange all mint for the requested `api` (default `umami`); neither the session nor a
+  key pins an audience.
 - **`UMAMI_DEFAULT_AUDIENCE`** env is superseded by the `umami` API's `audience` in config.
 
 ## Deferred

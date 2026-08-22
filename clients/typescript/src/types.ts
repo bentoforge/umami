@@ -330,8 +330,6 @@ export interface ApiKeyView {
   roles: string[];
   /** Service-key `scope:*` subjects (empty for PATs). */
   scopes: string[];
-  /** Target API codes this key may mint tokens for. */
-  apis: string[];
   status: ApiKeyStatus;
   allowedOrigins: string[];
   expiresAt?: string | null;
@@ -344,8 +342,6 @@ export interface CreateApiKeyRequest {
   name: string;
   /** The `scope:*` subjects this key carries (must be assignable given the tenant's features). */
   scopes?: string[];
-  /** Target API codes this key may mint for; defaults to `["umami"]`. */
-  apis?: string[];
   allowedOrigins?: string[];
   expiresAt?: string;
 }
@@ -355,8 +351,6 @@ export interface CreatePatRequest {
   name: string;
   /** Restrict the token to this subset of your own `role:*` (empty = all your roles). */
   roles?: string[];
-  /** Target API codes this PAT may mint for; defaults to `["umami"]`. */
-  apis?: string[];
   expiresAt?: string;
 }
 
