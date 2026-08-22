@@ -4,8 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 repository. The project language (code, commits, docs) is **English**.
 
 umami is a micro-IAM service built on the in-house **wasabi** framework. It is the JWT issuer and
-tenant/membership authority for a fleet of wasabi-based B2B services. The full specification lives
-in [PLAN.md](PLAN.md); the step-by-step implementation plan lives in [docs/ROADMAP.md](docs/ROADMAP.md).
+tenant/membership authority for a fleet of wasabi-based B2B services. See [README.md](README.md) for
+the product overview and the `docs/` directory for the reference docs (CONFIG, PERMISSIONS,
+AUDIENCES, API-KEYS, SCHEMA).
 
 ## Reference repositories (read these first — follow their conventions exactly)
 

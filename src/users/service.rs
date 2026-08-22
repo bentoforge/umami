@@ -463,7 +463,7 @@ async fn create_user(
 }
 
 /// Rejects any requested role that isn't assignable given the tenant's authorization features (or
-/// isn't a defined `role:*`). Keeps admins from minting roles the tenant's plan doesn't license.
+/// isn't a defined `role:*`). Keeps admins from granting roles the tenant's features don't allow.
 async fn validate_roles(
     config: &Config,
     tenants: &Arc<dyn TenantRepository>,

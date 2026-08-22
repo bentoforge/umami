@@ -60,7 +60,7 @@ pub trait TenantRepository: Send + Sync {
     ) -> anyhow::Result<Tenant>;
 
     /// Creates a tenant with a caller-supplied id (used by auto-init to materialise the configured
-    /// system tenant). Same defaults as [`create_tenant`].
+    /// system tenant). Same defaults as `create_tenant`.
     async fn create_tenant_with_id(
         &self,
         tenant_id: &str,
@@ -193,8 +193,8 @@ impl TenantRepository for DynamoTenantRepository {
 
     #[tracing::instrument(level = "debug", skip(self), err(Display))]
     async fn get_tenant(&self, tenant_id: &str) -> anyhow::Result<Option<Tenant>> {
-        // Strongly consistent: accounting mutations read-modify-write this record, so a stale read
-        // must never be the basis of a write.
+        // Strongly consistent: tenant PATCH (name / features / custom fields) read-modify-writes
+        // this record under an optimistic version, so a stale read must never be the basis of a write.
         let result = self
             .client
             .get_item(TABLE_TENANTS)

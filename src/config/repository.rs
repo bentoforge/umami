@@ -45,8 +45,8 @@ fn version_retention_from_env() -> anyhow::Result<VersionRetention> {
     })
 }
 
-/// Source of the configuration document. Pluggable so config can come from S3 now and elsewhere
-/// later; both implementations expose the whole document.
+/// Source of the configuration document. Pluggable (S3, in-memory, …); both implementations expose
+/// the whole document.
 #[async_trait]
 pub trait ConfigRepository: Send + Sync {
     /// Returns the current config (cached; may refresh internally).

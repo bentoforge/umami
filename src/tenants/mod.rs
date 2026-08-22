@@ -32,14 +32,14 @@ pub struct Tenant {
     pub custom_fields: BTreeMap<String, Value>,
     /// Display name.
     pub name: String,
-    /// URL-friendly handle derived from the name (not enforced unique in v1).
+    /// URL-friendly handle derived from the name (a display convenience; not enforced unique).
     pub slug: String,
     /// RFC 3339 creation timestamp.
     pub created: DateTime<Utc>,
     /// RFC 3339 timestamp of the last update.
     pub last_updated: DateTime<Utc>,
     /// RFC 3339 timestamp of the last token activity scoped to this tenant — bumped on a user-token
-    /// refresh / downstream exchange and on an m2m api-key exchange. `None` until first activity.
+    /// refresh and on an api-key/PAT exchange. `None` until first activity.
     #[serde(default)]
     pub last_active: Option<DateTime<Utc>>,
     /// Range key of the listing GSI: `last_active` when present, else `created`. Initialised to

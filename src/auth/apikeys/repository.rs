@@ -42,17 +42,17 @@ pub struct ApiKey {
     pub secret_hash: String,
     /// Human-readable label.
     pub name: String,
-    /// **Subject discriminator.** `None` → a *service key* that acts as itself (permissions from
-    /// `roles`). `Some(userId)` → a *personal access token* that acts as that user (permissions from
-    /// the user, optionally down-scoped by `scopes`). See `docs/API-KEYS.md`.
+    /// **Subject discriminator.** `None` → a *service key* that acts as itself (subjects are its
+    /// `scopes`). `Some(userId)` → a *personal access token* that acts as that user (its `role:*`,
+    /// optionally restricted by `roles`). See `docs/API-KEYS.md`.
     #[serde(default)]
     pub user_id: Option<String>,
-    /// Service-key permissions: role codes → permissions at exchange. Ignored for PATs.
+    /// PAT role restriction: when non-empty, the token acts with the user's roles **intersected**
+    /// with this set (never an escalation). Empty = the user's full roles. Ignored for service keys.
     #[serde(default)]
     pub roles: Vec<String>,
-    /// PAT down-scoping: when non-empty, the token's permissions are the user's resolved
-    /// permissions **intersected** with this set (never an escalation). Empty = full user
-    /// permissions. Ignored for service keys.
+    /// Service-key subjects: the `scope:*` codes this machine key carries at exchange. Ignored for
+    /// PATs (which derive their subjects from the acting user).
     #[serde(default)]
     pub scopes: Vec<String>,
     /// Lifecycle state.

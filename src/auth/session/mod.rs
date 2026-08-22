@@ -26,8 +26,8 @@ pub struct Session {
     pub session_id: String,
     /// The user this session authenticates.
     pub user_id: String,
-    /// Tenant the session is currently scoped to (drives the token's `tenant` claim). `None`
-    /// until the user selects/has a tenant (memberships arrive in Phase 3).
+    /// Tenant the session is currently scoped to (drives the token's `tenant` claim). A user belongs
+    /// to exactly one tenant, so this is their home tenant; `None` only for a tenant-less user.
     pub active_tenant_id: Option<String>,
     /// SHA-256 (base64url) of the current refresh secret. The secret itself is never stored.
     pub refresh_hash: String,
@@ -36,7 +36,7 @@ pub struct Session {
     /// token theft. `None` before the first rotation.
     #[serde(default)]
     pub prev_refresh_hash: Option<String>,
-    /// Deadline until which [`prev_refresh_hash`] is accepted. `None` = no grace window active.
+    /// Deadline until which `prev_refresh_hash` is accepted. `None` = no grace window active.
     #[serde(default)]
     pub prev_refresh_expires_at: Option<DateTime<Utc>>,
     /// Snapshot of `user.tokenVersion` at issue; a global bump invalidates this session at refresh.

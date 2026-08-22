@@ -35,9 +35,9 @@ struct LoginRequest {
     username: String,
     password: String,
     totp_code: Option<String>,
-    /// Optional target API (from the config `apis` catalog) to mint the access token for directly,
-    /// skipping a follow-up `/auth/exchange`. Defaults to the `umami` admin API. The session
-    /// remembers this so `refresh` keeps minting for the same API.
+    /// Optional target API (from the config `apis` catalog) for the first access token, so a product
+    /// SPA gets a usable token straight from login. Defaults to the `umami` admin API. The session
+    /// itself is audience-agnostic — later `/auth/refresh` calls pick their own `api`.
     api: Option<String>,
 }
 

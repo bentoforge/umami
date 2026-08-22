@@ -465,7 +465,7 @@ async fn resolve(query: ResolveQuery, deps: ResolveDeps) -> anyhow::Result<Value
         )
         .await?;
 
-        // A magic-link token mint is real activity — bump the user's and tenant's last-active markers
+        // A messaging-resolved token mint is real activity — bump the user's and tenant's last-active markers
         // (best-effort; never fail the login on a bookkeeping write), same as password/refresh login.
         if let Err(err) = deps.users.touch_last_seen(&user.user_id).await {
             tracing::warn!("failed to update lastSeen for {}: {err:#}", user.user_id);

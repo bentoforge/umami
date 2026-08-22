@@ -180,7 +180,8 @@ pub fn get_tenant_route(
         .boxed()
 }
 
-/// `PATCH /tenants/{id}` — update the caller's own tenant's name/plan (requires `admin:tenant`).
+/// `PATCH /tenants/{id}` — update the caller's own tenant's name + custom fields (requires
+/// `admin:tenant`).
 pub fn patch_tenant_route(
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,

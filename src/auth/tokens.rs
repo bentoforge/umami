@@ -4,10 +4,9 @@
 //! the matching **public** keys at `/.well-known/jwks.json`, which every wasabi product service
 //! fetches to verify tokens offline.
 //!
-//! Signing keys sit behind the [`KeyRepository`] trait so the source of key material is pluggable.
-//! Phase 2 ships [`EnvKeyRepository`] (key from `UMAMI_SIGNING_KEY`); a future AWS-backed
-//! implementation with a periodic refresh (for rotation) drops in without touching the issuer or
-//! the JWKS route.
+//! Signing keys sit behind the [`KeyRepository`] trait so the issuer and JWKS route depend only on
+//! the trait, not on where key material lives (env, a secret store, …). The bundled
+//! [`EnvKeyRepository`] loads one key from `UMAMI_SIGNING_KEY`.
 
 use anyhow::Context;
 use async_trait::async_trait;
@@ -35,8 +34,8 @@ pub struct KeySet {
     pub jwks: Value,
 }
 
-/// Source of signing key material. Pluggable so keys can come from env now and from an
-/// AWS secret (with periodic refresh for rotation) later.
+/// Source of signing key material. Pluggable so the key can come from the environment, a secret
+/// store, or anywhere else without changing the issuer or JWKS route.
 #[async_trait]
 pub trait KeyRepository: Send + Sync {
     /// Returns the current key set. Implementations may cache and refresh internally.
@@ -118,8 +117,8 @@ struct AccessClaims<'a> {
 pub struct AccessTokenClaims<'a> {
     /// User id → `sub`.
     pub subject: &'a str,
-    /// Email → `email`. (name/locale and other profile claims will be config-mapped from custom
-    /// fields via `extra` in a later step; they are no longer hardcoded on the user.)
+    /// Email → `email`. Other profile claims (name, locale, …) are not hardcoded here — they come
+    /// from the target API's config-driven claim mapping, flattened in via `extra`.
     pub email: &'a str,
     /// Active tenant → `tenant` (omitted when `None`).
     pub tenant: Option<&'a str>,

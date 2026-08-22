@@ -2,7 +2,7 @@
 //!
 //! Hashes are self-describing PHC strings (algorithm, version, parameters and salt are embedded),
 //! so [`verify`] needs only the stored hash and the candidate password. Uses argon2's default
-//! parameters (argon2id, ~19 MiB, t=2, p=1); tuning is a hardening-phase concern.
+//! parameters (argon2id, ~19 MiB, t=2, p=1).
 
 use argon2::Argon2;
 use argon2::password_hash::rand_core::OsRng;

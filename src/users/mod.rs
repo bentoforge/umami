@@ -1,8 +1,8 @@
-//! Global user identities.
+//! User identities.
 //!
-//! A user is a single identity reusable across tenants; the relationship to tenants and teams is
-//! modeled separately via memberships (Phase 3). This module owns the `User` entity, its
-//! persistence (`repository`), and the (dev-bootstrap) creation route (`service`).
+//! A user belongs to exactly one tenant (its owner) — see `docs/SCHEMA.md`. This module owns the
+//! `User` entity, its persistence (`repository`), and the tenant-scoped user-administration API
+//! (`service`): create, list, get, patch, delete, password reset, sessions and audit.
 
 pub mod repository;
 pub mod service;

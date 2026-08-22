@@ -2,7 +2,7 @@
 //!
 //! Loaded and saved as one whole document via [`repository::ConfigRepository`] (cached), and edited
 //! by the client (load → edit → write back). See `docs/CONFIG.md`. Per-tenant/user *assignments*
-//! (user roles, tenant packages, overrides, custom-field values) live on the entities, not here.
+//! (user roles, tenant features, custom-field values) live on the entities, not here.
 
 pub mod repository;
 pub mod service;
@@ -35,7 +35,7 @@ pub struct PermissionRule {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ApiDef {
-    /// Internal id, referenced by API keys and the exchange call.
+    /// Internal id of this API (audience), named by the `api` param at login/refresh/key-exchange.
     pub code: String,
     /// The `aud` claim written into tokens minted for this API.
     pub audience: String,
@@ -47,7 +47,7 @@ pub struct ApiDef {
     #[serde(default)]
     pub permissions: Vec<PermissionRule>,
     /// Claim mapping `claimName → source`, where `source` is a literal string, a `$user.<field>` /
-    /// `$tenant.<field>` reference, or `$user.custom.<key>` / `$tenant.custom.<key>` (see
+    /// `$tenant.<field>` reference, or `$user.custom.<code>` / `$tenant.custom.<code>` (see
     /// [`resolve_claim_source`]).
     #[serde(default)]
     pub claims: BTreeMap<String, String>,
@@ -138,7 +138,7 @@ pub struct ClaimContext<'a> {
 /// - `$user.<field>` — one of `id`, `username`, `email`, `title`, `salutation`, `firstname`,
 ///   `lastname`, `name`, `fullName`, `addressableName`, `roles`;
 /// - `$tenant.<field>` — one of `id`, `name`, `slug`, `features`;
-/// - `$user.custom.<key>` / `$tenant.custom.<key>` — the named custom field's value.
+/// - `$user.custom.<code>` / `$tenant.custom.<code>` — the named custom field's value.
 ///
 /// An unknown `$…` reference, or an absent optional field / custom value, yields `None` so the
 /// claim is simply omitted.
@@ -226,11 +226,11 @@ pub struct FeatureDef {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct CustomFieldDef {
-    /// Stable code (the storage key for the field's value).
+    /// Stable code the field's value is stored under (in a tenant's/user's `customFields` map).
     pub code: String,
     /// Display label.
     pub label: String,
-    /// Field type: `string`, `number`, `bool`/`boolean`, or `select` (constrained to [`options`]).
+    /// Field type: `string`, `number`, `bool`/`boolean`, or `select` (constrained to `options`).
     #[serde(rename = "type")]
     pub field_type: String,
     /// Allowed values for a `select` field (ignored for other types).

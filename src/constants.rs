@@ -16,7 +16,7 @@ pub const MAX_LIST_RESULTS: usize = 250;
 // features/markers to permissions lives entirely in the config `apis` block (see `docs/CONFIG.md`).
 // Product-service permission strings (e.g. dbx-core's `write:blocks`) are defined by those services.
 
-/// Administer the caller's **own** tenant (settings, status, license, packages, audit).
+/// Administer the caller's **own** tenant (settings, features, custom fields, audit).
 pub const ADMIN_TENANT_PERMISSION: &str = "admin:tenant";
 
 /// Manage a tenant's users (create/list/patch/delete, roles, status, password reset).

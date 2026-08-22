@@ -103,8 +103,8 @@ pub struct NewUser {
 /// Persistence interface for user identities.
 #[async_trait]
 pub trait UserRepository: Send + Sync {
-    /// Creates a new user, enforcing global email uniqueness. Returns a client error if the
-    /// (normalized) email is already registered.
+    /// Creates a new user, enforcing global username uniqueness (via the `user-usernames` table).
+    /// Returns a client error if the username is already taken. Email is not unique.
     async fn create_user(&self, new_user: NewUser) -> anyhow::Result<User>;
 
     /// Looks up a user by (normalized) username via the `user-usernames` table. `None` if unknown.

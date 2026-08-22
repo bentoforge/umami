@@ -1,7 +1,7 @@
 # umami configuration reference
 
 umami's behaviour is driven by **one JSON document** — the *config*. It holds the catalogs (roles,
-scopes, features, limits, packages, custom fields), the security settings, the messaging integration
+scopes, features, custom fields), the security settings, the messaging integration
 and, crucially, the **per-API permission mapping**. This file documents the whole document, the full
 permission catalog, and a copy-pasteable **standard config**.
 
@@ -42,8 +42,6 @@ Relevant environment variables:
   "roles":   [ RoleDef, … ],          // assignable to users        (role:*)
   "scopes":  [ ScopeDef, … ],         // assignable to service keys (scope:*)
   "features":[ FeatureDef, … ],       // granted to tenants         (feature:*)
-  "limits":  [ LimitDef, … ],         // metered quotas (accounting)
-  "packages":[ PackageDef, … ],       // sellable bundles of features+limits (accounting)
   "customTenantFields": [ CustomFieldDef, … ],
   "customUserFields":   [ CustomFieldDef, … ],
   "security":  SecuritySettings,
@@ -133,12 +131,11 @@ define their own.
 |------------|----------------------|
 | `manage:tenants` | `GET/POST /tenants`, `DELETE /tenants/{id}`, `GET /tenants/{id}/assignable-features`, `POST`/`DELETE /tenants/{id}/features/{code}` (cross-tenant) |
 | `switch:tenant` | `POST /auth/switch-tenant` |
-| `admin:tenant` | `GET`/`PATCH /tenants/{id}`, `PATCH …/status`, `PATCH …/license`, packages + entitlements, `GET /tenants/{id}/audit` (own tenant) |
+| `admin:tenant` | `GET`/`PATCH /tenants/{id}` (name + custom fields), `GET /tenants/{id}/audit` (own tenant) |
 | `manage:users` | users CRUD + admin password reset, `GET /users/{id}/assignable-roles` |
 | `manage:service-keys` | service-key create/list/revoke, `GET /tenants/{id}/assignable-scopes` |
 | `manage:pat` | own personal access tokens under `/auth/me/api-keys` |
 | `manage:config` | `GET`/`PUT /config` |
-| `write:usage` | `GET`/`POST /tenants/{id}/usage` (metering) |
 | `self:readonly` | **deny marker** — its presence *blocks* `POST /auth/me/password` and `PATCH /auth/me` (guarded via `!self:readonly`) |
 | `messaging:self` | `/auth/me/messaging-code` (+regenerate), `/auth/me/messaging-links` (+unlink) |
 | `messaging:link` | `POST /messaging/links` (bot backend claims a mapping) |
@@ -159,7 +156,7 @@ role matrix; see [§6](#6-proposed-standard-config) for that. The default `apis[
 
 | `when` | `grant` |
 |--------|---------|
-| `role:owner` | `admin:tenant`, `manage:users`, `manage:service-keys`, `manage:pat`, `manage:config`, `write:usage` |
+| `role:owner` | `admin:tenant`, `manage:users`, `manage:service-keys`, `manage:pat`, `manage:config` |
 | `is:system-tenant` | `manage:tenants`, `switch:tenant` |
 | `role:readonly` | `self:readonly` (deny marker) |
 | `is:messaging-configured` | `messaging:self` |
@@ -169,7 +166,7 @@ role matrix; see [§6](#6-proposed-standard-config) for that. The default `apis[
 Default **roles**: `role:owner`, `role:admin`, `role:member`, `role:viewer`, `role:readonly`
 (all `assignableIf` omitted). Default **scopes**: `scope:messaging-linker`,
 `scope:messaging-resolver` (both `assignableIf: "is:system-tenant"`). No default
-features/limits/packages/custom fields.
+features/custom fields.
 
 > ⚠ In the minimal default, **only `role:owner` is mapped** — `role:admin` / `role:member` /
 > `role:viewer` grant nothing until you map them in your config. This is intentional: real
@@ -202,8 +199,6 @@ feature/scope and a product-API entry with eligibility + claims. Copy, adjust, `
     { "code": "feature:pro", "name": "Pro plan" },
     { "code": "feature:ai",  "name": "AI add-on", "assignableIf": "feature:pro" }
   ],
-  "limits":   [ { "code": "seats", "name": "Seats", "default": "5" } ],
-  "packages": [],
   "customTenantFields": [
     { "code": "customerNo", "label": "Customer no.", "type": "string", "required": false, "showInTable": true }
   ],
@@ -219,9 +214,9 @@ feature/scope and a product-API entry with eligibility + claims. Copy, adjust, `
     {
       "code": "umami", "audience": "umami",
       "permissions": [
-        { "when": "role:owner",  "grant": ["admin:tenant","manage:users","manage:service-keys","manage:pat","manage:config","write:usage"] },
-        { "when": "role:admin",  "grant": ["manage:users","manage:service-keys","manage:pat","write:usage"] },
-        { "when": "role:member", "grant": ["manage:pat","write:usage"] },
+        { "when": "role:owner",  "grant": ["admin:tenant","manage:users","manage:service-keys","manage:pat","manage:config"] },
+        { "when": "role:admin",  "grant": ["manage:users","manage:service-keys","manage:pat"] },
+        { "when": "role:member", "grant": ["manage:pat"] },
         { "when": "is:system-tenant", "grant": ["manage:tenants","switch:tenant"] },
         { "when": "role:readonly", "grant": ["self:readonly"] },
         { "when": "is:messaging-configured", "grant": ["messaging:self"] },

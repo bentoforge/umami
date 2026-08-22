@@ -2,7 +2,7 @@
 //! wasabi-based B2B services.
 //!
 //! This binary boots a warp web server (via wasabi's `run_webserver`) and wires the auth, tenant,
-//! team, user and membership routes. See `docs/ROADMAP.md` for the phased build plan.
+//! user, API-key, config, audit and messaging routes.
 
 // The `routes![…]` macro builds one deeply-nested `Or<…>` filter type; warp 0.4's layout query
 // needs more headroom than the default.
@@ -172,8 +172,8 @@ async fn app() -> anyhow::Result<()> {
     let messaging_repository: Arc<dyn MessagingRepository> =
         Arc::new(DynamoMessagingRepository::with_client(&dynamo_client).await?);
 
-    // Signing keys behind a repository: env-backed for now, AWS-backed (with periodic refresh for
-    // rotation) later — the issuer and JWKS route depend only on the trait.
+    // Signing keys behind a repository trait so the issuer and JWKS route depend only on the trait,
+    // not on where keys come from. Currently env-backed (`EnvKeyRepository`).
     let key_repository: Arc<dyn KeyRepository> = Arc::new(EnvKeyRepository::from_env()?);
     let token_issuer = Arc::new(TokenIssuer::from_env(key_repository.clone())?);
 
@@ -181,8 +181,7 @@ async fn app() -> anyhow::Result<()> {
     // otherwise a built-in default (dev/tests/no-S3).
     // Persist config in S3 whenever an S3 client is available the wasabi way (i.e. S3_BUCKET_SUFFIX
     // is set); the bucket is the fixed "config.<S3_BUCKET_SUFFIX>", auto-created on first boot.
-    // Otherwise fall back to the in-memory repo — non-persistent, for local dev without S3. (The
-    // repo-discovery story will be refined later.)
+    // Otherwise fall back to the in-memory repo — non-persistent, for local dev without S3.
     let config_repository: Arc<dyn ConfigRepository> = match S3Client::from_env().await {
         Ok(s3_client) => Arc::new(S3ConfigRepository::from_env(s3_client).await?),
         Err(err) => {
@@ -214,7 +213,8 @@ async fn app() -> anyhow::Result<()> {
         audit_repository.clone(),
     )?;
 
-    // The system tenant whose members may administer all tenants (interim cross-tenant guard).
+    // The system tenant whose members may administer all tenants (they get the `is:system-tenant`
+    // marker → `manage:tenants` + `switch:tenant`).
     let system_tenant_id: Option<String> = env::var("UMAMI_SYSTEM_TENANT_ID")
         .ok()
         .filter(|id| !id.is_empty());

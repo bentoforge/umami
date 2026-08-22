@@ -47,7 +47,7 @@ pub trait AuditRepository: Send + Sync {
         cursor: Option<&str>,
     ) -> anyhow::Result<(Vec<AuditEntry>, Option<String>)>;
 
-    /// One page of a tenant's entries, newest first (`limit` per page). See [`list_by_user`].
+    /// One page of a tenant's entries, newest first (`limit` per page). See `list_by_user`.
     async fn list_by_tenant(
         &self,
         tenant_id: &str,

@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 description = "micro-IAM: identity, tenant and token-issuance service built on wasabi"
 license = "MIT"
+readme = "README.md"
+repository = "https://github.com/bentoforge/umami"
 
 [profile.release]
 opt-level = 3

@@ -1,7 +1,6 @@
-//! Authentication: token issuance (JWKS), sessions, password login, and the login/refresh flows.
-//!
-//! Later phases add `/auth/me`, tenant switching and MFA. Shared dependencies for the auth routes
-//! are bundled in [`AuthContext`].
+//! Authentication: token issuance (JWKS), sessions, password + passkey login, refresh/logout, the
+//! `/auth/me` profile, tenant switching, MFA (TOTP + WebAuthn), and API-key/PAT exchange. Shared
+//! dependencies for the auth routes are bundled in [`AuthContext`].
 
 pub mod apikeys;
 pub mod broker;
