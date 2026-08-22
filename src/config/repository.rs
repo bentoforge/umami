@@ -155,8 +155,20 @@ impl ConfigRepository for S3ConfigRepository {
             .fetch_cached()
             .await
             .context("Failed to fetch config.json from S3")?;
-        let config: Config =
-            serde_json::from_slice(&bytes).context("Failed to parse config.json")?;
+        // Fail-safe: a stored config that no longer parses (corruption, or a schema change the
+        // document predates) must NOT take the whole service — including login — down. Fall back to
+        // the built-in default and log loudly; an admin can then repair and re-save via PUT /config.
+        let config: Config = match serde_json::from_slice(&bytes) {
+            Ok(config) => config,
+            Err(err) => {
+                tracing::error!(
+                    "stored config.json failed to parse — serving the built-in DEFAULT config so \
+                     the service stays up; your saved settings are NOT applied until you fix and \
+                     re-save the document via PUT /config: {err:#}"
+                );
+                Config::default()
+            }
+        };
         Ok(Arc::new(config))
     }
 
