@@ -32,20 +32,22 @@ This document is the **living authority** for umami's identity/tenancy model.
 
 ## Entities
 
-### Tenant — table `tenants` (+ GSI `ByLastUpdatedIndex`)
+### Tenant — table `tenants` (+ GSI `ByLastActiveIndex`)
 
 Owns its users; carries authorization features + custom fields.
 
 - **PK** `tenantId` (hash) — 32-char generated id
-- **GSI `ByLastUpdatedIndex`** — hash = a constant `listShard` value injected at write time
-  (storage-only, not in the API model), range = `lastUpdated`; lets `GET /tenants` list every tenant
-  newest-first in one query (no table scan). Standard constant-partition pattern for a small global
-  list at admin scale.
+- **GSI `ByLastActiveIndex`** — hash = a constant `listShard` value injected at write time
+  (storage-only, not in the API model), range = `lastActiveOrCreated`; lets `GET /tenants` list every
+  tenant in one query (no table scan), sorted active-first with inactive tenants stable by creation.
+  Standard constant-partition pattern for a small global list at admin scale.
 - `name`, `slug` (URL-friendly handle derived from `name`; a display convenience, not enforced unique)
 - `features`: `[String]` — the granted `feature:*` authorization set the permission mapping reads
   (see [PERMISSIONS.md](PERMISSIONS.md))
 - `customFields`: values for the config-defined custom tenant fields
 - `created`, `lastUpdated`: RFC3339
+- `lastActive`: RFC3339, `null` until first token activity; `lastActiveOrCreated`: the GSI range key
+  (`lastActive` else `created`, bumped on activity)
 
 ### User — table `users` (+ guard table `user-usernames`, + GSI `ByTenantIndex`)
 
@@ -53,7 +55,8 @@ Owned by exactly one tenant.
 
 - **PK** `userId` (hash) — 32-char generated id
 - `tenantId` — the owning (home) tenant → **GSI `ByTenantIndex`** (hash `tenantId`, **range
-  `lastSeen`**) to list a tenant's users sorted by recency of activity
+  `lastActiveOrCreated`** = `lastSeen` else `created`) to list a tenant's users active-first, with
+  never-active users stable by creation
 - `username` — login id, stored as entered (trimmed); **global uniqueness** (case-insensitive) via
   the `user-usernames` guard
 - `email` — optional contact info, normalized (trim + lowercase) when present; **not unique**
