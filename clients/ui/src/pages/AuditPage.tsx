@@ -2,7 +2,7 @@ import type { AuditEntry, AuditSeverity } from "@bentoforge/umami-iam";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useUmami } from "../auth/UmamiProvider";
-import { Banner, errMsg, formatDateTime } from "../components";
+import { Banner, errMsg, formatDateTime, Loader } from "../components";
 import { card, ghostButton, td, th } from "../ui";
 
 /** Entries fetched per page (and per "load more"). */
@@ -75,7 +75,7 @@ export function AuditPage() {
 
       <section className={`${card} overflow-x-auto`}>
         {entries === null ? (
-          <p className="text-slate-500">{t("common.loading")}</p>
+          <Loader />
         ) : entries.length === 0 ? (
           <p className="text-slate-500">{t("audit.empty")}</p>
         ) : (

@@ -20,7 +20,7 @@ import { card, iconButton, input } from "../ui";
 type NavItem = { to: string; label: string; show: boolean; end?: boolean };
 
 const navLinkClass = ({ isActive }: { isActive: boolean }) =>
-  `px-3 py-2 rounded-lg text-sm font-medium ${
+  `px-3 py-1.5 rounded-lg text-sm font-medium ${
     isActive
       ? "text-brand"
       : "text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-700"
@@ -186,7 +186,7 @@ function ThemeSwitcher() {
               key={value}
               type="button"
               onClick={() => choose(value)}
-              className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm ${
+              className={`flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-sm ${
                 theme === value
                   ? "bg-primary/10 text-primary font-medium"
                   : "text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700"
@@ -244,7 +244,7 @@ function UserMenu({
       </button>
       {open && (
         <div className={`${card} absolute right-0 mt-2 w-56 z-20 p-1.5 shadow-lg`}>
-          <div className="px-3 py-2 lg:hidden">
+          <div className="px-3 py-1.5 lg:hidden">
             <div className="text-sm font-medium text-slate-900 dark:text-white">{fullName}</div>
             <div className="text-xs text-slate-500">{tenantName}</div>
           </div>
@@ -256,7 +256,7 @@ function UserMenu({
               <NavLink
                 to={item.to}
                 onClick={() => setOpen(false)}
-                className="block rounded-lg px-3 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700"
+                className="block rounded-lg px-3 py-1.5 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700"
               >
                 {item.label}
               </NavLink>
@@ -269,7 +269,7 @@ function UserMenu({
               setOpen(false);
               void signOut();
             }}
-            className="block w-full text-left rounded-lg px-3 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700"
+            className="block w-full text-left rounded-lg px-3 py-1.5 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700"
           >
             Abmelden
           </button>
@@ -294,7 +294,7 @@ function MobileMenu({
   const switched = !!activeTenantId && activeTenantId !== homeTenantId;
 
   const linkClass =
-    "block rounded-lg px-3 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700";
+    "block rounded-lg px-3 py-1.5 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700";
 
   const divider = <div className="my-1 border-t border-slate-200 dark:border-slate-700" />;
 
@@ -325,7 +325,7 @@ function MobileMenu({
           <div className="my-1 border-t border-slate-200 dark:border-slate-700" />
           <button
             type="button"
-            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-amber-700 dark:text-amber-300 hover:bg-slate-100 dark:hover:bg-slate-700"
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-sm text-amber-700 dark:text-amber-300 hover:bg-slate-100 dark:hover:bg-slate-700"
             onClick={() => {
               onNavigate();
               void switchTenant(homeTenantId, me?.tenant?.name);
@@ -441,7 +441,7 @@ function TenantSwitcher() {
                     type="button"
                     disabled={busy}
                     onClick={() => void pick(tenant.tenantId, tenant.name)}
-                    className={`w-full text-left rounded-lg px-3 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-700 ${
+                    className={`w-full text-left rounded-lg px-3 py-1.5 text-sm hover:bg-slate-50 dark:hover:bg-slate-700 ${
                       tenant.tenantId === activeTenantId
                         ? "text-brand"
                         : "text-slate-700 dark:text-slate-200"
@@ -461,7 +461,7 @@ function TenantSwitcher() {
                 type="button"
                 disabled={busy}
                 onClick={() => void pick(homeTenantId, me?.tenant?.name)}
-                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-amber-700 dark:text-amber-300 hover:bg-slate-50 dark:hover:bg-slate-700"
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-sm text-amber-700 dark:text-amber-300 hover:bg-slate-50 dark:hover:bg-slate-700"
               >
                 <XMarkIcon className="h-4 w-4" /> Übernahme beenden
               </button>

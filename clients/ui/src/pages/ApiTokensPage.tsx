@@ -1,7 +1,7 @@
 import type { ApiKeyView } from "@bentoforge/umami-iam";
 import { useCallback, useEffect, useState } from "react";
 import { useUmami } from "../auth/UmamiProvider";
-import { Banner, CheckboxTags, errMsg, Field, formatDateTime } from "../components";
+import { Banner, CheckboxTags, errMsg, Field, formatDateTime, Loader } from "../components";
 import { card, dangerButton, input, primaryButton, td, th } from "../ui";
 
 /** Own-tenant screen: manage service keys (M2M machine principals). Personal access tokens live in
@@ -81,7 +81,7 @@ export function ApiTokensPage() {
 
       <section className={`${card} overflow-x-auto`}>
         {keys === null ? (
-          <p className="text-slate-500">Loading…</p>
+          <Loader />
         ) : keys.length === 0 ? (
           <p className="text-slate-500">No service keys.</p>
         ) : (
