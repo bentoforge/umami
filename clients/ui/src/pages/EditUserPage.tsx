@@ -21,9 +21,10 @@ import {
   formatDateTime,
   formatFieldValue,
   Loader,
+  PatList,
   Toggle,
 } from "../components";
-import { card, ghostButton, input, primaryButton, td, th } from "../ui";
+import { card, ghostButton, input, primaryButton } from "../ui";
 
 /** Page size for the audit "load more" list. */
 const AUDIT_PAGE = 10;
@@ -587,10 +588,12 @@ function SessionsCard({ user, onError }: { user: UserView; onError: (msg: string
 }
 
 /** Read-only list of the user's personal access tokens (requires `manage:users`). */
+/** Read-only list of the user's personal access tokens (same layout as the profile, no actions). */
 function PatsCard({ userId }: { userId: string }) {
   const { client } = useUmami();
   const { t } = useTranslation();
   const [pats, setPats] = useState<ApiKeyView[] | null>(null);
+  const [defs, setDefs] = useState<RoleDef[]>([]);
 
   useEffect(() => {
     client
@@ -599,36 +602,24 @@ function PatsCard({ userId }: { userId: string }) {
       .catch(() => setPats([]));
   }, [client, userId]);
 
+  useEffect(() => {
+    client
+      .getConfig()
+      .then((c) => setDefs(c.roles))
+      .catch(() => setDefs([]));
+  }, [client]);
+
+  const roleLabel = (code: string) => defs.find((d) => d.code === code)?.name ?? code;
+
   return (
-    <section className={`${card} overflow-x-auto`}>
-      <h2 className="font-medium text-slate-800 dark:text-slate-200 mb-3">
-        {t("users.patsTitle")}
-      </h2>
+    <section className={card}>
+      <h2 className="font-medium text-slate-800 dark:text-slate-200 mb-3">{t("pats.title")}</h2>
       {pats === null ? (
         <Loader />
       ) : pats.length === 0 ? (
-        <p className="text-sm text-slate-500">{t("users.noPats")}</p>
+        <p className="text-sm text-slate-500">{t("pats.empty")}</p>
       ) : (
-        <table className="w-full border-collapse">
-          <thead>
-            <tr className="border-b border-slate-200 dark:border-slate-700">
-              <th className={th}>Name</th>
-              <th className={th}>APIs</th>
-              <th className={th}>Status</th>
-              <th className={th}>{t("users.created")}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {pats.map((pat) => (
-              <tr key={pat.keyId} className="border-b border-slate-100 dark:border-slate-700/50">
-                <td className={td}>{pat.name}</td>
-                <td className={td}>{pat.apis.join(", ") || "—"}</td>
-                <td className={td}>{pat.status}</td>
-                <td className={td}>{formatDateTime(pat.created)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <PatList pats={pats} roleLabel={roleLabel} />
       )}
     </section>
   );

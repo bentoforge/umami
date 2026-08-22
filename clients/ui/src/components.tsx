@@ -1,4 +1,4 @@
-import type { AuditEntry, CustomFieldDef } from "@bentoforge/umami-iam";
+import type { ApiKeyView, AuditEntry, CustomFieldDef } from "@bentoforge/umami-iam";
 import { EllipsisVerticalIcon } from "@heroicons/react/24/outline";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -332,6 +332,48 @@ export function DropdownMenu({
         </div>
       )}
     </>
+  );
+}
+
+/** List of personal access tokens: name in bold, and a muted subline
+ * "<roles or all roles> · Last used … · Created: …". When `onDelete` is given, each row gets a
+ * 3-dots menu with a destructive Delete action (profile); without it the list is read-only
+ * (user-edit screen). `roleLabel` maps a role code to a display name (defaults to the raw code). */
+export function PatList({
+  pats,
+  roleLabel = (code) => code,
+  onDelete,
+}: {
+  pats: ApiKeyView[];
+  roleLabel?: (code: string) => string;
+  onDelete?: (pat: ApiKeyView) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <ul className="divide-y divide-slate-100 dark:divide-slate-700/50">
+      {pats.map((pat) => {
+        const roles = pat.roles.length ? pat.roles.map(roleLabel).join(", ") : t("pats.allRoles");
+        const lastUsed = pat.lastUsedAt
+          ? `${t("pats.lastUsed")}: ${formatDateTime(pat.lastUsedAt)}`
+          : t("pats.neverUsed");
+        return (
+          <li key={pat.keyId} className="flex items-start justify-between gap-3 py-3">
+            <div className="min-w-0">
+              <div className="text-sm font-medium text-slate-900 dark:text-white">{pat.name}</div>
+              <div className="text-xs text-slate-400">
+                {roles} · {lastUsed} · {t("pats.created")}: {formatDateTime(pat.created)}
+              </div>
+            </div>
+            {onDelete && (
+              <DropdownMenu
+                label={t("pats.menu")}
+                actions={[{ label: t("pats.delete"), danger: true, onSelect: () => onDelete(pat) }]}
+              />
+            )}
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 

@@ -45,7 +45,6 @@
     "sessionsTitle": "Sitzungen",
     "logoutAll": "Überall abmelden",
     "logoutAllConfirm": "Alle Sitzungen von „{{name}}“ beenden? Alle Geräte verlieren beim nächsten Refresh den Zugang.",
-    "patsTitle": "Persönliche Zugriffstokens",
     "username": "Benutzername",
     "email": "E-Mail",
     "salutation": "Anrede",
@@ -63,7 +62,6 @@
     "notFound": "Benutzer nicht gefunden.",
     "noAudit": "Keine Aktivitäten.",
     "noSessions": "Keine aktiven Sitzungen.",
-    "noPats": "Keine Zugriffstokens.",
     "name": "Name",
     "lastUpdated": "Zuletzt geändert",
     "yes": "Ja",
@@ -155,5 +153,23 @@
     "event": "Ereignis",
     "ip": "IP",
     "userId": "Benutzer-ID"
+  },
+  "pats": {
+    "title": "Personal Access Tokens",
+    "new": "Neuen Token anlegen",
+    "allRoles": "Alle Rollen",
+    "lastUsed": "Zuletzt verwendet",
+    "neverUsed": "Nie verwendet",
+    "created": "Erstellt",
+    "empty": "Keine Tokens vorhanden.",
+    "name": "Name",
+    "rolesLabel": "Vererbte Rollen",
+    "rolesHint": "Wird keine Rolle ausgewählt, werden alle deine Rollen übertragen.",
+    "create": "Erstellen",
+    "cancel": "Abbrechen",
+    "delete": "Löschen",
+    "deleteConfirm": "Token „{{name}}“ löschen? Alles, was ihn verwendet, funktioniert danach nicht mehr.",
+    "secretOnce": "Jetzt kopieren – der Token wird nur einmal angezeigt:",
+    "menu": "Aktionen"
   }
 }

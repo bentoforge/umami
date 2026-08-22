@@ -45,7 +45,6 @@
     "sessionsTitle": "Sessions",
     "logoutAll": "Log out everywhere",
     "logoutAllConfirm": "End all sessions of “{{name}}”? Every device loses access on its next refresh.",
-    "patsTitle": "Personal access tokens",
     "username": "Username",
     "email": "Email",
     "salutation": "Salutation",
@@ -63,7 +62,6 @@
     "notFound": "User not found.",
     "noAudit": "No activity.",
     "noSessions": "No active sessions.",
-    "noPats": "No access tokens.",
     "name": "Name",
     "lastUpdated": "Last changed",
     "yes": "Yes",
@@ -155,5 +153,23 @@
     "event": "Event",
     "ip": "IP",
     "userId": "User ID"
+  },
+  "pats": {
+    "title": "Personal access tokens",
+    "new": "New token",
+    "allRoles": "All roles",
+    "lastUsed": "Last used",
+    "neverUsed": "Never used",
+    "created": "Created",
+    "empty": "No tokens yet.",
+    "name": "Name",
+    "rolesLabel": "Inherited roles",
+    "rolesHint": "If no role is selected, all of your roles are transferred.",
+    "create": "Create",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "deleteConfirm": "Delete token \"{{name}}\"? Anything using it will stop working.",
+    "secretOnce": "Copy it now — the token is shown only once:",
+    "menu": "Actions"
   }
 }

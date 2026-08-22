@@ -4,6 +4,7 @@ import type {
   CustomFieldDef,
   MessagingCodeResponse,
   MessagingLink,
+  RoleDef,
   Salutation,
   SessionView,
   TotpSetup,
@@ -20,6 +21,8 @@ import {
   formatDateTime,
   formatFieldValue,
   Loader,
+  PatList,
+  Toggle,
 } from "../components";
 import { card, dangerButton, ghostButton, input, primaryButton } from "../ui";
 
@@ -762,15 +765,20 @@ function TotpSection({
   );
 }
 
-/** Personal access tokens: create (secret shown once), list, revoke — all for the current user. */
+/** Personal access tokens for the current user: a list (name + roles/last-used/created) with a
+ * per-row delete menu, plus a "new token" mode that captures a name and a role-inheritance toggle
+ * list (no roles selected → all of the user's roles). The fresh secret is shown once on create. */
 function PatsPanel() {
-  const { client } = useUmami();
+  const { client, me } = useUmami();
+  const { t } = useTranslation();
   const [pats, setPats] = useState<ApiKeyView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
-  const [roles, setRoles] = useState("");
+  const [selectedRoles, setSelectedRoles] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [freshSecret, setFreshSecret] = useState<string | null>(null);
+  const [defs, setDefs] = useState<RoleDef[]>([]);
 
   const load = useCallback(async () => {
     setError(null);
@@ -786,21 +794,42 @@ function PatsPanel() {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    client
+      .getConfig()
+      .then((c) => setDefs(c.roles))
+      .catch(() => setDefs([]));
+  }, [client]);
+
+  const roleLabel = (code: string) => defs.find((d) => d.code === code)?.name ?? code;
+
+  // A PAT can only inherit the user's own roles — offer exactly those, with catalog name/description.
+  const myRoles = me?.user.roles ?? [];
+  const roleCatalog: RoleDef[] = myRoles.map(
+    (code) => defs.find((d) => d.code === code) ?? { code, name: code },
+  );
+
+  const openCreate = () => {
+    setCreating(true);
+    setFreshSecret(null);
+    setName("");
+    setSelectedRoles([]);
+  };
+
+  const toggleRole = (code: string) => {
+    setSelectedRoles((prev) =>
+      prev.includes(code) ? prev.filter((r) => r !== code) : [...prev, code],
+    );
+  };
+
   const create = async () => {
     setBusy(true);
     setError(null);
     setFreshSecret(null);
     try {
-      const res = await client.createMyPat({
-        name,
-        roles: roles
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean),
-      });
+      const res = await client.createMyPat({ name, roles: selectedRoles });
       setFreshSecret(res.apiKey);
-      setName("");
-      setRoles("");
+      setCreating(false);
       await load();
     } catch (err) {
       setError(errMsg(err));
@@ -810,7 +839,9 @@ function PatsPanel() {
   };
 
   const revoke = async (pat: ApiKeyView) => {
-    if (!window.confirm(`Revoke token "${pat.name}"? Anything using it stops working.`)) return;
+    if (!window.confirm(t("pats.deleteConfirm", { name: pat.name }))) {
+      return;
+    }
     setError(null);
     try {
       await client.deleteMyPat(pat.keyId);
@@ -822,13 +853,13 @@ function PatsPanel() {
 
   return (
     <section className={`${card} space-y-4`}>
-      <div>
-        <h2 className="font-medium text-slate-800 dark:text-slate-200">Personal access tokens</h2>
-        <p className="text-sm text-slate-500">
-          Long-lived credentials for CLIs/scripts that act as you. Exchange one at{" "}
-          <code>POST /auth/token</code> for a short-lived token. Leave roles empty for all your
-          roles, or list a subset to restrict the token.
-        </p>
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="font-medium text-slate-800 dark:text-slate-200">{t("pats.title")}</h2>
+        {!creating && (
+          <button className={ghostButton} onClick={openCreate}>
+            {t("pats.new")}
+          </button>
+        )}
       </div>
 
       <Banner tone="error">{error}</Banner>
@@ -836,7 +867,7 @@ function PatsPanel() {
       {freshSecret && (
         <div className="rounded-lg border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950 p-3">
           <p className="text-xs text-emerald-700 dark:text-emerald-300 mb-1">
-            Copy this now — it is shown only once:
+            {t("pats.secretOnce")}
           </p>
           <code className="block break-all text-sm text-slate-900 dark:text-slate-100">
             {freshSecret}
@@ -844,45 +875,67 @@ function PatsPanel() {
         </div>
       )}
 
-      <div className="flex flex-wrap items-end gap-3">
-        <Field label="Name">
-          <input className={input} value={name} onChange={(e) => setName(e.target.value)} />
-        </Field>
-        <Field label="Roles (comma-separated, optional)">
-          <input
-            className={input}
-            placeholder="role:admin, …"
-            value={roles}
-            onChange={(e) => setRoles(e.target.value)}
-          />
-        </Field>
-        <button
-          className={primaryButton}
-          disabled={busy || !name.trim()}
-          onClick={() => void create()}
-        >
-          Create token
-        </button>
-      </div>
+      {creating ? (
+        <div className="space-y-4">
+          <Field label={t("pats.name")}>
+            <input className={input} value={name} onChange={(e) => setName(e.target.value)} />
+          </Field>
 
-      {pats && pats.length > 0 && (
-        <ul className="divide-y divide-slate-100 dark:divide-slate-700/50">
-          {pats.map((pat) => (
-            <li key={pat.keyId} className="flex items-center justify-between py-2">
-              <div>
-                <div className="text-sm font-medium text-slate-900 dark:text-white">{pat.name}</div>
-                <div className="text-xs text-slate-400">
-                  {pat.roles.length ? `roles: ${pat.roles.join(", ")}` : "all your roles"} · created{" "}
-                  {formatDateTime(pat.created)}
-                  {pat.lastUsedAt ? ` · last used ${formatDateTime(pat.lastUsedAt)}` : ""}
-                </div>
-              </div>
-              <button className={dangerButton} onClick={() => void revoke(pat)}>
-                Revoke
-              </button>
-            </li>
-          ))}
-        </ul>
+          <div>
+            <div className="text-sm font-medium text-slate-800 dark:text-slate-200">
+              {t("pats.rolesLabel")}
+            </div>
+            <p className="text-xs text-slate-500">{t("pats.rolesHint")}</p>
+            {roleCatalog.length > 0 && (
+              <ul className="mt-2 divide-y divide-slate-100 dark:divide-slate-700/50">
+                {roleCatalog.map((def) => {
+                  const checked = selectedRoles.includes(def.code);
+                  return (
+                    <li key={def.code} className="flex items-start gap-3 py-2">
+                      <div className="pt-0.5">
+                        <Toggle
+                          checked={checked}
+                          disabled={busy}
+                          label={def.name}
+                          onChange={() => toggleRole(def.code)}
+                        />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold text-slate-900 dark:text-white">
+                          {def.name}
+                        </div>
+                        {def.description && (
+                          <div className="text-xs text-slate-400 dark:text-slate-500">
+                            {def.description}
+                          </div>
+                        )}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+
+          <div className="flex gap-2">
+            <button
+              className={primaryButton}
+              disabled={busy || !name.trim()}
+              onClick={() => void create()}
+            >
+              {t("pats.create")}
+            </button>
+            <button className={ghostButton} disabled={busy} onClick={() => setCreating(false)}>
+              {t("pats.cancel")}
+            </button>
+          </div>
+        </div>
+      ) : pats === null ? (
+        <Loader />
+      ) : pats.length === 0 ? (
+        <p className="text-sm text-slate-500">{t("pats.empty")}</p>
+      ) : (
+        <PatList pats={pats} roleLabel={roleLabel} onDelete={revoke} />
       )}
     </section>
   );
