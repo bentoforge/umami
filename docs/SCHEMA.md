@@ -1,7 +1,6 @@
 # umami — Target Data Model (authoritative)
 
-This document is the **living authority** for umami's identity/tenancy model. Where it differs
-from [PLAN.md](../PLAN.md) §3 (the original M:N sketch), **this wins**.
+This document is the **living authority** for umami's identity/tenancy model.
 
 ## Decisions (the why)
 
@@ -27,26 +26,25 @@ from [PLAN.md](../PLAN.md) §3 (the original M:N sketch), **this wins**.
 5. **Teams are a separate axis (deferred).** Teams are intra-tenant *authorization* grouping
    (which users may touch which resources), orthogonal to ownership. v1 uses a role on the user;
    teams can be added later without touching the identity model.
-6. **Tenant = accounting unit.** Plan / billing / usage metering live on the tenant.
+6. **Tenant = account/ownership unit.** It owns its users and carries the authorization
+   `feature:*` grants plus deployment-defined custom fields. No CRM / billing / licensing layer —
+   anything a deployment needs beyond identity lives in custom fields.
 
 ## Entities
 
 ### Tenant — table `tenants` (+ GSI `ByLastUpdatedIndex`)
 
-Owns its users; carries the CRM/licensing fields.
+Owns its users; carries authorization features + custom fields.
 
 - **PK** `tenantId` (hash) — 32-char generated id
 - **GSI `ByLastUpdatedIndex`** — hash = a constant `listShard` value injected at write time
   (storage-only, not in the API model), range = `lastUpdated`; lets `GET /tenants` list every tenant
   newest-first in one query (no table scan). Standard constant-partition pattern for a small global
   list at admin scale.
-- `name`, `slug`
-- `status`: `Lead | Testing | Onboarding | Active | Suspended | Churned`
-- `plan`: package id (`free` | `pro` | `enterprise` | …)
-- `billedUntil`: date (ISO `YYYY-MM-DD`), optional
-- `seatsLimit`: `u32`, optional
-- Usage (current period): `usagePeriodStart` (date), `aiTokensUsed` (`u64`),
-  `aiTokensQuota` (`u64`, optional)
+- `name`, `slug` (URL-friendly handle derived from `name`; a display convenience, not enforced unique)
+- `features`: `[String]` — the granted `feature:*` authorization set the permission mapping reads
+  (see [PERMISSIONS.md](PERMISSIONS.md))
+- `customFields`: values for the config-defined custom tenant fields
 - `created`, `lastUpdated`: RFC3339
 
 ### User — table `users` (+ guard table `user-usernames`, + GSI `ByTenantIndex`)
@@ -83,10 +81,9 @@ One row per active login (device/browser). Backs the refresh-cookie flow.
 - `tokenVersionAtIssue`: `u32` snapshot of `user.tokenVersion`
 - `userAgent`, `ip`: best-effort device metadata
 - `created`, `lastSeen`, `expiresAt`: RFC3339; `ttl`: epoch-seconds mirror for a DynamoDB TTL
-- **GSI `ByUserIndex`** (hash `userId`) — list a user's sessions / revoke all (added with
-  logout-all in Phase 3)
+- **GSI `ByUserIndex`** (hash `userId`) — list a user's sessions / revoke all (backs logout-all)
 
-## Access-token claims (unchanged wire contract)
+## Access-token claims (the wire contract)
 
 `iss`, `sub` (userId), `aud`, `tenant` (= user's home tenant), `name`, `email`, `locale`,
 `permissions` (resolved from `role`), `iat`, `exp`, `ver` (tokenVersion snapshot). Matches
@@ -98,8 +95,8 @@ Built-in roles map to wasabi-style permission strings baked into the `permission
 
 | Role | Permissions (illustrative) |
 |------|----------------------------|
-| `owner` | `admin:tenant`, `write:members`, `write:teams`, + all product perms |
-| `admin` | `write:members`, `write:teams`, + product write perms |
+| `owner` | `admin:tenant`, `manage:users`, `manage:config`, + all product perms |
+| `admin` | `manage:users`, + product write perms |
 | `member` | product write perms (e.g. `write:blocks`, `write:assets`) |
 | `viewer` | read-only |
 
@@ -110,15 +107,16 @@ Align product-permission strings with what the product services enforce (e.g. db
 
 **Auth:** `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`,
 `POST /auth/logout-all` (bump `tokenVersion`), `GET /auth/me` (profile: user + tenant + role),
-`GET /.well-known/jwks.json`.
-*No `POST /auth/switch-tenant` in v1* (single tenant per user).
+`POST /auth/switch-tenant` (re-issue for another tenant; gated by `switch:tenant`),
+`GET /.well-known/jwks.json`. The target audience is chosen by the optional `api` parameter on
+login / refresh (default `umami`).
 
 **Tenants:** `POST /tenants` (self-serve: creates the tenant **and its first `owner` user** — this
-replaces the dev-bootstrap open signup), `GET /tenants/{id}`, `PATCH /tenants/{id}`,
-`PATCH /tenants/{id}/status`, `PATCH /tenants/{id}/license`, usage endpoints.
+replaces the dev-bootstrap open signup), `GET /tenants/{id}`, `PATCH /tenants/{id}` (name + custom
+fields only).
 
 **Users (within the caller's tenant, permission-gated):** `POST /users` (invite/create — requires
-`write:members`), `GET /users/{id}`, list, `PATCH` (role/status).
+`manage:users`), `GET /users/{id}`, list, `PATCH` (roles/lock).
 
 ## Deferred (with the future path)
 
