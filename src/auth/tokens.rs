@@ -6,14 +6,15 @@
 //!
 //! Signing keys sit behind the [`KeyRepository`] trait so the issuer and JWKS route depend only on
 //! the trait, not on where key material lives (env, a secret store, …). The bundled
-//! [`EnvKeyRepository`] loads one key from `UMAMI_SIGNING_KEY`.
+//! [`EnvKeyRepository`] loads the active signing key from `UMAMI_SIGNING_KEY` and, for a rollover,
+//! any retired public keys from `UMAMI_PREVIOUS_KEYS` (kept in the JWKS until their tokens expire).
 
 use anyhow::Context;
 use async_trait::async_trait;
 use chrono::Utc;
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use p256::SecretKey;
-use p256::pkcs8::DecodePrivateKey;
+use p256::pkcs8::{DecodePrivateKey, EncodePrivateKey, LineEnding};
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -42,24 +43,65 @@ pub trait KeyRepository: Send + Sync {
     async fn current(&self) -> anyhow::Result<Arc<KeySet>>;
 }
 
-/// [`KeyRepository`] backed by a single key loaded from the environment (`UMAMI_SIGNING_KEY`,
-/// `UMAMI_SIGNING_KID`). Intended for local dev; production loads keys from a secret store.
+/// [`KeyRepository`] backed by keys loaded from the environment: the active signing JWK
+/// (`UMAMI_SIGNING_KEY`) plus optional retired public JWKs (`UMAMI_PREVIOUS_KEYS`) for rollover.
+/// Intended for local dev; production loads keys from a secret store.
 pub struct EnvKeyRepository {
     key_set: Arc<KeySet>,
 }
 
 impl EnvKeyRepository {
-    /// Builds the repository from `UMAMI_SIGNING_KEY` (PKCS#8 PEM, P-256) and `UMAMI_SIGNING_KID`.
+    /// Builds the repository from `UMAMI_SIGNING_KEY` — the **active** key that signs, as a private
+    /// EC P-256 JWK (carrying its own `kid`) — plus the optional `UMAMI_PREVIOUS_KEYS`, a JSON array
+    /// of **public** JWKs kept in the JWKS for verification only during a key rollover, so tokens
+    /// signed by a just-retired key still verify until they expire.
     pub fn from_env() -> anyhow::Result<Self> {
-        let pem = env::var("UMAMI_SIGNING_KEY")
-            .context("Please provide UMAMI_SIGNING_KEY (ES256/P-256 private key PEM)")?;
-        let kid = env::var("UMAMI_SIGNING_KID")
-            .context("Please provide UMAMI_SIGNING_KID (key id published in JWKS)")?;
+        let active_jwk = env::var("UMAMI_SIGNING_KEY").context(
+            "Please provide UMAMI_SIGNING_KEY (a private EC P-256 JWK, JSON, with a kid)",
+        )?;
+        let (pem, kid) = active_key_from_jwk(&active_jwk)?;
+        let previous = previous_jwks_from_env()?;
 
         Ok(Self {
-            key_set: Arc::new(build_key_set(&pem, &kid)?),
+            key_set: Arc::new(build_key_set(&pem, &kid, previous)?),
         })
     }
+}
+
+/// Parses the active signing key from a **private** EC P-256 JWK (JSON), returning its PKCS#8 PEM
+/// (for the signer) and its `kid`. Using one JWK keeps the active-key config consistent with
+/// `UMAMI_PREVIOUS_KEYS` (also JWKs) and carries the key id in the same object as the material.
+fn active_key_from_jwk(jwk: &str) -> anyhow::Result<(String, String)> {
+    let secret_key = SecretKey::from_jwk_str(jwk)
+        .map_err(|err| anyhow::anyhow!("UMAMI_SIGNING_KEY is not a valid private EC JWK: {err}"))?;
+    let pem = secret_key
+        .to_pkcs8_pem(LineEnding::LF)
+        .context("Failed to re-encode the signing key")?
+        .to_string();
+    let kid = serde_json::from_str::<Value>(jwk)
+        .ok()
+        .as_ref()
+        .and_then(|value| value.get("kid"))
+        .and_then(Value::as_str)
+        .context("UMAMI_SIGNING_KEY JWK must include a \"kid\"")?
+        .to_owned();
+    Ok((pem, kid))
+}
+
+/// Parses `UMAMI_PREVIOUS_KEYS` (optional) as a JSON array of public JWK objects. Unset/empty ⇒ none.
+/// These are published in the JWKS alongside the active key so verifiers can still validate tokens
+/// signed by a recently-rotated-out key (selected by the token's `kid`).
+fn previous_jwks_from_env() -> anyhow::Result<Vec<Value>> {
+    let raw = match env::var("UMAMI_PREVIOUS_KEYS") {
+        Ok(raw) if !raw.trim().is_empty() => raw,
+        _ => return Ok(Vec::new()),
+    };
+    let keys: Vec<Value> = serde_json::from_str(&raw)
+        .context("UMAMI_PREVIOUS_KEYS must be a JSON array of public JWK objects")?;
+    if keys.iter().any(|jwk| !jwk.is_object()) {
+        anyhow::bail!("UMAMI_PREVIOUS_KEYS entries must be JWK objects");
+    }
+    Ok(keys)
 }
 
 #[async_trait]
@@ -69,9 +111,11 @@ impl KeyRepository for EnvKeyRepository {
     }
 }
 
-/// Builds a [`KeySet`] from a PEM private key and its key id: an [`EncodingKey`] for signing and
-/// the public JWK (derived from the key) for the JWKS document.
-fn build_key_set(pem: &str, kid: &str) -> anyhow::Result<KeySet> {
+/// Builds a [`KeySet`] from the active PEM private key + its key id and any previous public JWKs:
+/// an [`EncodingKey`] that signs with the active key, and a JWKS document listing the active key's
+/// public JWK first, then the previous keys (for verification during rollover). Previous entries
+/// carrying the active `kid` are dropped so the active key is never duplicated.
+fn build_key_set(pem: &str, kid: &str, previous: Vec<Value>) -> anyhow::Result<KeySet> {
     let encoding_key =
         EncodingKey::from_ec_pem(pem.as_bytes()).context("Invalid ES256 private key PEM")?;
 
@@ -86,10 +130,17 @@ fn build_key_set(pem: &str, kid: &str) -> anyhow::Result<KeySet> {
         let _ = map.insert("use".to_owned(), Value::from("sig"));
     }
 
+    let mut keys = vec![jwk_value];
+    keys.extend(
+        previous
+            .into_iter()
+            .filter(|jwk| jwk.get("kid").and_then(Value::as_str) != Some(kid)),
+    );
+
     Ok(KeySet {
         active_kid: kid.to_owned(),
         encoding_key,
-        jwks: json!({ "keys": [jwk_value] }),
+        jwks: json!({ "keys": keys }),
     })
 }
 
@@ -226,7 +277,7 @@ mod tests {
 
     #[test]
     fn build_key_set_produces_ec_jwk_with_kid() {
-        let key_set = build_key_set(TEST_PEM, "test-1").unwrap();
+        let key_set = build_key_set(TEST_PEM, "test-1", Vec::new()).unwrap();
         let keys = key_set.jwks.get("keys").and_then(Value::as_array).unwrap();
         let jwk = keys.first().unwrap();
         assert_eq!(jwk.get("kty").and_then(Value::as_str), Some("EC"));
@@ -236,11 +287,28 @@ mod tests {
         assert!(jwk.get("y").and_then(Value::as_str).is_some());
     }
 
+    #[test]
+    fn jwks_publishes_previous_keys_for_rollover() {
+        // A retired public JWK is kept in the JWKS so its tokens still verify; the active key stays
+        // first. A previous entry re-using the active kid is dropped (no duplicate).
+        let previous = vec![
+            json!({ "kty": "EC", "crv": "P-256", "kid": "old-1", "x": "AAAA", "y": "BBBB" }),
+            json!({ "kty": "EC", "crv": "P-256", "kid": "test-1", "x": "CCCC", "y": "DDDD" }),
+        ];
+        let key_set = build_key_set(TEST_PEM, "test-1", previous).unwrap();
+        let keys = key_set.jwks.get("keys").and_then(Value::as_array).unwrap();
+        let kids: Vec<&str> = keys
+            .iter()
+            .filter_map(|k| k.get("kid").and_then(Value::as_str))
+            .collect();
+        assert_eq!(kids, vec!["test-1", "old-1"]); // active first, duplicate active kid dropped
+    }
+
     #[tokio::test]
     async fn issues_a_decodable_es256_token() {
         use jsonwebtoken::{Algorithm, DecodingKey, Validation};
 
-        let key_set = Arc::new(build_key_set(TEST_PEM, "test-1").unwrap());
+        let key_set = Arc::new(build_key_set(TEST_PEM, "test-1", Vec::new()).unwrap());
         let keys: Arc<dyn KeyRepository> = Arc::new(StaticKeys(key_set));
         let issuer = TokenIssuer {
             keys,
@@ -269,7 +337,7 @@ mod tests {
 
         // Verify offline exactly the way a product service would: reconstruct the public key from
         // the JWK's x/y components (what a JWKS consumer does).
-        let key_set = build_key_set(TEST_PEM, "test-1").unwrap();
+        let key_set = build_key_set(TEST_PEM, "test-1", Vec::new()).unwrap();
         let jwk = key_set
             .jwks
             .get("keys")

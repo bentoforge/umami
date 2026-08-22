@@ -110,7 +110,9 @@ aws sso login --profile dbx-dev
 
 # 2. Config from the template, then fill the secrets (see below)
 cp .env.example .env
-#   UMAMI_SIGNING_KEY : openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256
+#   UMAMI_SIGNING_KEY : a private EC P-256 JWK with a "kid", e.g.
+#                       step crypto jwk create pub.jwk key.jwk --kty EC --crv P-256 \
+#                         --kid dev-1 --use sig --insecure --no-password   # paste key.jwk
 #   UMAMI_MFA_KEY     : openssl rand -base64 32
 
 # 3. Bootstrap the first tenant + owner on an empty deployment
@@ -118,6 +120,11 @@ cp .env.example .env
 #   are printed ONCE to the log at startup.
 cargo run --features pretty_logs
 ```
+
+> **One-time operational setup:** umami writes a numeric `ttl` on its `sessions` and `audit-log`
+> tables but does not enable the DynamoDB TTL itself — turn it on once per deployment (Terraform/
+> console) on **both** `<prefix>-sessions` and `<prefix>-audit-log`, attribute `ttl`, so expired rows
+> self-clean.
 
 Build & checks:
 
@@ -153,8 +160,8 @@ the **system config document** (behavior — roles, features, APIs, security pol
 | Variable | Purpose |
 |---|---|
 | `UMAMI_ISSUER` | The `iss` claim — must exactly match what product services trust (trailing slash included). |
-| `UMAMI_SIGNING_KEY` | Active ES256 (P-256) private key, PKCS#8 PEM. Load from a secret store in prod. |
-| `UMAMI_SIGNING_KID` | Key id published in the JWKS. |
+| `UMAMI_SIGNING_KEY` | Active signing key as a **private EC P-256 JWK** (JSON, with a `kid`). Signs tokens; its public half is published in the JWKS. Load from a secret store in prod. |
+| `UMAMI_PREVIOUS_KEYS` | Rotation: JSON array of retired **public** JWKs, kept in the JWKS so tokens from a just-rotated key still verify until they expire. |
 | `UMAMI_DEFAULT_AUDIENCE` | Fallback `aud` when a call names none. |
 | `UMAMI_MFA_KEY` | Key (base64 of 32 bytes) encrypting TOTP secrets at rest. |
 | `UMAMI_COOKIE_DOMAIN` | Domain for the refresh cookie. |
