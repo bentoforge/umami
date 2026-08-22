@@ -205,7 +205,10 @@ Full reference: **[docs/CONFIG.md](docs/CONFIG.md)**.
 | [docs/PERMISSIONS.md](docs/PERMISSIONS.md) | The permission-string DSL and the mint algorithm. |
 | [docs/AUDIENCES.md](docs/AUDIENCES.md) | Audiences, the `apis` catalog, and the token-minting paths. |
 | [docs/API-KEYS.md](docs/API-KEYS.md) | Service keys vs. personal access tokens. |
-| [docs/SCHEMA.md](docs/SCHEMA.md) | The identity/tenancy data model. |
+
+The identity/tenancy data model lives in the code: the entity structs (`User`, `Tenant`, `Session`,
+…) are the schema, and the model's design rationale is the module doc on
+[`src/users/mod.rs`](src/users/mod.rs) — read it via `cargo doc --open`.
 
 ## Clients
 

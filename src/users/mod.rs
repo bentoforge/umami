@@ -1,8 +1,27 @@
-//! User identities.
+//! User identities — and the identity/tenancy model's design decisions.
 //!
-//! A user belongs to exactly one tenant (its owner) — see `docs/SCHEMA.md`. This module owns the
-//! `User` entity, its persistence (`repository`), and the tenant-scoped user-administration API
-//! (`service`): create, list, get, patch, delete, password reset, sessions and audit.
+//! This module owns the [`User`] entity, its persistence (`repository`), and the tenant-scoped
+//! user-administration API (`service`): create, list, get, patch, delete, password reset, sessions
+//! and audit. The entity's fields are documented on [`User`] itself — the struct is the schema.
+//!
+//! ## Why the model is shaped this way
+//!
+//! - **A tenant owns its users** (a user has exactly one `tenant_id`; no memberships join table).
+//!   The owning tenant has full authority (lock, reset, delete). *Rejected:* the global-user +
+//!   many-to-many-membership model (Auth0/B2C heritage) — a floating global identity makes "who may
+//!   lock this user?" unanswerable.
+//! - **The username is the login identity** — globally unique (case-insensitive), so login is
+//!   `username + password` with no tenant context. `email` is optional contact info and **not**
+//!   unique. Uniqueness is enforced by the `user-usernames` guard table (DynamoDB can't enforce a
+//!   second unique attribute via a GSI); `userId` stays the `users` PK so id-keyed reads/writes are
+//!   strongly consistent. See `repository` for the guard mechanics (and its atomicity caveat).
+//! - **One user acts in one tenant** for now: no parent-tenant hierarchy, no cross-tenant identity.
+//!   The token's `tenant` claim is always the user's home tenant. The future path to multi-tenant is
+//!   explicit **user-invites** (grant an existing user into another tenant), *not* a tenant
+//!   hierarchy — which is why [`crate::auth::session::Session`] keeps `active_tenant_id` as a field
+//!   even though it currently always equals the home tenant.
+//! - **No CRM / billing / licensing layer** — a tenant carries only its `feature:*` grants and
+//!   deployment-defined custom fields; anything else a deployment needs lives in custom fields.
 
 pub mod repository;
 pub mod service;
