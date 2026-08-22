@@ -303,7 +303,7 @@ function BaseDataCard() {
     try {
       const customFields: Record<string, unknown> = {};
       for (const def of editableDefs) {
-        customFields[def.key] = values[def.key];
+        customFields[def.code] = values[def.code];
       }
       await client.patchMe({ title, salutation, firstname, lastname, customFields });
       await refreshMe();
@@ -396,8 +396,8 @@ function BaseDataCard() {
             {u.firstname || u.lastname ? u.fullName : "—"}
           </DetailRow>
           {defs.map((def) => (
-            <DetailRow key={def.key} label={def.label}>
-              {formatFieldValue(u.customFields[def.key])}
+            <DetailRow key={def.code} label={def.label}>
+              {formatFieldValue(u.customFields[def.code])}
             </DetailRow>
           ))}
         </dl>

@@ -225,8 +225,8 @@ function DetailsCard({
         <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-2 text-sm">
           <DetailRow label={t("tenants.nameLabel")}>{tenant.name}</DetailRow>
           {defs.map((def) => (
-            <DetailRow key={def.key} label={def.label}>
-              {formatFieldValue(tenant.customFields[def.key])}
+            <DetailRow key={def.code} label={def.label}>
+              {formatFieldValue(tenant.customFields[def.code])}
             </DetailRow>
           ))}
         </dl>

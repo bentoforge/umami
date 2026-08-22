@@ -247,7 +247,11 @@ async fn patch_me(
     // A user may only touch fields the config explicitly marks self-editable; everything else is
     // admin-managed and rejected outright.
     for key in request.custom_fields.keys() {
-        match config.custom_user_fields.iter().find(|def| &def.key == key) {
+        match config
+            .custom_user_fields
+            .iter()
+            .find(|def| &def.code == key)
+        {
             Some(def) if def.self_editable => {}
             Some(_) => client_bail!("Custom field '{key}' is not self-editable"),
             None => client_bail!("Unknown custom field '{key}'"),

@@ -63,7 +63,7 @@ Relevant environment variables:
 //   granted (prerequisites). Omitted = always assignable/grantable.
 
 // CustomFieldDef:
-{ "key": "customerNo", "label": "Kundennummer", "type": "string",
+{ "code": "customerNo", "label": "Kundennummer", "type": "string",
   "options": [],          // allowed values, for type "select"
   "required": true,
   "showInTable": true }   // surface as a column in the admin list tables
@@ -205,7 +205,7 @@ feature/scope and a product-API entry with eligibility + claims. Copy, adjust, `
   "limits":   [ { "code": "seats", "name": "Seats", "default": "5" } ],
   "packages": [],
   "customTenantFields": [
-    { "key": "customerNo", "label": "Customer no.", "type": "string", "required": false, "showInTable": true }
+    { "code": "customerNo", "label": "Customer no.", "type": "string", "required": false, "showInTable": true }
   ],
   "customUserFields": [],
   "security": {

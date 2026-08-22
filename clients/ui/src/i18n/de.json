@@ -191,6 +191,7 @@
     "delete": "Löschen",
     "deleteConfirm": "Service-Key „{{name}}“ löschen? Alles, was ihn verwendet, funktioniert danach nicht mehr.",
     "secretOnce": "Jetzt kopieren – der Key wird nur einmal angezeigt:",
-    "menu": "Aktionen"
+    "menu": "Aktionen",
+    "new": "Neuen Service-Key anlegen"
   }
 }

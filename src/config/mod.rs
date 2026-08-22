@@ -197,6 +197,9 @@ pub struct ScopeDef {
     pub code: String,
     /// Human-readable name.
     pub name: String,
+    /// Optional human-readable description (shown muted under the name in the admin UI).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     /// DSL over the tenant's features (`feature:*`/`is:*`) gating assignability to a key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assignable_if: Option<String>,
@@ -223,8 +226,8 @@ pub struct FeatureDef {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct CustomFieldDef {
-    /// Storage key.
-    pub key: String,
+    /// Stable code (the storage key for the field's value).
+    pub code: String,
     /// Display label.
     pub label: String,
     /// Field type: `string`, `number`, `bool`/`boolean`, or `select` (constrained to [`options`]).
@@ -384,7 +387,7 @@ impl Config {
         values: &BTreeMap<String, Value>,
     ) -> anyhow::Result<()> {
         for (key, value) in values {
-            let definition = match definitions.iter().find(|def| &def.key == key) {
+            let definition = match definitions.iter().find(|def| &def.code == key) {
                 Some(definition) => definition,
                 None => client_bail!("Unknown custom field '{key}'"),
             };
@@ -426,14 +429,14 @@ impl Config {
                 continue;
             }
             let present = values
-                .get(&definition.key)
+                .get(&definition.code)
                 .is_some_and(|value| match value {
                     Value::Null => false,
                     Value::String(text) => !text.trim().is_empty(),
                     _ => true,
                 });
             if !present {
-                client_bail!("Custom field '{}' is required", definition.key);
+                client_bail!("Custom field '{}' is required", definition.code);
             }
         }
         Ok(())
@@ -559,6 +562,7 @@ impl Default for Config {
         let scope = |code: &str, name: &str, assignable_if: Option<&str>| ScopeDef {
             code: code.to_owned(),
             name: name.to_owned(),
+            description: None,
             assignable_if: assignable_if.map(str::to_owned),
         };
         Config {
@@ -658,10 +662,10 @@ mod tests {
         items.iter().map(|i| (*i).to_owned()).collect()
     }
 
-    fn field(key: &str, field_type: &str, required: bool, options: &[&str]) -> CustomFieldDef {
+    fn field(code: &str, field_type: &str, required: bool, options: &[&str]) -> CustomFieldDef {
         CustomFieldDef {
-            key: key.to_owned(),
-            label: key.to_owned(),
+            code: code.to_owned(),
+            label: code.to_owned(),
             field_type: field_type.to_owned(),
             options: s(options),
             required,

@@ -191,6 +191,7 @@
     "delete": "Delete",
     "deleteConfirm": "Delete service key \"{{name}}\"? Anything using it will stop working.",
     "secretOnce": "Copy it now — the key is shown only once:",
-    "menu": "Actions"
+    "menu": "Actions",
+    "new": "New service key"
   }
 }

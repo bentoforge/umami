@@ -1,4 +1,4 @@
-import type { ApiKeyView } from "@bentoforge/umami-iam";
+import type { ApiKeyView, ScopeDef } from "@bentoforge/umami-iam";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useUmami } from "../auth/UmamiProvider";
@@ -17,6 +17,7 @@ export function ApiTokensPage() {
   const [keys, setKeys] = useState<ApiKeyView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [freshSecret, setFreshSecret] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
 
   const load = useCallback(async () => {
     setError(null);
@@ -47,11 +48,18 @@ export function ApiTokensPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-xl font-semibold text-slate-900 dark:text-white">
-          {t("apiTokens.title")}
-        </h1>
-        <p className="text-sm text-slate-500">{t("apiTokens.subtitle")}</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-semibold text-slate-900 dark:text-white">
+            {t("apiTokens.title")}
+          </h1>
+          <p className="text-sm text-slate-500">{t("apiTokens.subtitle")}</p>
+        </div>
+        {!creating && (
+          <button className={primaryButton} onClick={() => setCreating(true)}>
+            {t("apiTokens.new")}
+          </button>
+        )}
       </div>
 
       <Banner tone="error">{error}</Banner>
@@ -67,14 +75,18 @@ export function ApiTokensPage() {
         </div>
       )}
 
-      <CreateKey
-        tenantId={tenantId}
-        onDone={async (secret) => {
-          setFreshSecret(secret);
-          await load();
-        }}
-        onError={setError}
-      />
+      {creating && (
+        <CreateKey
+          tenantId={tenantId}
+          onDone={async (secret) => {
+            setCreating(false);
+            setFreshSecret(secret);
+            await load();
+          }}
+          onCancel={() => setCreating(false)}
+          onError={setError}
+        />
+      )}
 
       <section className={`${card} overflow-x-auto`}>
         {keys === null ? (
@@ -136,16 +148,19 @@ export function ApiTokensPage() {
 function CreateKey({
   tenantId,
   onDone,
+  onCancel,
   onError,
 }: {
   tenantId: string;
   onDone: (secret: string) => Promise<void>;
+  onCancel: () => void;
   onError: (msg: string) => void;
 }) {
   const { client } = useUmami();
   const { t } = useTranslation();
   const [name, setName] = useState("");
   const [scopes, setScopes] = useState<string[]>([]);
+  const [defs, setDefs] = useState<ScopeDef[]>([]);
   const [assignable, setAssignable] = useState<string[]>([]);
   const [origins, setOrigins] = useState("");
   const [expiresAt, setExpiresAt] = useState("");
@@ -157,6 +172,19 @@ function CreateKey({
       .then((r) => setAssignable(r.codes))
       .catch(() => setAssignable([]));
   }, [client, tenantId]);
+
+  useEffect(() => {
+    client
+      .getConfig()
+      .then((c) => setDefs(c.scopes))
+      .catch(() => setDefs([]));
+  }, [client]);
+
+  // Assignable scopes with their config name/description; any assignable code the catalog no longer
+  // defines still shows (labelled by its code) so it is never silently hidden.
+  const scopeCatalog: ScopeDef[] = assignable.map(
+    (code) => defs.find((d) => d.code === code) ?? { code, name: code },
+  );
 
   const split = (text: string) =>
     text
@@ -206,22 +234,29 @@ function CreateKey({
         <div className="text-sm font-medium text-slate-800 dark:text-slate-200">
           {t("apiTokens.scopes")}
         </div>
-        {assignable.length === 0 ? (
+        {scopeCatalog.length === 0 ? (
           <p className="mt-1 text-xs text-slate-400">{t("apiTokens.scopesEmpty")}</p>
         ) : (
           <ul className="mt-2 divide-y divide-slate-100 dark:divide-slate-700/50">
-            {assignable.map((code) => (
-              <li key={code} className="flex items-start gap-3 py-2">
+            {scopeCatalog.map((def) => (
+              <li key={def.code} className="flex items-start gap-3 py-2">
                 <div className="pt-0.5">
                   <Toggle
-                    checked={scopes.includes(code)}
+                    checked={scopes.includes(def.code)}
                     disabled={busy}
-                    label={code}
-                    onChange={() => toggleScope(code)}
+                    label={def.name}
+                    onChange={() => toggleScope(def.code)}
                   />
                 </div>
-                <div className="min-w-0 text-sm font-semibold text-slate-900 dark:text-white">
-                  {code}
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold text-slate-900 dark:text-white">
+                    {def.name}
+                  </div>
+                  {def.description && (
+                    <div className="text-xs text-slate-400 dark:text-slate-500">
+                      {def.description}
+                    </div>
+                  )}
                 </div>
               </li>
             ))}
@@ -255,7 +290,14 @@ function CreateKey({
         >
           {t("apiTokens.create")}
         </button>
-        <button className={ghostButton} disabled={busy} onClick={reset}>
+        <button
+          className={ghostButton}
+          disabled={busy}
+          onClick={() => {
+            reset();
+            onCancel();
+          }}
+        >
           {t("apiTokens.cancel")}
         </button>
       </div>

@@ -134,15 +134,15 @@ export function CustomFieldsForm({
   return (
     <>
       {defs.map((def) => {
-        const value = values[def.key];
+        const value = values[def.code];
         const label = def.required ? `${def.label} *` : def.label;
         return (
-          <Field key={def.key} label={label}>
+          <Field key={def.code} label={label}>
             {def.type === "select" ? (
               <select
                 className={input}
                 value={typeof value === "string" ? value : ""}
-                onChange={(e) => set(def.key, e.target.value || undefined)}
+                onChange={(e) => set(def.code, e.target.value || undefined)}
               >
                 <option value="">—</option>
                 {(def.options ?? []).map((opt) => (
@@ -156,7 +156,7 @@ export function CustomFieldsForm({
                 type="checkbox"
                 className="h-4 w-4 accent-primary"
                 checked={value === true}
-                onChange={(e) => set(def.key, e.target.checked)}
+                onChange={(e) => set(def.code, e.target.checked)}
               />
             ) : def.type === "number" ? (
               <input
@@ -164,14 +164,14 @@ export function CustomFieldsForm({
                 type="number"
                 value={value === null || value === undefined ? "" : String(value)}
                 onChange={(e) =>
-                  set(def.key, e.target.value === "" ? undefined : Number(e.target.value))
+                  set(def.code, e.target.value === "" ? undefined : Number(e.target.value))
                 }
               />
             ) : (
               <input
                 className={input}
                 value={typeof value === "string" ? value : ""}
-                onChange={(e) => set(def.key, e.target.value)}
+                onChange={(e) => set(def.code, e.target.value)}
               />
             )}
           </Field>

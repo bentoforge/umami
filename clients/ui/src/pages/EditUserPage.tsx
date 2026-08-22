@@ -337,8 +337,8 @@ function DetailsCard({
             {user.firstname || user.lastname ? user.fullName : "—"}
           </DetailRow>
           {defs.map((def) => (
-            <DetailRow key={def.key} label={def.label}>
-              {formatFieldValue(user.customFields[def.key])}
+            <DetailRow key={def.code} label={def.label}>
+              {formatFieldValue(user.customFields[def.code])}
             </DetailRow>
           ))}
           <DetailRow label={t("users.locked")}>

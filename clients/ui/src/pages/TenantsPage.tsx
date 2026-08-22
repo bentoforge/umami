@@ -110,7 +110,7 @@ export function TenantsPage() {
               <tr className="border-b border-slate-200 dark:border-slate-700">
                 <th className={th}>{t("tenants.colName")}</th>
                 {tableDefs.map((def) => (
-                  <th key={def.key} className={th}>
+                  <th key={def.code} className={th}>
                     {def.label}
                   </th>
                 ))}
@@ -141,8 +141,8 @@ export function TenantsPage() {
                     <div className="text-xs text-slate-400 font-mono">{tenant.tenantId}</div>
                   </td>
                   {tableDefs.map((def) => (
-                    <td key={def.key} className={td}>
-                      {formatFieldValue(tenant.customFields[def.key])}
+                    <td key={def.code} className={td}>
+                      {formatFieldValue(tenant.customFields[def.code])}
                     </td>
                   ))}
                   <td className={`${td} whitespace-nowrap`}>

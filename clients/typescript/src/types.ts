@@ -239,6 +239,8 @@ export interface RoleDef {
 export interface ScopeDef {
   code: string;
   name: string;
+  /** Optional human-readable description (shown muted under the name in the admin UI). */
+  description?: string | null;
   assignableIf?: string | null;
 }
 /** An authorization feature granted to a tenant (`feature:*`). */
@@ -251,7 +253,7 @@ export interface FeatureDef {
   assignableIf?: string | null;
 }
 export interface CustomFieldDef {
-  key: string;
+  code: string;
   label: string;
   /** `"string"` | `"number"` | `"bool"` | `"select"`. */
   type: string;
