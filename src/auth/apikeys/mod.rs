@@ -28,11 +28,16 @@ use crate::constants::{
 use crate::tenants::repository::TenantRepository;
 use crate::users::repository::UserRepository;
 use anyhow::Context;
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::{DateTime, Utc};
+use hmac::{Hmac, Mac};
 use repository::{ApiKey, ApiKeyRepository, ApiKeyStatus, NewApiKey};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sha2::Sha256;
 use std::sync::Arc;
+use subtle::ConstantTimeEq;
 use warp::Filter;
 use warp::filters::BoxedFilter;
 use warp::http::StatusCode;
@@ -73,14 +78,50 @@ fn parse_api_key(presented: &str) -> Option<(&str, &str)> {
     }
 }
 
+/// Verifies a Mode-2 HMAC proof (constant-time). The HMAC key is the stored SHA-256 secret hash
+/// itself — the client derives the same bytes from its secret, so no raw secret is ever sent and
+/// none is kept at rest. The message binds the key id and the current hour bucket; the current hour
+/// ±1 is accepted to tolerate clock skew and hour boundaries. Any malformed input returns `false`.
+fn verify_key_hmac(secret_hash_b64: &str, key_id: &str, presented_mac: &str) -> bool {
+    let (Ok(hmac_key), Ok(presented)) = (
+        URL_SAFE_NO_PAD.decode(secret_hash_b64),
+        URL_SAFE_NO_PAD.decode(presented_mac),
+    ) else {
+        return false;
+    };
+    let bucket = Utc::now().timestamp().div_euclid(3600);
+    for slot in [bucket - 1, bucket, bucket + 1] {
+        let Ok(mut mac) = Hmac::<Sha256>::new_from_slice(&hmac_key) else {
+            return false;
+        };
+        mac.update(format!("umami:apikey:{key_id}:{slot}").as_bytes());
+        let expected = mac.finalize().into_bytes();
+        if bool::from(presented.ct_eq(expected.as_slice())) {
+            return true;
+        }
+    }
+    false
+}
+
 // ── Request/response types ───────────────────────────────────────────────────
 
-/// Exchange request: the presented API key and, optionally, which target API to mint for
-/// (default `umami`). The requested audience is bounded by the key's scopes + the API's eligibility.
+/// Exchange request. Two auth methods:
+/// - **Mode 1** — present the raw key in `apiKey` (`umk_<keyId>_<secret>`).
+/// - **Mode 2** — prove possession without sending the secret: `keyId` + `mac`, where `mac` is
+///   `base64url(HMAC-SHA256(key = the stored secret hash, msg = "umami:apikey:<keyId>:<hourBucket>"))`
+///   and `hourBucket = unixSeconds / 3600`. The server accepts the current hour ±1 (clock skew).
+///
+/// `api` (optional) picks the target audience (default `umami`), bounded by the key's scopes + the
+/// API's eligibility.
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct ExchangeRequest {
-    api_key: String,
+    /// Mode 1: the full `umk_…` key.
+    api_key: Option<String>,
+    /// Mode 2: the key id (paired with `mac`).
+    key_id: Option<String>,
+    /// Mode 2: the HMAC proof (base64url).
+    mac: Option<String>,
     api: Option<String>,
 }
 
@@ -469,13 +510,21 @@ async fn exchange(
     system_tenant_id: Option<String>,
     origin: Option<String>,
 ) -> anyhow::Result<ExchangeResponse> {
-    // Uniform "invalid key" for every failure so we don't reveal which keys exist.
-    let (key_id, secret) = match parse_api_key(&request.api_key) {
-        Some(parsed) => parsed,
-        None => status_bail!(StatusCode::UNAUTHORIZED, "Invalid API key"),
+    // Resolve the key id from whichever auth method the caller used (Mode 1: parse it out of the
+    // raw key; Mode 2: it's supplied directly). Uniform "invalid key" for every failure so we don't
+    // reveal which keys exist.
+    let key_id: String = if let Some(api_key) = request.api_key.as_deref() {
+        match parse_api_key(api_key) {
+            Some((key_id, _)) => key_id.to_owned(),
+            None => status_bail!(StatusCode::UNAUTHORIZED, "Invalid API key"),
+        }
+    } else if let Some(key_id) = request.key_id.as_deref() {
+        key_id.to_owned()
+    } else {
+        client_bail!("Provide either 'apiKey' (Mode 1) or 'keyId' + 'mac' (Mode 2)");
     };
 
-    let key = match keys.get(key_id).await? {
+    let key = match keys.get(&key_id).await? {
         Some(key) if key.status == ApiKeyStatus::Active => key,
         _ => status_bail!(StatusCode::UNAUTHORIZED, "Invalid API key"),
     };
@@ -486,7 +535,17 @@ async fn exchange(
         status_bail!(StatusCode::UNAUTHORIZED, "API key expired");
     }
 
-    if !verify_refresh_secret(secret, &key.secret_hash) {
+    // Verify possession by the method used: Mode 1 compares the presented secret against the stored
+    // hash; Mode 2 checks the HMAC (no secret on the wire).
+    let authenticated = if let Some(api_key) = request.api_key.as_deref() {
+        parse_api_key(api_key)
+            .is_some_and(|(_, secret)| verify_refresh_secret(secret, &key.secret_hash))
+    } else if let Some(mac) = request.mac.as_deref() {
+        verify_key_hmac(&key.secret_hash, &key.key_id, mac)
+    } else {
+        false
+    };
+    if !authenticated {
         status_bail!(StatusCode::UNAUTHORIZED, "Invalid API key");
     }
 
@@ -581,7 +640,7 @@ async fn exchange(
     };
 
     // Best-effort usage markers; failure to record must not fail the exchange.
-    if let Err(err) = keys.touch_last_used(key_id).await {
+    if let Err(err) = keys.touch_last_used(&key_id).await {
         tracing::warn!("failed to update api key lastUsedAt: {err:#}");
     }
     if let Err(err) = tenants.touch_last_active(&key.tenant_id).await {
@@ -781,4 +840,50 @@ async fn delete_my_pat(
 
     keys.delete(&key_id).await?;
     Ok(json!({ "status": "revoked" }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Mirrors what a Mode-2 client computes: HMAC over the hour bucket, keyed by SHA-256(secret).
+    fn client_mac(secret: &str, key_id: &str, bucket: i64) -> String {
+        let hmac_key = URL_SAFE_NO_PAD.decode(hash_refresh_secret(secret)).unwrap();
+        let mut mac = Hmac::<Sha256>::new_from_slice(&hmac_key).unwrap();
+        mac.update(format!("umami:apikey:{key_id}:{bucket}").as_bytes());
+        URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes())
+    }
+
+    #[test]
+    fn hmac_accepts_the_current_bucket_and_rejects_tampering() {
+        let secret = "s3cr3t-value";
+        let stored = hash_refresh_secret(secret);
+        let bucket = Utc::now().timestamp().div_euclid(3600);
+
+        // Correct MAC for the current hour verifies.
+        assert!(verify_key_hmac(
+            &stored,
+            "key-1",
+            &client_mac(secret, "key-1", bucket)
+        ));
+        // A stale/far bucket (outside ±1) is rejected.
+        assert!(!verify_key_hmac(
+            &stored,
+            "key-1",
+            &client_mac(secret, "key-1", bucket - 5)
+        ));
+        // A MAC bound to a different key id is rejected (no cross-key replay).
+        assert!(!verify_key_hmac(
+            &stored,
+            "key-1",
+            &client_mac(secret, "key-2", bucket)
+        ));
+        // Wrong secret, and garbage input, are rejected.
+        assert!(!verify_key_hmac(
+            &stored,
+            "key-1",
+            &client_mac("wrong", "key-1", bucket)
+        ));
+        assert!(!verify_key_hmac(&stored, "key-1", "!!not-base64!!"));
+    }
 }

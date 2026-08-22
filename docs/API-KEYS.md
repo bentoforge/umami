@@ -76,19 +76,27 @@ The key sits in frontend JS (e.g. an app embedded in a shop `iframe`). Accepted 
 
 ## Mode 2 — Signed request (HMAC proof-of-possession)
 
-The secret is used to **sign**, never sent. Request carries `keyId`, `timestamp`, `nonce`, and
-`mac = HMAC-SHA256(secret, "<keyId>.<timestamp>.<nonce>")`.
+The secret is used to **sign**, never sent. Request carries `keyId` + `mac`:
 
-- umami: look up `keyId` → `secret` → recompute the HMAC and constant-time compare; require
-  `|now − timestamp| ≤ ~120s`; reject a reused `nonce` (short-TTL nonce cache — a `nonces` table
-  with a DynamoDB TTL). On success, issue the JWT as usual.
-- Prefer **HMAC-SHA256**. HMAC-SHA1 is still sound *as a MAC* (SHA-1's collision weakness doesn't
-  break HMAC), so it's acceptable, but SHA-256 is the modern default — pick it unless a client is
-  constrained.
+```
+mac = base64url( HMAC-SHA256( key = SHA-256(secret), "umami:apikey:<keyId>:<hourBucket>" ) )
+hourBucket = floor(unixSeconds / 3600)
+```
+
+- **The HMAC key is `SHA-256(secret)` — exactly the digest umami already stores.** So the client
+  derives it from its secret, and the server verifies with the stored hash: no raw secret on the
+  wire *and* none kept at rest. (`verify_key_hmac` in `auth/apikeys`.)
+- umami recomputes the MAC for the current hour and **±1 hour** (clock-skew / boundary tolerance),
+  constant-time compares, and on a match issues the JWT as usual. The message binds the `keyId`, so
+  a MAC for one key can't be replayed against another.
+- Prefer **HMAC-SHA256** (the modern default).
 - **Where it shines:** backend / native clients — the secret never transits (safe against proxy/log
-  capture) and requests can't be replayed. **Caveat for frontends:** if the secret is in browser
-  JS, Mode 2 still doesn't hide it from someone reading the source — it only protects the
-  *transport*. In a browser, Mode 2 ≈ Mode 1 in real security; rate-limiting remains the backstop.
+  capture). **Tradeoff (current impl):** with only the hour bucket and no per-request nonce, a
+  captured MAC is **replayable within its ~±1 h window**. TLS plus the narrow window bound the
+  exposure; true anti-replay (a per-request `nonce` + a short-TTL `nonces` table) is deferred
+  hardening. **Caveat for frontends:** if the secret lives in browser JS, Mode 2 still doesn't hide
+  it from someone reading the source — it only protects the *transport*; rate-limiting remains the
+  backstop.
 
 ## Mode 3 — BFF (recommended default when a backend exists)
 
@@ -98,11 +106,11 @@ rate-limited. Least code on the "dumb server" (hold key → POST over TLS → re
 
 ## Entity / endpoint additions
 
-- `api-keys` gains optional `allowedOrigins: [String]` (Modes 1/2).
-- Mode 2 adds a `nonces` table (PK `nonce`, DynamoDB TTL ~5 min) for replay protection, and the
-  exchange accepts the signed form (`keyId`/`timestamp`/`nonce`/`mac`) in addition to the raw
-  `apiKey`.
-- Exchange enforces `allowedOrigins` (when set) and, for Mode 2, freshness + nonce.
+- `api-keys` carries optional `allowedOrigins: [String]` (Modes 1/2).
+- The exchange accepts either the raw `apiKey` (Mode 1) **or** the signed form `keyId` + `mac`
+  (Mode 2) — see above.
+- Exchange enforces `allowedOrigins` (when set). *Deferred:* a per-request `nonce` + short-TTL
+  `nonces` table for true anti-replay (today Mode 2 relies on the ±1 h bucket window).
 
 ## Endpoints
 

@@ -141,8 +141,8 @@ export class UmamiClient {
 
   /** Password login by username. On success the access token is stored; if MFA is enabled and no
    * `totpCode` is given, the response has `mfaRequired: true` and no token. Pass `api` to mint the
-   * token for a product API directly (default: the umami admin API); the session keeps that
-   * audience across refreshes. */
+   * first token for a product API directly (default: the umami admin API); the session itself is
+   * audience-agnostic, so later `refresh` calls choose their own `api`. */
   async login(
     username: string,
     password: string,
@@ -215,7 +215,7 @@ export class UmamiClient {
       body: JSON.stringify(body),
     });
   }
-  /** Re-scope the access token to another tenant (requires `admin:system`). Access-token only —
+  /** Re-scope the access token to another tenant (requires `switch:tenant`). Access-token only —
    * a later silent refresh returns to the home tenant. Returns the active tenant id. */
   async switchTenant(tenantId: string): Promise<string> {
     const data = await this.request<TokenResponse>("/auth/switch-tenant", {
@@ -303,6 +303,20 @@ export class UmamiClient {
     const data = await this.request<ExchangeResponse>(
       "/auth/token",
       { method: "POST", body: JSON.stringify(api ? { apiKey, api } : { apiKey }) },
+      false,
+    );
+    this.setToken(data.accessToken);
+    return data;
+  }
+
+  /** Mode 2 exchange: prove possession of `keyId`/`secret` with an HMAC over the current hour bucket
+   * instead of sending the secret. Same result as {@link exchangeApiKey}; the raw secret never
+   * leaves the process. `secret` is the part after `umk_<keyId>_`. Uses WebCrypto (Node 18+/browser). */
+  async exchangeApiKeyHmac(keyId: string, secret: string, api?: string): Promise<ExchangeResponse> {
+    const mac = await apiKeyMac(keyId, secret);
+    const data = await this.request<ExchangeResponse>(
+      "/auth/token",
+      { method: "POST", body: JSON.stringify(api ? { keyId, mac, api } : { keyId, mac }) },
       false,
     );
     this.setToken(data.accessToken);
@@ -541,6 +555,28 @@ export class UmamiClient {
 
 function enc(value: string): string {
   return encodeURIComponent(value);
+}
+
+/** base64url (no padding) of raw bytes. */
+function b64url(bytes: Uint8Array): string {
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+/** Computes the Mode-2 API-key MAC: `HMAC-SHA256(key = SHA-256(secret), "umami:apikey:<keyId>:<hour>")`,
+ * base64url. The HMAC key is the SHA-256 of the secret — exactly the digest umami stores — so the
+ * server verifies without ever holding the raw secret. Matches `verify_key_hmac` on the server. */
+async function apiKeyMac(keyId: string, secret: string): Promise<string> {
+  const subtle = globalThis.crypto.subtle;
+  const enc8 = new TextEncoder();
+  const secretHash = new Uint8Array(await subtle.digest("SHA-256", enc8.encode(secret)));
+  const key = await subtle.importKey("raw", secretHash, { name: "HMAC", hash: "SHA-256" }, false, [
+    "sign",
+  ]);
+  const bucket = Math.floor(Date.now() / 3_600_000); // unix ms → whole hours
+  const mac = await subtle.sign("HMAC", key, enc8.encode(`umami:apikey:${keyId}:${bucket}`));
+  return b64url(new Uint8Array(mac));
 }
 
 /** Builds a `?limit=&cursor=` query string for the audit endpoints (omitting absent params). */

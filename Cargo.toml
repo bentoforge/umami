@@ -43,6 +43,7 @@ jsonwebtoken = { version = "10", default-features = false, features = ["aws_lc_r
 p256 = { version = "0.13", features = ["jwk", "pem"] }  # derive the public JWK for the JWKS endpoint
 rand = "0.9"                   # refresh-secret generation
 sha2 = "0.10"                  # refresh-secret hashing
+hmac = "0.12"                  # API-key "Mode 2" HMAC proof-of-possession
 subtle = "2.6"                 # constant-time secret comparison
 base64 = "0.22"
 cookie = "0.18"                # HttpOnly refresh cookie build/parse

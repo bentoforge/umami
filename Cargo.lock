@@ -3957,6 +3957,7 @@ dependencies = [
  "cookie",
  "dotenvy",
  "futures-util",
+ "hmac 0.12.1",
  "jsonwebtoken",
  "mockall",
  "p256",
