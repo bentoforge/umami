@@ -19,6 +19,11 @@ import { card, iconButton, input } from "../ui";
 
 type NavItem = { to: string; label: string; show: boolean; end?: boolean };
 
+/** Dropdown surface: the card look without its baked-in `p-6`, so each popover can set its own
+ * (much smaller) padding — otherwise `card`'s `p-6` wins the Tailwind cascade over any `p-*` added
+ * after it, and the menus stay heavily padded. */
+const popoverSurface = card.replace(" p-6", "");
+
 const navLinkClass = ({ isActive }: { isActive: boolean }) =>
   `px-3 py-1.5 rounded-lg text-sm font-medium ${
     isActive
@@ -180,7 +185,7 @@ function ThemeSwitcher() {
         <HalfCircleIcon className="h-5 w-5" />
       </button>
       {open && (
-        <div className={`${card} absolute right-0 mt-2 w-40 z-20 p-1.5 shadow-lg`}>
+        <div className={`${popoverSurface} absolute right-0 mt-2 w-40 z-20 p-2 shadow-lg`}>
           {THEME_OPTIONS.map(({ value, label, Icon }) => (
             <button
               key={value}
@@ -243,7 +248,7 @@ function UserMenu({
         <ChevronDownIcon className="h-4 w-4 text-slate-400" />
       </button>
       {open && (
-        <div className={`${card} absolute right-0 mt-2 w-56 z-20 p-1.5 shadow-lg`}>
+        <div className={`${popoverSurface} absolute right-0 mt-2 w-56 z-20 p-2 shadow-lg`}>
           <div className="px-3 py-1.5 lg:hidden">
             <div className="text-sm font-medium text-slate-900 dark:text-white">{fullName}</div>
             <div className="text-xs text-slate-500">{tenantName}</div>
@@ -422,7 +427,7 @@ function TenantSwitcher() {
       </button>
       {open && (
         <div
-          className={`${card} absolute right-0 mt-2 w-80 z-20 p-3 space-y-2 shadow-lg max-h-96 overflow-auto`}
+          className={`${popoverSurface} absolute right-0 mt-2 w-80 z-20 p-2 space-y-2 shadow-lg max-h-96 overflow-auto`}
         >
           <input
             className={input}
