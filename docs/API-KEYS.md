@@ -13,7 +13,7 @@ The three modes trade off *where the secret lives* against *client complexity*:
 | Mode | Secret lives | Stops | Does **not** stop | Use when |
 |------|--------------|-------|-------------------|----------|
 | **1. Key + Origin** | in the browser (semi-public) | casual browser reuse ("embed in another site") | key extraction + replay from a script | no backend; **rate-limited / low-value** |
-| **2. Signed (HMAC)** | client-side, **never transmitted** | secret on the wire; request replay (with nonce) | someone reading the secret *out of frontend JS* | client can compute HMAC; **backend/native** client, or keep secret off the wire |
+| **2. Signed (HMAC)** | client-side, **never transmitted** | secret on the wire (proxy/log capture) | someone reading the secret *out of frontend JS*; replay within the ~±1 h window | client can compute HMAC; **backend/native** client, or keep secret off the wire |
 | **3. BFF** | **server-side only** | essentially everything (key never in browser) | — | any backend exists; **high value** |
 
 **Rule of thumb:** backend available → **Mode 3**. No backend but a real (non-browser) client that
@@ -91,12 +91,10 @@ hourBucket = floor(unixSeconds / 3600)
   a MAC for one key can't be replayed against another.
 - Prefer **HMAC-SHA256** (the modern default).
 - **Where it shines:** backend / native clients — the secret never transits (safe against proxy/log
-  capture). **Tradeoff (current impl):** with only the hour bucket and no per-request nonce, a
-  captured MAC is **replayable within its ~±1 h window**. TLS plus the narrow window bound the
-  exposure; true anti-replay (a per-request `nonce` + a short-TTL `nonces` table) is deferred
-  hardening. **Caveat for frontends:** if the secret lives in browser JS, Mode 2 still doesn't hide
-  it from someone reading the source — it only protects the *transport*; rate-limiting remains the
-  backstop.
+  capture). **Tradeoff:** a captured MAC is **replayable within its ~±1 h window**; TLS plus the
+  narrow window bound the exposure. **Caveat for frontends:** if the secret lives in browser JS,
+  Mode 2 still doesn't hide it from someone reading the source — it only protects the *transport*;
+  rate-limiting remains the backstop.
 
 ## Mode 3 — BFF (recommended default when a backend exists)
 
@@ -106,11 +104,12 @@ rate-limited. Least code on the "dumb server" (hold key → POST over TLS → re
 
 ## Entity / endpoint additions
 
-- `api-keys` carries optional `allowedOrigins: [String]` (Modes 1/2).
-- The exchange accepts either the raw `apiKey` (Mode 1) **or** the signed form `keyId` + `mac`
-  (Mode 2) — see above.
-- Exchange enforces `allowedOrigins` (when set). *Deferred:* a per-request `nonce` + short-TTL
-  `nonces` table for true anti-replay (today Mode 2 relies on the ±1 h bucket window).
+- `api-keys` carries optional `allowedOrigins: [String]` (Modes 1/2) and `allowSecretLogin: bool`
+  (default **false**): whether the raw-secret exchange (Mode 1) is accepted at all. When off, the
+  key is **HMAC-only** (Mode 2) — a raw-secret exchange is refused even with the correct secret.
+- The exchange accepts either the raw `apiKey` (Mode 1, only if `allowSecretLogin`) **or** the
+  signed form `keyId` + `mac` (Mode 2) — see above.
+- Exchange enforces `allowedOrigins` (when set) and `allowSecretLogin`.
 
 ## Endpoints
 

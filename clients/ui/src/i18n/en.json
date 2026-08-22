@@ -191,6 +191,8 @@
     "deleteConfirm": "Delete service key \"{{name}}\"? Anything using it will stop working.",
     "secretOnce": "Copy it now — the key is shown only once:",
     "menu": "Actions",
-    "new": "New service key"
+    "new": "New service key",
+    "allowSecretLogin": "Allow simplified (secret) login",
+    "allowSecretLoginHint": "Off: the token is usable only via the signed HMAC exchange (Mode 2). On: the raw secret can be exchanged directly (Mode 1)."
   }
 }

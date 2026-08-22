@@ -191,6 +191,8 @@
     "deleteConfirm": "Service-Key „{{name}}“ löschen? Alles, was ihn verwendet, funktioniert danach nicht mehr.",
     "secretOnce": "Jetzt kopieren – der Key wird nur einmal angezeigt:",
     "menu": "Aktionen",
-    "new": "Neuen Service-Key anlegen"
+    "new": "Neuen Service-Key anlegen",
+    "allowSecretLogin": "Vereinfachten Login (Secret) erlauben",
+    "allowSecretLoginHint": "Aus: der Token ist nur per signiertem HMAC nutzbar (Mode 2). An: der rohe Secret-Token kann direkt getauscht werden (Mode 1)."
   }
 }

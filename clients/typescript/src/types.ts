@@ -332,6 +332,8 @@ export interface ApiKeyView {
   roles: string[];
   /** Service-key `scope:*` subjects (empty for PATs). */
   scopes: string[];
+  /** Whether the raw-secret (Mode 1) exchange is allowed; false ⇒ HMAC-only (Mode 2). */
+  allowSecretLogin: boolean;
   status: ApiKeyStatus;
   allowedOrigins: string[];
   expiresAt?: string | null;
@@ -344,6 +346,8 @@ export interface CreateApiKeyRequest {
   name: string;
   /** The `scope:*` subjects this key carries (must be assignable given the tenant's features). */
   scopes?: string[];
+  /** Allow the raw-secret (Mode 1) exchange; omitted/false ⇒ HMAC-only (Mode 2). */
+  allowSecretLogin?: boolean;
   allowedOrigins?: string[];
   expiresAt?: string;
 }

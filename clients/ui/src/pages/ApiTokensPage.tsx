@@ -161,6 +161,7 @@ function CreateKey({
   const [assignable, setAssignable] = useState<string[]>([]);
   const [origins, setOrigins] = useState("");
   const [expiresAt, setExpiresAt] = useState("");
+  const [allowSecretLogin, setAllowSecretLogin] = useState(false);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -194,6 +195,7 @@ function CreateKey({
     setScopes([]);
     setOrigins("");
     setExpiresAt("");
+    setAllowSecretLogin(false);
   };
 
   const toggleScope = (code: string) => {
@@ -207,6 +209,7 @@ function CreateKey({
       const res = await client.createApiKey(tenantId, {
         name,
         scopes,
+        allowSecretLogin,
         allowedOrigins: split(origins),
         expiresAt: expiresAt ? new Date(expiresAt).toISOString() : undefined,
       });
@@ -278,6 +281,25 @@ function CreateKey({
           onChange={(e) => setExpiresAt(e.target.value)}
         />
       </Field>
+
+      <div className="flex items-start gap-3">
+        <div className="pt-0.5">
+          <Toggle
+            checked={allowSecretLogin}
+            disabled={busy}
+            label={t("apiTokens.allowSecretLogin")}
+            onChange={setAllowSecretLogin}
+          />
+        </div>
+        <div className="min-w-0">
+          <div className="text-sm font-medium text-slate-800 dark:text-slate-200">
+            {t("apiTokens.allowSecretLogin")}
+          </div>
+          <div className="text-xs text-slate-400 dark:text-slate-500">
+            {t("apiTokens.allowSecretLoginHint")}
+          </div>
+        </div>
+      </div>
 
       <div className="flex gap-2">
         <button

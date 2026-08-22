@@ -140,6 +140,8 @@ struct CreateApiKeyRequest {
     name: String,
     /// The `scope:*` subjects this M2M key carries (must be assignable given the tenant's features).
     scopes: Option<Vec<String>>,
+    /// Whether the raw-secret (Mode 1) exchange is allowed; omitted/false ⇒ HMAC-only (Mode 2).
+    allow_secret_login: Option<bool>,
     allowed_origins: Option<Vec<String>>,
     expires_at: Option<DateTime<Utc>>,
 }
@@ -174,6 +176,7 @@ struct ApiKeyView {
     name: String,
     roles: Vec<String>,
     scopes: Vec<String>,
+    allow_secret_login: bool,
     status: ApiKeyStatus,
     allowed_origins: Vec<String>,
     expires_at: Option<DateTime<Utc>>,
@@ -190,6 +193,7 @@ impl From<ApiKey> for ApiKeyView {
             name: key.name,
             roles: key.roles,
             scopes: key.scopes,
+            allow_secret_login: key.allow_secret_login,
             status: key.status,
             allowed_origins: key.allowed_origins,
             expires_at: key.expires_at,
@@ -537,16 +541,26 @@ async fn exchange(
 
     // Verify possession by the method used: Mode 1 compares the presented secret against the stored
     // hash; Mode 2 checks the HMAC (no secret on the wire).
-    let authenticated = if let Some(api_key) = request.api_key.as_deref() {
-        parse_api_key(api_key)
-            .is_some_and(|(_, secret)| verify_refresh_secret(secret, &key.secret_hash))
+    if let Some(api_key) = request.api_key.as_deref() {
+        let ok = parse_api_key(api_key)
+            .is_some_and(|(_, secret)| verify_refresh_secret(secret, &key.secret_hash));
+        if !ok {
+            status_bail!(StatusCode::UNAUTHORIZED, "Invalid API key");
+        }
+        // Mode 1 must be explicitly enabled on the key. Checked after verifying possession, so this
+        // only ever tells the legitimate holder to switch to the signed (HMAC) exchange.
+        if !key.allow_secret_login {
+            status_bail!(
+                StatusCode::FORBIDDEN,
+                "This key does not allow the raw-secret exchange; use the signed (HMAC) form"
+            );
+        }
     } else if let Some(mac) = request.mac.as_deref() {
-        verify_key_hmac(&key.secret_hash, &key.key_id, mac)
+        if !verify_key_hmac(&key.secret_hash, &key.key_id, mac) {
+            status_bail!(StatusCode::UNAUTHORIZED, "Invalid API key");
+        }
     } else {
-        false
-    };
-    if !authenticated {
-        status_bail!(StatusCode::UNAUTHORIZED, "Invalid API key");
+        client_bail!("Provide either 'apiKey' (Mode 1) or 'keyId' + 'mac' (Mode 2)");
     }
 
     // Mode 1: when origins are pinned, the browser-set Origin must be allow-listed.
@@ -723,6 +737,7 @@ async fn create_api_key(
         user_id: None, // service key
         roles: Vec::new(),
         scopes,
+        allow_secret_login: request.allow_secret_login.unwrap_or(false),
         allowed_origins: request.allowed_origins.unwrap_or_default(),
         expires_at: request.expires_at,
     })
@@ -796,6 +811,9 @@ async fn create_my_pat(
         user_id: Some(user_id),                   // personal access token
         roles: request.roles.unwrap_or_default(), // restriction ∩ the user's own roles at mint time
         scopes: Vec::new(),
+        // PATs are used as a raw bearer token (CLI/scripts), so the raw-secret exchange is always
+        // enabled — the `allowSecretLogin` toggle is a service-key concern only.
+        allow_secret_login: true,
         allowed_origins: Vec::new(),
         expires_at: request.expires_at,
     })

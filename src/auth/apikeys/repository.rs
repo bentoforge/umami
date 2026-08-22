@@ -57,6 +57,10 @@ pub struct ApiKey {
     pub scopes: Vec<String>,
     /// Lifecycle state.
     pub status: ApiKeyStatus,
+    /// Whether the raw-secret exchange (Mode 1) is accepted for this key. Default **false** ⇒ the key
+    /// is HMAC-only (Mode 2): presenting the raw secret is refused even if it is correct.
+    #[serde(default)]
+    pub allow_secret_login: bool,
     /// Origins permitted to exchange this key (Mode 1); empty = unrestricted.
     #[serde(default)]
     pub allowed_origins: Vec<String>,
@@ -79,6 +83,8 @@ pub struct NewApiKey {
     pub roles: Vec<String>,
     /// PAT down-scoping (ignored for service keys).
     pub scopes: Vec<String>,
+    /// Whether the raw-secret exchange (Mode 1) is allowed; `false` ⇒ HMAC-only.
+    pub allow_secret_login: bool,
     pub allowed_origins: Vec<String>,
     pub expires_at: Option<DateTime<Utc>>,
 }
@@ -157,6 +163,7 @@ impl ApiKeyRepository for DynamoApiKeyRepository {
             user_id: new_key.user_id,
             roles: new_key.roles,
             scopes: new_key.scopes,
+            allow_secret_login: new_key.allow_secret_login,
             status: ApiKeyStatus::Active,
             allowed_origins: new_key.allowed_origins,
             expires_at: new_key.expires_at,
