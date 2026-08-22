@@ -90,7 +90,6 @@ export function ApiTokensPage() {
               <tr className="border-b border-slate-200 dark:border-slate-700">
                 <th className={th}>Name</th>
                 <th className={th}>Scopes</th>
-                <th className={th}>APIs</th>
                 <th className={th}>Origins</th>
                 <th className={th}>Last used</th>
                 <th className={th}></th>
@@ -104,7 +103,6 @@ export function ApiTokensPage() {
                     <div className="text-xs text-slate-400 font-mono">{key.keyId}</div>
                   </td>
                   <td className={td}>{key.scopes.join(", ") || "—"}</td>
-                  <td className={td}>{key.apis.join(", ") || "—"}</td>
                   <td className={td}>{key.allowedOrigins.join(", ") || "any"}</td>
                   <td className={td}>
                     {key.lastUsedAt ? formatDateTime(key.lastUsedAt) : "never"}
@@ -137,7 +135,6 @@ function CreateKey({
   const [name, setName] = useState("");
   const [scopes, setScopes] = useState<string[]>([]);
   const [assignable, setAssignable] = useState<string[]>([]);
-  const [apis, setApis] = useState("");
   const [origins, setOrigins] = useState("");
   const [expiresAt, setExpiresAt] = useState("");
   const [busy, setBusy] = useState(false);
@@ -162,13 +159,11 @@ function CreateKey({
       const res = await client.createApiKey(tenantId, {
         name,
         scopes,
-        apis: split(apis),
         allowedOrigins: split(origins),
         expiresAt: expiresAt ? new Date(expiresAt).toISOString() : undefined,
       });
       setName("");
       setScopes([]);
-      setApis("");
       setOrigins("");
       setExpiresAt("");
       await onDone(res.apiKey);
@@ -185,14 +180,6 @@ function CreateKey({
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Field label="Name">
           <input className={input} value={name} onChange={(e) => setName(e.target.value)} />
-        </Field>
-        <Field label="Target APIs (comma-separated, optional)">
-          <input
-            className={input}
-            placeholder="empty = any audience (hardening only)"
-            value={apis}
-            onChange={(e) => setApis(e.target.value)}
-          />
         </Field>
         <Field label="Scopes">
           <CheckboxTags
