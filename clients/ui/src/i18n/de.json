@@ -171,5 +171,26 @@
     "deleteConfirm": "Token „{{name}}“ löschen? Alles, was ihn verwendet, funktioniert danach nicht mehr.",
     "secretOnce": "Jetzt kopieren – der Token wird nur einmal angezeigt:",
     "menu": "Aktionen"
+  },
+  "apiTokens": {
+    "title": "API-Tokens",
+    "subtitle": "Service-Keys handeln im Namen des Mandanten (M2M). Tausche einen unter POST /auth/token gegen ein kurzlebiges Access-Token.",
+    "empty": "Keine Service-Keys vorhanden.",
+    "newKey": "Neuer Service-Key",
+    "name": "Name",
+    "scopes": "Scopes",
+    "scopesEmpty": "Keine Scopes zuweisbar.",
+    "origins": "Erlaubte Origins (kommagetrennt, optional)",
+    "originsPlaceholder": "https://app.example.com",
+    "expiresAt": "Läuft ab am (optional)",
+    "create": "Erstellen",
+    "cancel": "Abbrechen",
+    "lastUsed": "Zuletzt verwendet",
+    "neverUsed": "Nie",
+    "expires": "Läuft ab am",
+    "delete": "Löschen",
+    "deleteConfirm": "Service-Key „{{name}}“ löschen? Alles, was ihn verwendet, funktioniert danach nicht mehr.",
+    "secretOnce": "Jetzt kopieren – der Key wird nur einmal angezeigt:",
+    "menu": "Aktionen"
   }
 }

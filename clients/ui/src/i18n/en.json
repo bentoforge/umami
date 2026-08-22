@@ -171,5 +171,26 @@
     "deleteConfirm": "Delete token \"{{name}}\"? Anything using it will stop working.",
     "secretOnce": "Copy it now — the token is shown only once:",
     "menu": "Actions"
+  },
+  "apiTokens": {
+    "title": "API tokens",
+    "subtitle": "Service keys act as the tenant (M2M). Exchange one at POST /auth/token for a short-lived access token.",
+    "empty": "No service keys yet.",
+    "newKey": "New service key",
+    "name": "Name",
+    "scopes": "Scopes",
+    "scopesEmpty": "No scopes assignable.",
+    "origins": "Allowed origins (comma-separated, optional)",
+    "originsPlaceholder": "https://app.example.com",
+    "expiresAt": "Expires at (optional)",
+    "create": "Create",
+    "cancel": "Cancel",
+    "lastUsed": "Last used",
+    "neverUsed": "Never",
+    "expires": "Expires",
+    "delete": "Delete",
+    "deleteConfirm": "Delete service key \"{{name}}\"? Anything using it will stop working.",
+    "secretOnce": "Copy it now — the key is shown only once:",
+    "menu": "Actions"
   }
 }
