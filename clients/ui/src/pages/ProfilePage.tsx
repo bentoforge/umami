@@ -856,7 +856,7 @@ function PatsPanel() {
       <div className="flex items-center justify-between gap-3">
         <h2 className="font-medium text-slate-800 dark:text-slate-200">{t("pats.title")}</h2>
         {!creating && (
-          <button className={ghostButton} onClick={openCreate}>
+          <button className={primaryButton} onClick={openCreate}>
             {t("pats.new")}
           </button>
         )}
