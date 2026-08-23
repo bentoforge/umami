@@ -2,6 +2,7 @@ import type {
   ApiKeyView,
   AuditEntry,
   CustomFieldDef,
+  MessagingLink,
   RoleDef,
   Salutation,
   SessionView,
@@ -21,6 +22,7 @@ import {
   formatDateTime,
   formatFieldValue,
   Loader,
+  MessagingLinkList,
   PatList,
   Toggle,
 } from "../components";
@@ -184,6 +186,7 @@ export function EditUserPage() {
           <AuditCard userId={user.userId} />
           <SessionsCard user={user} onError={setError} />
           <PatsCard userId={user.userId} />
+          <MessagingLinksCard userId={user.userId} />
           <MetaBox user={user} />
         </>
       )}
@@ -587,7 +590,6 @@ function SessionsCard({ user, onError }: { user: UserView; onError: (msg: string
   );
 }
 
-/** Read-only list of the user's personal access tokens (requires `manage:users`). */
 /** Read-only list of the user's personal access tokens (same layout as the profile, no actions). */
 function PatsCard({ userId }: { userId: string }) {
   const { client } = useUmami();
@@ -620,6 +622,36 @@ function PatsCard({ userId }: { userId: string }) {
         <p className="text-sm text-slate-500">{t("pats.empty")}</p>
       ) : (
         <PatList pats={pats} roleLabel={roleLabel} />
+      )}
+    </section>
+  );
+}
+
+/** Read-only list of the user's messaging (Telegram/WhatsApp) identity links (requires
+ * `manage:users`; scoped to the caller's tenant). */
+function MessagingLinksCard({ userId }: { userId: string }) {
+  const { client } = useUmami();
+  const { t } = useTranslation();
+  const [links, setLinks] = useState<MessagingLink[] | null>(null);
+
+  useEffect(() => {
+    client
+      .listUserMessagingLinks(userId)
+      .then(setLinks)
+      .catch(() => setLinks([]));
+  }, [client, userId]);
+
+  return (
+    <section className={card}>
+      <h2 className="font-medium text-slate-800 dark:text-slate-200 mb-3">
+        {t("messaging.linksTitle")}
+      </h2>
+      {links === null ? (
+        <Loader />
+      ) : links.length === 0 ? (
+        <p className="text-sm text-slate-500">{t("messaging.empty")}</p>
+      ) : (
+        <MessagingLinkList links={links} />
       )}
     </section>
   );

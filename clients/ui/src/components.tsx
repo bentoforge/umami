@@ -1,4 +1,4 @@
-import type { ApiKeyView, AuditEntry, CustomFieldDef } from "@bentoforge/umami-iam";
+import type { ApiKeyView, AuditEntry, CustomFieldDef, MessagingLink } from "@bentoforge/umami-iam";
 import { EllipsisVerticalIcon } from "@heroicons/react/24/outline";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -368,6 +368,45 @@ export function PatList({
               <DropdownMenu
                 label={t("pats.menu")}
                 actions={[{ label: t("pats.delete"), danger: true, onSelect: () => onDelete(pat) }]}
+              />
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/** List of a user's messaging (Telegram/WhatsApp) identity links: the platform in bold, and a muted
+ * subline "<externalId> · Linked: <date>". When `onDelete` is given, each row gets a 3-dots menu
+ * with a destructive Delete (profile); without it the list is read-only (user-edit screen). */
+export function MessagingLinkList({
+  links,
+  onDelete,
+}: {
+  links: MessagingLink[];
+  onDelete?: (link: MessagingLink) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <ul className="divide-y divide-slate-100 dark:divide-slate-700/50">
+      {links.map((link) => {
+        const platform = link.platform.charAt(0).toUpperCase() + link.platform.slice(1);
+        return (
+          <li key={link.linkKey} className="flex items-start justify-between gap-3 py-3">
+            <div className="min-w-0">
+              <div className="text-sm font-medium text-slate-900 dark:text-white">{platform}</div>
+              <div className="truncate text-xs text-slate-400">
+                <span className="font-mono">{link.externalId}</span> · {t("messaging.linkedOn")}:{" "}
+                {formatDateTime(link.created)}
+              </div>
+            </div>
+            {onDelete && (
+              <DropdownMenu
+                label={t("messaging.menu")}
+                actions={[
+                  { label: t("messaging.delete"), danger: true, onSelect: () => onDelete(link) },
+                ]}
               />
             )}
           </li>

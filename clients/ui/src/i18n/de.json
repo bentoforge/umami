@@ -194,5 +194,13 @@
     "new": "Neuen Service-Key anlegen",
     "allowSecretLogin": "Vereinfachten Login (Secret) erlauben",
     "allowSecretLoginHint": "Aus: der Token ist nur per signiertem HMAC nutzbar (Mode 2). An: der rohe Secret-Token kann direkt getauscht werden (Mode 1)."
+  },
+  "messaging": {
+    "linksTitle": "Messaging-Verknüpfungen",
+    "empty": "Keine Verknüpfungen.",
+    "linkedOn": "Verknüpft am",
+    "delete": "Löschen",
+    "deleteConfirm": "Verknüpfung mit {{platform}} „{{id}}“ entfernen?",
+    "menu": "Aktionen"
   }
 }

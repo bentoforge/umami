@@ -472,6 +472,13 @@ export class UmamiClient {
       { method: "DELETE" },
     );
   }
+  /** A tenant user's linked identities, read-only (requires `manage:users`; own tenant). */
+  async listUserMessagingLinks(userId: string): Promise<MessagingLink[]> {
+    const data = await this.request<{ links: MessagingLink[] }>(
+      `/users/${enc(userId)}/messaging-links`,
+    );
+    return data.links;
+  }
   /** Machine (`messaging:link`): claim a `(platform, externalId)` mapping from a link code. */
   createMessagingLink(
     code: string,

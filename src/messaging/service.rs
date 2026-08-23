@@ -14,8 +14,8 @@ use crate::auth::tokens::TokenIssuer;
 use crate::config::MessagingConfig;
 use crate::config::repository::ConfigRepository;
 use crate::constants::{
-    MAX_TEXT_BODY_SIZE, MESSAGING_LINK_PERMISSION, MESSAGING_RESOLVE_PERMISSION,
-    MESSAGING_SELF_PERMISSION,
+    MANAGE_USERS_PERMISSION, MAX_TEXT_BODY_SIZE, MESSAGING_LINK_PERMISSION,
+    MESSAGING_RESOLVE_PERMISSION, MESSAGING_SELF_PERMISSION,
 };
 use crate::messaging::repository::MessagingRepository;
 use crate::messaging::{MessagingLink, normalize_platform};
@@ -36,6 +36,7 @@ use wasabi::{client_bail, status_bail};
 const REQUIRE_SELF: &[&str] = &[MESSAGING_SELF_PERMISSION];
 const REQUIRE_LINK: &[&str] = &[MESSAGING_LINK_PERMISSION];
 const REQUIRE_RESOLVE: &[&str] = &[MESSAGING_RESOLVE_PERMISSION];
+const REQUIRE_MANAGE_USERS: &[&str] = &[MANAGE_USERS_PERMISSION];
 
 /// Self-service link-code response, with ready-made deep links when the deployment is configured.
 #[derive(Serialize, Debug)]
@@ -165,6 +166,23 @@ pub fn delete_my_link_route(
         .and(with_cloneable(messaging))
         .and(with_user_with_any_permission(authenticator, REQUIRE_SELF))
         .and_then(handle_delete_my_link_route)
+        .boxed()
+}
+
+/// `GET /users/{id}/messaging-links` — a tenant user's external-identity mappings, read-only
+/// (admin view; requires `manage:users`, scoped to the caller's tenant).
+pub fn user_links_route(
+    messaging: Arc<dyn MessagingRepository>,
+    authenticator: Arc<Authenticator>,
+) -> BoxedFilter<(impl warp::Reply,)> {
+    warp::path!("users" / String / "messaging-links")
+        .and(warp::get())
+        .and(with_cloneable(messaging))
+        .and(with_user_with_any_permission(
+            authenticator,
+            REQUIRE_MANAGE_USERS,
+        ))
+        .and_then(handle_user_links_route)
         .boxed()
 }
 
@@ -338,6 +356,32 @@ async fn my_links(
     caller: AuthUser,
 ) -> anyhow::Result<LinksResponse> {
     let links = messaging.list_links(caller.user_id()?).await?;
+    Ok(LinksResponse { links })
+}
+
+#[tracing::instrument(level = "debug", name = "GET /users/{id}/messaging-links", skip_all)]
+async fn handle_user_links_route(
+    user_id: String,
+    messaging: Arc<dyn MessagingRepository>,
+    caller: AuthUser,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    into_response(user_links(user_id, messaging, caller).await)
+}
+
+/// Lists a tenant user's messaging links, read-only. Scoped to the caller's tenant by dropping any
+/// link whose `tenant_id` differs — so a `manage:users` admin can never read another tenant's links.
+async fn user_links(
+    user_id: String,
+    messaging: Arc<dyn MessagingRepository>,
+    caller: AuthUser,
+) -> anyhow::Result<LinksResponse> {
+    let tenant_id = caller.tenant_id()?;
+    let links = messaging
+        .list_links(&user_id)
+        .await?
+        .into_iter()
+        .filter(|link| link.tenant_id == tenant_id)
+        .collect();
     Ok(LinksResponse { links })
 }
 

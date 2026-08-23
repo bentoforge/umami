@@ -194,5 +194,13 @@
     "new": "New service key",
     "allowSecretLogin": "Allow simplified (secret) login",
     "allowSecretLoginHint": "Off: the token is usable only via the signed HMAC exchange (Mode 2). On: the raw secret can be exchanged directly (Mode 1)."
+  },
+  "messaging": {
+    "linksTitle": "Messaging links",
+    "empty": "No links.",
+    "linkedOn": "Linked",
+    "delete": "Delete",
+    "deleteConfirm": "Remove the {{platform}} link \"{{id}}\"?",
+    "menu": "Actions"
   }
 }

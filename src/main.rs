@@ -86,7 +86,7 @@ use crate::constants::ROLE_OWNER;
 use crate::messaging::repository::{DynamoMessagingRepository, MessagingRepository};
 use crate::messaging::service::{
     ResolveDeps, create_link_route, delete_my_link_route, my_code_route, my_links_route,
-    regenerate_code_route, resolve_route,
+    regenerate_code_route, resolve_route, user_links_route,
 };
 use crate::tenants::repository::{DynamoTenantRepository, TenantRepository};
 use crate::tenants::service::{
@@ -331,6 +331,8 @@ async fn app() -> anyhow::Result<()> {
         ),
         my_links_route(messaging_repository.clone(), authenticator.clone()),
         delete_my_link_route(messaging_repository.clone(), authenticator.clone()),
+        // messaging links (admin: read a tenant user's links)
+        user_links_route(messaging_repository.clone(), authenticator.clone()),
         // messaging links (machine: link via code + resolve identity)
         create_link_route(
             messaging_repository.clone(),

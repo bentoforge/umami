@@ -21,6 +21,7 @@ import {
   formatDateTime,
   formatFieldValue,
   Loader,
+  MessagingLinkList,
   PatList,
   Toggle,
 } from "../components";
@@ -149,6 +150,7 @@ function SessionsPanel() {
 /** Messaging links: show the user's link code (regenerable) and their connected identities. */
 function MessagingPanel() {
   const { client } = useUmami();
+  const { t } = useTranslation();
   const [code, setCode] = useState<MessagingCodeResponse | null>(null);
   const [links, setLinks] = useState<MessagingLink[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -183,7 +185,13 @@ function MessagingPanel() {
   };
 
   const unlink = async (link: MessagingLink) => {
-    if (!window.confirm(`Unlink ${link.platform} identity "${link.externalId}"?`)) return;
+    if (
+      !window.confirm(
+        t("messaging.deleteConfirm", { platform: link.platform, id: link.externalId }),
+      )
+    ) {
+      return;
+    }
     setError(null);
     try {
       await client.deleteMessagingLink(link.platform, link.externalId);
@@ -225,23 +233,11 @@ function MessagingPanel() {
       </div>
 
       <div>
-        <div className="text-xs text-slate-500 mb-1">Connected identities</div>
+        <div className="text-xs text-slate-500 mb-1">{t("messaging.linksTitle")}</div>
         {links.length === 0 ? (
-          <span className="text-xs text-slate-400">none yet</span>
+          <span className="text-xs text-slate-400">{t("messaging.empty")}</span>
         ) : (
-          <ul className="divide-y divide-slate-100 dark:divide-slate-700/50">
-            {links.map((link) => (
-              <li key={link.linkKey} className="flex items-center justify-between py-2">
-                <div className="text-sm text-slate-800 dark:text-slate-200">
-                  <span className="font-medium capitalize">{link.platform}</span>
-                  <span className="text-slate-400"> · {link.externalId}</span>
-                </div>
-                <button className={dangerButton} onClick={() => void unlink(link)}>
-                  Unlink
-                </button>
-              </li>
-            ))}
-          </ul>
+          <MessagingLinkList links={links} onDelete={unlink} />
         )}
       </div>
     </section>
