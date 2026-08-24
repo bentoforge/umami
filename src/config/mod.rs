@@ -8,8 +8,11 @@ pub mod repository;
 pub mod service;
 
 use crate::constants::{
-    ADMIN_TENANT_PERMISSION, DEFAULT_ACCESS_TTL_SECS, DEFAULT_MESSAGING_CODE_TTL_SECS,
-    DEFAULT_REFRESH_TTL_SECS, MANAGE_CONFIG_PERMISSION, MANAGE_PAT_PERMISSION,
+    ADMIN_TENANT_PERMISSION, DEFAULT_ACCESS_TTL_SECS, DEFAULT_LOGIN_BLOCK_SECS,
+    DEFAULT_LOGIN_MAX_FAILURES, DEFAULT_LOGIN_WINDOW_SECS, DEFAULT_MESSAGING_CODE_TTL_SECS,
+    DEFAULT_PER_IP_BLOCK_SECS, DEFAULT_PER_IP_MAX_PER_WINDOW, DEFAULT_PER_IP_WINDOW_SECS,
+    DEFAULT_REFRESH_TTL_SECS, DEFAULT_TOKEN_BLOCK_SECS, DEFAULT_TOKEN_MAX_PER_WINDOW,
+    DEFAULT_TOKEN_WINDOW_SECS, MANAGE_CONFIG_PERMISSION, MANAGE_PAT_PERMISSION,
     MANAGE_SERVICE_KEYS_PERMISSION, MANAGE_TENANTS_PERMISSION, MANAGE_USERS_PERMISSION,
     MESSAGING_CONFIGURED_MARKER, MESSAGING_LINK_PERMISSION, MESSAGING_RESOLVE_PERMISSION,
     MESSAGING_SELF_PERMISSION, ROLE_MEMBER, ROLE_OWNER, SELF_READONLY_PERMISSION,
@@ -314,11 +317,97 @@ pub struct SecuritySettings {
     /// rejected on link.
     #[serde(default = "default_messaging_code_ttl_secs")]
     pub messaging_code_ttl_secs: u64,
+    /// Rate-limit policies for the auth endpoints (see [`RateLimitsConfig`] and `docs/CONFIG.md`).
+    #[serde(default)]
+    pub rate_limits: RateLimitsConfig,
 }
 
 /// Serde default for [`SecuritySettings::messaging_code_ttl_secs`] (back-compat for older configs).
 fn default_messaging_code_ttl_secs() -> u64 {
     DEFAULT_MESSAGING_CODE_TTL_SECS
+}
+
+/// Brute-force policy for `POST /auth/login`: counts **failed** attempts per account, resets the
+/// counter on a successful login, and blocks the account for `block_secs` once `max_failures` is
+/// reached within `window_secs`. A `max_failures` of 0 disables the policy.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct LoginRateLimit {
+    /// Failed attempts (per account) tolerated within the window before a block.
+    pub max_failures: u32,
+    /// The rolling failure-count window, in seconds.
+    pub window_secs: u32,
+    /// How long the account is blocked once the threshold is reached, in seconds.
+    pub block_secs: u32,
+}
+
+/// Volume policy: counts **all** requests for a subject in a fixed window and blocks it for
+/// `block_secs` once `max_per_window` is exceeded. Used for the per-IP and per-key caps (see
+/// [`RateLimitsConfig`]). A `max_per_window` of 0 disables the policy.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct VolumeRateLimit {
+    /// Requests tolerated within the window before a block.
+    pub max_per_window: u32,
+    /// The fixed counting window, in seconds.
+    pub window_secs: u32,
+    /// How long the subject is blocked once the threshold is exceeded, in seconds.
+    pub block_secs: u32,
+}
+
+/// Rate-limit policies for the auth endpoints. Layered so per-IP (the primary blunt instrument)
+/// is backed by a per-key volume cap (catches one key hammering across many IPs) and a per-account
+/// failure cap (catches distributed brute-force). Set any policy's `max` to 0 to run per-IP-only.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RateLimitsConfig {
+    /// Per-account failed-login policy (`POST /auth/login`).
+    #[serde(default = "default_login_rate_limit")]
+    pub login: LoginRateLimit,
+    /// Per-API-key volume policy for the `POST /auth/token` exchange.
+    #[serde(default = "default_token_exchange_rate_limit")]
+    pub token_exchange: VolumeRateLimit,
+    /// Per-client-IP volume policy, applied **per endpoint** (`/auth/login` and `/auth/token` keep
+    /// separate counters, so a flood on one does not consume the other's budget).
+    #[serde(default = "default_per_ip_rate_limit")]
+    pub per_ip: VolumeRateLimit,
+}
+
+impl Default for RateLimitsConfig {
+    fn default() -> Self {
+        RateLimitsConfig {
+            login: default_login_rate_limit(),
+            token_exchange: default_token_exchange_rate_limit(),
+            per_ip: default_per_ip_rate_limit(),
+        }
+    }
+}
+
+/// Serde default for [`RateLimitsConfig::login`] (back-compat for older configs).
+fn default_login_rate_limit() -> LoginRateLimit {
+    LoginRateLimit {
+        max_failures: DEFAULT_LOGIN_MAX_FAILURES,
+        window_secs: DEFAULT_LOGIN_WINDOW_SECS,
+        block_secs: DEFAULT_LOGIN_BLOCK_SECS,
+    }
+}
+
+/// Serde default for [`RateLimitsConfig::token_exchange`] (back-compat for older configs).
+fn default_token_exchange_rate_limit() -> VolumeRateLimit {
+    VolumeRateLimit {
+        max_per_window: DEFAULT_TOKEN_MAX_PER_WINDOW,
+        window_secs: DEFAULT_TOKEN_WINDOW_SECS,
+        block_secs: DEFAULT_TOKEN_BLOCK_SECS,
+    }
+}
+
+/// Serde default for [`RateLimitsConfig::per_ip`] (back-compat for older configs).
+fn default_per_ip_rate_limit() -> VolumeRateLimit {
+    VolumeRateLimit {
+        max_per_window: DEFAULT_PER_IP_MAX_PER_WINDOW,
+        window_secs: DEFAULT_PER_IP_WINDOW_SECS,
+        block_secs: DEFAULT_PER_IP_BLOCK_SECS,
+    }
 }
 
 /// The whole configuration document.
@@ -599,6 +688,7 @@ impl Default for Config {
                 access_ttl_secs: DEFAULT_ACCESS_TTL_SECS,
                 refresh_ttl_secs: DEFAULT_REFRESH_TTL_SECS,
                 messaging_code_ttl_secs: DEFAULT_MESSAGING_CODE_TTL_SECS,
+                rate_limits: RateLimitsConfig::default(),
             },
             messaging: MessagingConfig::default(),
             branding: BrandingConfig::default(),
@@ -715,6 +805,44 @@ mod tests {
             ("nope".to_owned(), Value::from("x")),
         ]);
         assert!(Config::validate_custom_fields(&defs, &unknown).is_err());
+    }
+
+    #[test]
+    fn older_security_config_without_rate_limits_uses_defaults() {
+        // A stored `security` block from before rate limiting existed must still deserialize, with
+        // the new `rateLimits` filled from the built-in defaults (serde `#[serde(default)]`).
+        let json = r#"{
+            "minPasswordLength": 8,
+            "accessTtlSecs": 600,
+            "refreshTtlSecs": 2592000
+        }"#;
+        let security: SecuritySettings = serde_json::from_str(json).expect("deserializes");
+        assert_eq!(
+            security.rate_limits.login.max_failures,
+            DEFAULT_LOGIN_MAX_FAILURES
+        );
+        assert_eq!(
+            security.rate_limits.token_exchange.max_per_window,
+            DEFAULT_TOKEN_MAX_PER_WINDOW
+        );
+        assert_eq!(
+            security.rate_limits.per_ip.max_per_window,
+            DEFAULT_PER_IP_MAX_PER_WINDOW
+        );
+
+        // A partial `rateLimits` (only `login`) keeps the other policies at their defaults.
+        let partial = r#"{
+            "minPasswordLength": 8,
+            "accessTtlSecs": 600,
+            "refreshTtlSecs": 2592000,
+            "rateLimits": { "login": { "maxFailures": 3, "windowSecs": 60, "blockSecs": 120 } }
+        }"#;
+        let security: SecuritySettings = serde_json::from_str(partial).expect("deserializes");
+        assert_eq!(security.rate_limits.login.max_failures, 3);
+        assert_eq!(
+            security.rate_limits.per_ip.max_per_window,
+            DEFAULT_PER_IP_MAX_PER_WINDOW
+        );
     }
 
     #[test]

@@ -30,6 +30,27 @@ pub enum ApiKeyStatus {
     Revoked,
 }
 
+/// Per-key override of the global `tokenExchange` rate-limit policy (see `docs/API-KEYS.md`).
+/// Mainly used to **raise** the cap for a legitimate high-fanout backend, or to **disable** the
+/// per-key cap for a controlled public-token flow (the per-IP cap still applies). Any unset field
+/// falls back to the global `security.rateLimits.tokenExchange` value.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct KeyRateLimit {
+    /// When true, the per-key volume cap is switched off for this key entirely.
+    #[serde(default)]
+    pub disabled: bool,
+    /// Overrides `tokenExchange.maxPerWindow` for this key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_per_window: Option<u32>,
+    /// Overrides `tokenExchange.windowSecs` for this key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_secs: Option<u32>,
+    /// Overrides `tokenExchange.blockSecs` for this key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub block_secs: Option<u32>,
+}
+
 /// A persisted API key (metadata + secret hash).
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -64,6 +85,10 @@ pub struct ApiKey {
     /// Origins permitted to exchange this key (Mode 1); empty = unrestricted.
     #[serde(default)]
     pub allowed_origins: Vec<String>,
+    /// Optional per-key override of the `tokenExchange` rate-limit policy. `None` = use the global
+    /// policy (see [`KeyRateLimit`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_limit: Option<KeyRateLimit>,
     /// Optional expiry.
     pub expires_at: Option<DateTime<Utc>>,
     /// Last successful exchange.
@@ -86,6 +111,8 @@ pub struct NewApiKey {
     /// Whether the raw-secret exchange (Mode 1) is allowed; `false` ⇒ HMAC-only.
     pub allow_secret_login: bool,
     pub allowed_origins: Vec<String>,
+    /// Optional per-key rate-limit override (`None` = use the global `tokenExchange` policy).
+    pub rate_limit: Option<KeyRateLimit>,
     pub expires_at: Option<DateTime<Utc>>,
 }
 
@@ -166,6 +193,7 @@ impl ApiKeyRepository for DynamoApiKeyRepository {
             allow_secret_login: new_key.allow_secret_login,
             status: ApiKeyStatus::Active,
             allowed_origins: new_key.allowed_origins,
+            rate_limit: new_key.rate_limit,
             expires_at: new_key.expires_at,
             last_used_at: None,
             created: Utc::now(),

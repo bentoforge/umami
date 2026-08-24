@@ -45,6 +45,9 @@ umami is the identity boundary, not the application.
   the target is chosen per request (`/auth/refresh?api=…`), not pinned at login.
 - Two revocation levers: bump a user's `tokenVersion` (all sessions) or delete one session (one
   device).
+- **Rate limiting** on the auth endpoints — layered per-IP + per-API-key (`/auth/token` volume cap
+  to throttle non-caching clients) + per-account (`/auth/login` brute-force), fail-open, `429` +
+  `Retry-After`. Thresholds in the config `security.rateLimits` (see [docs/CONFIG.md](docs/CONFIG.md)).
 
 **Tenancy & authorization**
 - Tenant → users, with a **config-driven permission model**: subjects (`role:*`, `scope:*`,
@@ -121,10 +124,10 @@ cp .env.example .env
 cargo run --features pretty_logs
 ```
 
-> **One-time operational setup:** umami writes a numeric `ttl` on its `sessions` and `audit-log`
-> tables but does not enable the DynamoDB TTL itself — turn it on once per deployment (Terraform/
-> console) on **both** `<prefix>-sessions` and `<prefix>-audit-log`, attribute `ttl`, so expired rows
-> self-clean.
+> **One-time operational setup:** umami writes a numeric `ttl` on its `sessions`, `audit-log` and
+> `rate-limits` tables but does not enable the DynamoDB TTL itself — turn it on once per deployment
+> (Terraform/console) on `<prefix>-sessions`, `<prefix>-audit-log` and `<prefix>-rate-limits`,
+> attribute `ttl`, so expired rows self-clean.
 
 Build & checks:
 
@@ -177,6 +180,7 @@ the **system config document** (behavior — roles, features, APIs, security pol
 | `UMAMI_AUTO_INIT` | On an empty deployment, bootstrap a system tenant + owner (one-time password logged once). |
 | `UMAMI_ROOT_USERNAME` | Bootstrap owner username (default `root`). |
 | `UMAMI_AUDIT_RETENTION_DAYS` | Days an audit entry lives before its TTL expires it (default 365). |
+| `UMAMI_RATELIMIT_CACHE_CAP` | Per-node LRU size for known rate-limit blocks (default 50000); thresholds live in the config. |
 | `CORS_ALLOWED_ORIGINS` | Exact origins allowed to call umami cross-origin with credentials. |
 | `UMAMI_UI_DIR` | Directory of the built management SPA to serve under `/app` (absent ⇒ API-only). |
 

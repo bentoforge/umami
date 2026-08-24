@@ -69,7 +69,14 @@ Relevant environment variables:
 
 // SecuritySettings:
 { "minPasswordLength": 8, "accessTtlSecs": 600, "refreshTtlSecs": 2592000,
-  "messagingCodeTtlSecs": 600 }   // link-code validity window (single-use OTP)
+  "messagingCodeTtlSecs": 600,    // link-code validity window (single-use OTP)
+  "rateLimits": RateLimitsConfig } // auth-endpoint rate limits (see §8)
+
+// RateLimitsConfig — all three policies optional (older configs keep loading); a policy's
+//   max (maxFailures / maxPerWindow) of 0 disables it (e.g. run per-IP only):
+{ "login":         { "maxFailures": 5,   "windowSecs": 300, "blockSecs": 900 },
+  "tokenExchange": { "maxPerWindow": 60,  "windowSecs": 60,  "blockSecs": 300 },
+  "perIp":         { "maxPerWindow": 300, "windowSecs": 60,  "blockSecs": 300 } }
 
 // MessagingConfig — either/both optional; when set, /auth/me/messaging-code returns deep links
 //   and every token gets the is:messaging-configured marker:
@@ -207,7 +214,12 @@ feature/scope and a product-API entry with eligibility + claims. Copy, adjust, `
     "minPasswordLength": 8,
     "accessTtlSecs": 600,
     "refreshTtlSecs": 2592000,
-    "messagingCodeTtlSecs": 600
+    "messagingCodeTtlSecs": 600,
+    "rateLimits": {
+      "login":         { "maxFailures": 5,   "windowSecs": 300, "blockSecs": 900 },
+      "tokenExchange": { "maxPerWindow": 60,  "windowSecs": 60,  "blockSecs": 300 },
+      "perIp":         { "maxPerWindow": 300, "windowSecs": 60,  "blockSecs": 300 }
+    }
   },
   "messaging": { "telegramBot": "my_link_bot", "whatsappNumber": "4915112345678" },
   "apis": [
@@ -259,3 +271,48 @@ feature/scope and a product-API entry with eligibility + claims. Copy, adjust, `
 
 See [PERMISSIONS.md](PERMISSIONS.md) for the DSL and mint flow, and the module docs in
 [`src/messaging`](../src/messaging) for the link/resolve endpoints.
+
+---
+
+## 8. Rate limiting
+
+`security.rateLimits` bounds the unauthenticated auth endpoints. It is a **layered** design (all
+policies configurable; set a policy's `max` to `0` to disable it and run, say, per-IP only):
+
+| Policy | Subject | Endpoint(s) | Counts | Reset on success | Purpose |
+|--------|---------|-------------|--------|------------------|---------|
+| `perIp` | client IP, **per endpoint** | `/auth/login`, `/auth/token` (+ webauthn login-finish) | all requests | no | the primary blunt instrument — caps a dumb loop / flood from one IP |
+| `tokenExchange` | API key id | `/auth/token` | all exchanges (incl. successful) | no | a **volume/quota** cap catching one key hammering across many IPs |
+| `login` | resolved **user id** | `/auth/login` | **failed** attempts only | **yes** | brute-force protection |
+
+Why layered rather than per-IP alone: per-IP is generous by necessity (NAT/CGNAT puts many real
+users behind one address), so it can't catch a single key spread across many IPs (→ `tokenExchange`)
+or a distributed brute-force with few tries per IP (→ `login`).
+
+The `login` cap keys on the **resolved user id**, not the submitted username, so it tracks a real
+account regardless of how the username was typed. Login resolves the account first, then applies the
+cap; the per-IP cap (checked before the lookup) is what bounds the cost of that resolve, so an
+attacker cannot turn the lookup into a DoS. Attempts against unknown/inactive usernames get no
+per-account counter (there is nothing to key on) and are covered by the per-IP cap alone.
+
+Fields: `login` uses `maxFailures`; `tokenExchange`/`perIp` use `maxPerWindow`. All take
+`windowSecs` (the counting window) and `blockSecs` (how long a tripped subject is blocked — may
+exceed the window). Defaults are tuned so a well-behaved client that **caches** the short-lived
+access token (~`accessTtlSecs`) sits far below the limits, while a client that re-exchanges on every
+call trips almost immediately.
+
+Mechanics & guarantees:
+
+- **Storage:** DynamoDB (`<DYNAMO_TABLE_PREFIX>-rate-limits`), behind a `RateLimitRepository` trait
+  so the backend is swappable. Counters use an atomic `ADD` (fixed window); each row carries a
+  numeric `ttl` so DynamoDB self-cleans — **enable the table TTL out-of-band**, like the other TTL
+  tables (see `.env.example`).
+- **Response:** a uniform `429 Too Many Requests` + `Retry-After`, with a generic body (no
+  account-existence leak).
+- **Fail-open:** if the store is unavailable, umami **allows** auth (it never DoSes itself) and logs
+  loudly; a per-node bounded LRU still short-circuits already-known blocks with zero store traffic.
+- **Per-key override:** a service key may carry a `rateLimit` overriding `tokenExchange` — to raise
+  the cap for a legit high-fanout backend, or disable the per-key cap for a controlled public-token
+  flow (the per-IP cap still applies). See [API-KEYS.md](API-KEYS.md).
+- **Env:** only the LRU cache size is env (`UMAMI_RATELIMIT_CACHE_CAP`, default 50000); thresholds
+  live here in the config.

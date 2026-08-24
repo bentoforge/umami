@@ -109,3 +109,35 @@ pub const DEFAULT_REFRESH_TTL_SECS: u64 = 30 * 24 * 60 * 60;
 /// Default validity window for a messaging link code (10 min). A code older than this is treated as
 /// expired: the self endpoint rotates it, and the machine link endpoint rejects it.
 pub const DEFAULT_MESSAGING_CODE_TTL_SECS: u64 = 600;
+
+// ── Rate-limit defaults (config `security.rateLimits`; overridable per-config) ──
+//
+// Chosen so a well-behaved token-caching client (≈6 exchanges/hour) sits far below the token
+// exchange cap while a >1/s dumb loop trips within ~1s. See `docs/CONFIG.md`. A policy `max` of 0
+// disables that policy.
+
+/// Default `login.maxFailures` — failed password attempts (per account) before a login block.
+pub const DEFAULT_LOGIN_MAX_FAILURES: u32 = 5;
+/// Default `login.windowSecs` — the failure-count window (5 min); a success resets the counter.
+pub const DEFAULT_LOGIN_WINDOW_SECS: u32 = 300;
+/// Default `login.blockSecs` — how long an account stays blocked after too many failures (15 min).
+pub const DEFAULT_LOGIN_BLOCK_SECS: u32 = 900;
+
+/// Default `tokenExchange.maxPerWindow` — per-key `/auth/token` exchanges per window.
+pub const DEFAULT_TOKEN_MAX_PER_WINDOW: u32 = 60;
+/// Default `tokenExchange.windowSecs` — the per-key exchange window (1 min).
+pub const DEFAULT_TOKEN_WINDOW_SECS: u32 = 60;
+/// Default `tokenExchange.blockSecs` — how long a hammering key stays blocked (5 min).
+pub const DEFAULT_TOKEN_BLOCK_SECS: u32 = 300;
+
+/// Default `perIp.maxPerWindow` — requests per client IP **per endpoint** per window.
+pub const DEFAULT_PER_IP_MAX_PER_WINDOW: u32 = 300;
+/// Default `perIp.windowSecs` — the per-IP window (1 min → 5 req/s).
+pub const DEFAULT_PER_IP_WINDOW_SECS: u32 = 60;
+/// Default `perIp.blockSecs` — how long an IP stays blocked after flooding an endpoint (5 min).
+pub const DEFAULT_PER_IP_BLOCK_SECS: u32 = 300;
+
+/// Default upper bound on the per-node in-memory LRU block cache (distinct blocked subjects held in
+/// memory). Bounded so many distinct IPs cannot memory-DoS a node. Override with
+/// `UMAMI_RATELIMIT_CACHE_CAP`.
+pub const DEFAULT_RATELIMIT_CACHE_CAP: usize = 50_000;

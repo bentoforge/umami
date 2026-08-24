@@ -45,6 +45,7 @@ rand = "0.9"                   # refresh-secret generation
 sha2 = "0.10"                  # refresh-secret hashing
 hmac = "0.12"                  # API-key "Mode 2" HMAC proof-of-possession
 subtle = "2.6"                 # constant-time secret comparison
+lru = "0.18"                   # bounded per-node LRU cache of known rate-limit blocks
 base64 = "0.22"
 cookie = "0.18"                # HttpOnly refresh cookie build/parse
 totp-rs = { version = "5", features = ["gen_secret", "otpauth"] }  # TOTP MFA

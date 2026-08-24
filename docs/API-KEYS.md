@@ -110,6 +110,34 @@ rate-limited. Least code on the "dumb server" (hold key → POST over TLS → re
 - The exchange accepts either the raw `apiKey` (Mode 1, only if `allowSecretLogin`) **or** the
   signed form `keyId` + `mac` (Mode 2) — see above.
 - Exchange enforces `allowedOrigins` (when set) and `allowSecretLogin`.
+- `api-keys` carries an optional `rateLimit` (see below).
+
+## Rate limiting the exchange
+
+`POST /auth/token` is rate-limited on two axes (thresholds in `security.rateLimits`, see
+[CONFIG.md §8](CONFIG.md#8-rate-limiting)):
+
+- **Per IP** (`perIp`) — all exchange attempts from one client IP, valid or not; the blunt brake on
+  a flood.
+- **Per key** (`tokenExchange`) — all exchanges for one `keyId`, **including successful ones**. This
+  is a **volume/quota** cap: it is what stops a "dumb" client that re-exchanges the key on *every*
+  API call (100k calls → 100k exchanges) instead of caching the short-lived access token until it
+  expires. A token-caching client (~a handful of exchanges per hour) never approaches it.
+
+On a trip the exchange returns **`429 Too Many Requests` + `Retry-After`**. If the rate-limit store
+is unavailable the exchange is **allowed** (fail-open) — the cap never DoSes legitimate clients.
+
+**Per-key override** — a service key may carry an optional `rateLimit` overriding the global
+`tokenExchange` policy (set at creation via `POST /tenants/{id}/api-keys`):
+
+```jsonc
+"rateLimit": { "disabled": false, "maxPerWindow": 5000, "windowSecs": 60, "blockSecs": 300 }
+```
+
+Any unset field falls back to the global value. Use it to **raise** the cap for a legitimate
+high-fanout backend, or `"disabled": true` to switch the per-key cap off for a controlled
+public-token flow. The **per-IP** cap always still applies (defense in depth). PATs use the global
+policy (no override at self-service creation).
 
 ## Endpoints
 
@@ -123,4 +151,3 @@ rate-limited. Least code on the "dumb server" (hold key → POST over TLS → re
 
 - Promoting keys to full **service-account users** (profile, richer identity) — v1 keeps keys
   lightweight (tenantId + scopes on the key).
-- Per-key (not just per-tenant) rate limits, if needed later.

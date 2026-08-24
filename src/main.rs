@@ -64,6 +64,8 @@ use crate::auth::me::{
     change_password_route, delete_session_route, logout_all_route, me_route, patch_me_route,
     sessions_route,
 };
+use crate::auth::ratelimit::RateLimiter;
+use crate::auth::ratelimit::repository::{DynamoRateLimitRepository, RateLimitRepository};
 use crate::auth::secretbox::SecretBox;
 use crate::auth::session::repository::DynamoSessionRepository;
 use crate::auth::switch_tenant::switch_tenant_route;
@@ -171,6 +173,11 @@ async fn app() -> anyhow::Result<()> {
         Arc::new(DynamoAuditRepository::with_client(&dynamo_client).await?);
     let messaging_repository: Arc<dyn MessagingRepository> =
         Arc::new(DynamoMessagingRepository::with_client(&dynamo_client).await?);
+    let rate_limit_repository: Arc<dyn RateLimitRepository> =
+        Arc::new(DynamoRateLimitRepository::with_client(&dynamo_client).await?);
+    // Rate limiter (per-node LRU block cache in front of the store) guarding /auth/login and
+    // /auth/token; the LRU size is `UMAMI_RATELIMIT_CACHE_CAP`, thresholds live in the config.
+    let rate_limiter = Arc::new(RateLimiter::from_env(rate_limit_repository));
 
     // Signing keys behind a repository trait so the issuer and JWKS route depend only on the trait,
     // not on where keys come from. Currently env-backed (`EnvKeyRepository`).
@@ -211,6 +218,7 @@ async fn app() -> anyhow::Result<()> {
         config_repository.clone(),
         mfa.clone(),
         audit_repository.clone(),
+        rate_limiter.clone(),
     )?;
 
     // The system tenant whose members may administer all tenants (they get the `is:system-tenant`
@@ -299,6 +307,7 @@ async fn app() -> anyhow::Result<()> {
             config_repository.clone(),
             token_issuer.clone(),
             audit_repository.clone(),
+            rate_limiter.clone(),
             system_tenant_id.clone()
         ),
         // tenant service keys (manage:service-keys)

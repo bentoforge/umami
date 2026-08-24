@@ -10,21 +10,25 @@ use crate::audit::repository::{AuditRepository, record_best_effort};
 use crate::audit::{AuditSeverity, NewAuditEntry};
 use crate::auth::AuthContext;
 use crate::auth::login::issue_session;
+use crate::auth::ratelimit::{Decision, Policy, too_many_requests};
 use crate::auth::webauthn::repository::WebauthnRepository;
 use crate::constants::MAX_TEXT_BODY_SIZE;
 use crate::users::repository::UserRepository;
 use anyhow::{Context, anyhow};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::env;
 use std::sync::Arc;
 use warp::Filter;
+use warp::Reply;
 use warp::filters::BoxedFilter;
 use warp::http::StatusCode;
 use warp::http::header::SET_COOKIE;
+use warp::reply::Response;
 use wasabi::aws::dynamodb::generate_id;
 use wasabi::status_bail;
 use wasabi::web::auth::authenticator::Authenticator;
@@ -314,13 +318,32 @@ async fn handle_login_finish(
     webauthn: Arc<dyn WebauthnRepository>,
     user_agent: Option<String>,
     ip: Option<String>,
-) -> Result<impl warp::Reply, warp::Rejection> {
+) -> Result<Response, warp::Rejection> {
+    // Per-IP volume cap on login attempts (shared "perIp:login" budget with password login).
+    // Passkeys are public-key challenges, so there is no per-account brute-force counter here.
+    if let Some(ip) = ip.as_deref() {
+        let config = context.config.current().await.map_err(into_rejection)?;
+        let limits = &config.security.rate_limits;
+        let per_ip = Policy::new(
+            limits.per_ip.max_per_window,
+            limits.per_ip.window_secs,
+            limits.per_ip.block_secs,
+        );
+        if let Decision::Block { retry_after } = context
+            .rate_limiter
+            .check("perIp:login", &per_ip, ip, Utc::now())
+            .await
+        {
+            return Ok(too_many_requests(retry_after));
+        }
+    }
+
     match login_finish(request, &context, service, webauthn, user_agent, ip).await {
         Ok((access_token, set_cookie)) => {
             let body = json!({ "accessToken": access_token, "tenants": [] });
             let reply = warp::reply::json(&body);
             let reply = warp::reply::with_header(reply, SET_COOKIE, set_cookie);
-            Ok(warp::reply::with_status(reply, StatusCode::OK))
+            Ok(warp::reply::with_status(reply, StatusCode::OK).into_response())
         }
         Err(err) => Err(into_rejection(err)),
     }

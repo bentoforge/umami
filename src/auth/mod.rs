@@ -8,6 +8,7 @@ pub mod cookies;
 pub mod login;
 pub mod me;
 pub mod password;
+pub mod ratelimit;
 pub mod secretbox;
 pub mod session;
 pub mod switch_tenant;
@@ -16,6 +17,7 @@ pub mod totp;
 pub mod webauthn;
 
 use crate::audit::repository::AuditRepository;
+use crate::auth::ratelimit::RateLimiter;
 use crate::auth::secretbox::SecretBox;
 use crate::auth::session::repository::SessionRepository;
 use crate::auth::tokens::TokenIssuer;
@@ -42,6 +44,8 @@ pub struct AuthContext {
     pub mfa: Arc<SecretBox>,
     /// Append-only security audit trail (login success/failure, refresh reuse, …).
     pub audit: Arc<dyn AuditRepository>,
+    /// Rate limiter guarding `POST /auth/login` (per-IP volume + per-account brute-force).
+    pub rate_limiter: Arc<RateLimiter>,
     /// The configured system tenant (`UMAMI_SYSTEM_TENANT_ID`); a token minted for this tenant gets
     /// the `is:system-tenant` synthetic marker.
     pub system_tenant_id: Option<String>,
@@ -52,6 +56,7 @@ pub struct AuthContext {
 impl AuthContext {
     /// Assembles the context from its repositories/issuer/config/mfa plus `UMAMI_COOKIE_DOMAIN`.
     /// Access/refresh lifetimes come from the config `security` settings, not env.
+    #[allow(clippy::too_many_arguments)]
     pub fn from_env(
         users: Arc<dyn UserRepository>,
         tenants: Arc<dyn TenantRepository>,
@@ -60,6 +65,7 @@ impl AuthContext {
         config: Arc<dyn ConfigRepository>,
         mfa: Arc<SecretBox>,
         audit: Arc<dyn AuditRepository>,
+        rate_limiter: Arc<RateLimiter>,
     ) -> anyhow::Result<Self> {
         let cookie_domain = env::var("UMAMI_COOKIE_DOMAIN")
             .ok()
@@ -76,6 +82,7 @@ impl AuthContext {
             config,
             mfa,
             audit,
+            rate_limiter,
             system_tenant_id,
             cookie_domain,
         })

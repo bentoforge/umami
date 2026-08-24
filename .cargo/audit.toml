@@ -17,4 +17,13 @@ ignore = [
     # the patched 0.8.17. Drop this ignore once rust_decimal releases a version referencing rkyv
     # >= 0.8.17.
     "RUSTSEC-2026-0235",
+
+    # RUSTSEC-2026-0253 — lru 0.16.4 potential use-after-free (panic safety in `LruCache::pop()`).
+    #
+    # This is a *transitive* copy of `lru` pulled in by `aws-sdk-s3` (→ wasabi-core → wasabi), not
+    # umami's own use. umami's direct dependency is `lru = "0.18"`, which resolves to the patched
+    # 0.18.2 (our rate-limit block cache runs on that version), so umami's own `pop()` calls are not
+    # affected. The vulnerable 0.16.4 is internal to the AWS SDK and cannot be bumped from here.
+    # Drop this ignore once aws-sdk-s3 upgrades its `lru` to >= 0.18.
+    "RUSTSEC-2026-0253",
 ]

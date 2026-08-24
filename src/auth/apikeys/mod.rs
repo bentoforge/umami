@@ -18,8 +18,10 @@ pub mod repository;
 use crate::audit::repository::{AuditRepository, record_best_effort};
 use crate::audit::{AuditSeverity, NewAuditEntry};
 use crate::auth::broker::{MintParams, mint_for_api};
+use crate::auth::ratelimit::{Decision, Policy, RateLimiter, too_many_requests};
 use crate::auth::session::{generate_refresh_secret, hash_refresh_secret, verify_refresh_secret};
 use crate::auth::tokens::TokenIssuer;
+use crate::config::VolumeRateLimit;
 use crate::config::repository::ConfigRepository;
 use crate::constants::{
     MANAGE_PAT_PERMISSION, MANAGE_SERVICE_KEYS_PERMISSION, MANAGE_USERS_PERMISSION,
@@ -32,7 +34,7 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::{DateTime, Utc};
 use hmac::{Hmac, Mac};
-use repository::{ApiKey, ApiKeyRepository, ApiKeyStatus, NewApiKey};
+use repository::{ApiKey, ApiKeyRepository, ApiKeyStatus, KeyRateLimit, NewApiKey};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::Sha256;
@@ -41,11 +43,15 @@ use subtle::ConstantTimeEq;
 use warp::Filter;
 use warp::filters::BoxedFilter;
 use warp::http::StatusCode;
+use warp::http::header::{CONTENT_TYPE, HeaderValue};
+use warp::reply::Response;
 use wasabi::aws::dynamodb::generate_id;
 use wasabi::web::auth::authenticator::Authenticator;
 use wasabi::web::auth::user::User as AuthUser;
 use wasabi::web::auth::with_user_with_any_permission;
-use wasabi::web::warp::{into_response, with_body_as_json, with_cloneable};
+use wasabi::web::warp::{
+    client_ip, into_rejection, into_response, with_body_as_json, with_cloneable,
+};
 use wasabi::{client_bail, status_bail};
 
 /// Prefix identifying an umami API key (helps secret scanners detect leaks).
@@ -133,6 +139,18 @@ struct ExchangeResponse {
     expires_in: i64,
 }
 
+/// Outcome of an exchange attempt: either a minted token, or a rate-limit block (translated by the
+/// handler into `429 Too Many Requests` + `Retry-After`).
+enum ExchangeOutcome {
+    /// A token was issued.
+    Ok(ExchangeResponse),
+    /// The request was rate-limited; `retry_after` is the advertised delay in seconds.
+    RateLimited {
+        /// Seconds until the block lifts.
+        retry_after: i64,
+    },
+}
+
 /// Request body for creating a tenant **service** key (a machine principal).
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -143,6 +161,8 @@ struct CreateApiKeyRequest {
     /// Whether the raw-secret (Mode 1) exchange is allowed; omitted/false ⇒ HMAC-only (Mode 2).
     allow_secret_login: Option<bool>,
     allowed_origins: Option<Vec<String>>,
+    /// Optional per-key override of the global `tokenExchange` rate-limit policy.
+    rate_limit: Option<KeyRateLimit>,
     expires_at: Option<DateTime<Utc>>,
 }
 
@@ -179,6 +199,8 @@ struct ApiKeyView {
     allow_secret_login: bool,
     status: ApiKeyStatus,
     allowed_origins: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rate_limit: Option<KeyRateLimit>,
     expires_at: Option<DateTime<Utc>>,
     last_used_at: Option<DateTime<Utc>>,
     created: DateTime<Utc>,
@@ -196,6 +218,7 @@ impl From<ApiKey> for ApiKeyView {
             allow_secret_login: key.allow_secret_login,
             status: key.status,
             allowed_origins: key.allowed_origins,
+            rate_limit: key.rate_limit,
             expires_at: key.expires_at,
             last_used_at: key.last_used_at,
             created: key.created,
@@ -221,6 +244,7 @@ pub fn exchange_route(
     config: Arc<dyn ConfigRepository>,
     tokens: Arc<TokenIssuer>,
     audit: Arc<dyn AuditRepository>,
+    rate_limiter: Arc<RateLimiter>,
     system_tenant_id: Option<String>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("auth" / "token")
@@ -232,8 +256,10 @@ pub fn exchange_route(
         .and(with_cloneable(config))
         .and(with_cloneable(tokens))
         .and(with_cloneable(audit))
+        .and(with_cloneable(rate_limiter))
         .and(with_cloneable(system_tenant_id))
         .and(warp::header::optional::<String>("origin"))
+        .and(client_ip())
         .and_then(handle_exchange_route)
         .boxed()
 }
@@ -371,23 +397,43 @@ async fn handle_exchange_route(
     config: Arc<dyn ConfigRepository>,
     tokens: Arc<TokenIssuer>,
     audit: Arc<dyn AuditRepository>,
+    rate_limiter: Arc<RateLimiter>,
     system_tenant_id: Option<String>,
     origin: Option<String>,
-) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(
-        exchange(
-            request,
-            keys,
-            users,
-            tenants,
-            config,
-            tokens,
-            audit,
-            system_tenant_id,
-            origin,
-        )
-        .await,
+    ip: Option<String>,
+) -> Result<Response, warp::Rejection> {
+    match exchange(
+        request,
+        keys,
+        users,
+        tenants,
+        config,
+        tokens,
+        audit,
+        rate_limiter,
+        system_tenant_id,
+        origin,
+        ip,
     )
+    .await
+    {
+        // A blocked exchange returns 429 + Retry-After directly (the anyhow/ApiError path can't
+        // carry a header), bypassing `into_response`.
+        Ok(ExchangeOutcome::RateLimited { retry_after }) => Ok(too_many_requests(retry_after)),
+        Ok(ExchangeOutcome::Ok(response)) => match serde_json::to_vec(&response) {
+            Ok(bytes) => {
+                let mut reply = Response::new(bytes.into());
+                let _ = reply
+                    .headers_mut()
+                    .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+                Ok(reply)
+            }
+            Err(err) => Err(into_rejection(
+                anyhow::Error::new(err).context("Failed to serialize exchange response"),
+            )),
+        },
+        Err(err) => Err(into_rejection(err)),
+    }
 }
 
 #[tracing::instrument(level = "debug", name = "POST /auth/me/api-keys", skip_all)]
@@ -511,9 +557,30 @@ async fn exchange(
     config: Arc<dyn ConfigRepository>,
     tokens: Arc<TokenIssuer>,
     audit: Arc<dyn AuditRepository>,
+    rate_limiter: Arc<RateLimiter>,
     system_tenant_id: Option<String>,
     origin: Option<String>,
-) -> anyhow::Result<ExchangeResponse> {
+    ip: Option<String>,
+) -> anyhow::Result<ExchangeOutcome> {
+    let now = Utc::now();
+    let config = config.current().await?;
+    let limits = &config.security.rate_limits;
+
+    // Per-IP volume cap (the blunt instrument): count *every* hit on this endpoint, blocking a
+    // flooding IP regardless of whether its keys are valid. Skipped when the IP is unknown.
+    if let Some(ip) = ip.as_deref() {
+        let per_ip = Policy::new(
+            limits.per_ip.max_per_window,
+            limits.per_ip.window_secs,
+            limits.per_ip.block_secs,
+        );
+        if let Decision::Block { retry_after } =
+            rate_limiter.check("perIp:token", &per_ip, ip, now).await
+        {
+            return Ok(ExchangeOutcome::RateLimited { retry_after });
+        }
+    }
+
     // Resolve the key id from whichever auth method the caller used (Mode 1: parse it out of the
     // raw key; Mode 2: it's supplied directly). Uniform "invalid key" for every failure so we don't
     // reveal which keys exist.
@@ -573,11 +640,21 @@ async fn exchange(
         }
     }
 
+    // Per-key volume cap: catches one key hammering across many IPs (which per-IP alone can't see).
+    // Applied only after possession is verified, so it counts *real* exchanges (the quota use-case),
+    // and honors the key's optional override (raise, or disable for a controlled public-token flow).
+    let key_policy = effective_token_policy(&limits.token_exchange, key.rate_limit.as_ref());
+    if let Decision::Block { retry_after } = rate_limiter
+        .check("tokenExchange", &key_policy, &key.key_id, now)
+        .await
+    {
+        return Ok(ExchangeOutcome::RateLimited { retry_after });
+    }
+
     // Pick the target API from the `api` param (default `umami`) — keys are not pinned to an
     // audience; the requested audience is still bounded by the key's scopes + the API's eligibility.
     let api_code = request.api.as_deref().unwrap_or("umami").to_owned();
 
-    let config = config.current().await?;
     let access_ttl_secs = config.security.access_ttl_secs as i64;
 
     let is_system = |tenant: &str| system_tenant_id.as_deref() == Some(tenant);
@@ -677,10 +754,24 @@ async fn exchange(
     )
     .await;
 
-    Ok(ExchangeResponse {
+    Ok(ExchangeOutcome::Ok(ExchangeResponse {
         access_token,
         expires_in: access_ttl_secs,
-    })
+    }))
+}
+
+/// Builds the effective per-key `tokenExchange` policy: the key's optional override raises/replaces
+/// the global values (any unset field falls back to global), or disables the per-key cap entirely.
+fn effective_token_policy(global: &VolumeRateLimit, override_: Option<&KeyRateLimit>) -> Policy {
+    match override_ {
+        Some(over) if over.disabled => Policy::new(0, global.window_secs, global.block_secs),
+        Some(over) => Policy::new(
+            over.max_per_window.unwrap_or(global.max_per_window),
+            over.window_secs.unwrap_or(global.window_secs),
+            over.block_secs.unwrap_or(global.block_secs),
+        ),
+        None => Policy::new(global.max_per_window, global.window_secs, global.block_secs),
+    }
 }
 
 /// Resolves a tenant's authorization feature set for the broker (empty when the tenant is gone).
@@ -739,6 +830,7 @@ async fn create_api_key(
         scopes,
         allow_secret_login: request.allow_secret_login.unwrap_or(false),
         allowed_origins: request.allowed_origins.unwrap_or_default(),
+        rate_limit: request.rate_limit,
         expires_at: request.expires_at,
     })
     .await
@@ -815,6 +907,8 @@ async fn create_my_pat(
         // enabled — the `allowSecretLogin` toggle is a service-key concern only.
         allow_secret_login: true,
         allowed_origins: Vec::new(),
+        // PATs use the global per-key exchange policy; no per-key override at self-service creation.
+        rate_limit: None,
         expires_at: request.expires_at,
     })
     .await

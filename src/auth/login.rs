@@ -10,6 +10,7 @@ use crate::auth::AuthContext;
 use crate::auth::broker::{MintParams, mint_for_api};
 use crate::auth::cookies::{build_refresh_cookie, clear_refresh_cookie, parse_refresh_cookie};
 use crate::auth::password;
+use crate::auth::ratelimit::{Decision, Policy, too_many_requests};
 use crate::auth::session::repository::NewSession;
 use crate::auth::session::{generate_refresh_secret, hash_refresh_secret, verify_refresh_secret};
 use crate::config::Config;
@@ -68,6 +69,23 @@ struct LoginResponse {
     tenants: Vec<String>,
 }
 
+/// Outcome of a login attempt: a normal response (success or MFA challenge), or a rate-limit block
+/// translated by the handler into `429 Too Many Requests` + `Retry-After`.
+enum LoginOutcome {
+    /// A normal login response with its optional `Set-Cookie`.
+    Response {
+        /// The JSON body (success token or MFA challenge).
+        body: LoginResponse,
+        /// The refresh cookie on the success path; `None` for an MFA challenge.
+        set_cookie: Option<String>,
+    },
+    /// The attempt was rate-limited; `retry_after` is the advertised delay in seconds.
+    RateLimited {
+        /// Seconds until the block lifts.
+        retry_after: i64,
+    },
+}
+
 // ── Routes ──────────────────────────────────────────────────────────────────────
 
 /// `POST /auth/login` — password login; sets the refresh cookie, returns an access token.
@@ -116,12 +134,15 @@ async fn handle_login_route(
     ip: Option<String>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
     match login(&context, request, user_agent, ip).await {
-        Ok((body, set_cookie)) => {
+        Ok(LoginOutcome::Response { body, set_cookie }) => {
             match json_with_optional_cookie(StatusCode::OK, &body, set_cookie) {
                 Ok(reply) => Ok(reply),
                 Err(err) => Err(into_rejection(err)),
             }
         }
+        // A blocked attempt returns 429 + Retry-After directly (the ApiError path can't carry a
+        // header), bypassing `json_with_optional_cookie`.
+        Ok(LoginOutcome::RateLimited { retry_after }) => Ok(too_many_requests(retry_after)),
         Err(err) => Err(into_rejection(err)),
     }
 }
@@ -237,9 +258,38 @@ async fn login(
     request: LoginRequest,
     user_agent: Option<String>,
     ip: Option<String>,
-) -> anyhow::Result<(LoginResponse, Option<String>)> {
+) -> anyhow::Result<LoginOutcome> {
     // Clone for the audit records: `ip` itself is moved into `issue_session` on the success path.
     let audit_ip = ip.clone();
+
+    // Rate limiting. The per-IP volume cap (all attempts) is checked first — it is the DoS guard for
+    // the user lookup below, so we can afford to resolve the account before applying the per-account
+    // brute-force cap. The per-account cap is keyed on the stable **user id** (not the username), and
+    // therefore only applies to a real account; floods against unknown usernames are absorbed by the
+    // per-IP cap. Everything is fail-open (a rate-limit-store outage never blocks login).
+    let now = Utc::now();
+    let config = context.config.current().await?;
+    let limits = &config.security.rate_limits;
+    let per_ip = Policy::new(
+        limits.per_ip.max_per_window,
+        limits.per_ip.window_secs,
+        limits.per_ip.block_secs,
+    );
+    let login_policy = Policy::new(
+        limits.login.max_failures,
+        limits.login.window_secs,
+        limits.login.block_secs,
+    );
+
+    if let Some(ip) = audit_ip.as_deref()
+        && let Decision::Block { retry_after } = context
+            .rate_limiter
+            .check("perIp:login", &per_ip, ip, now)
+            .await
+    {
+        return Ok(LoginOutcome::RateLimited { retry_after });
+    }
+
     // Uniform "invalid credentials" for unknown username / wrong password / inactive account, so we
     // don't reveal which users exist.
     let user = match context.users.find_by_username(&request.username).await? {
@@ -259,9 +309,21 @@ async fn login(
                 .with_ip(audit_ip.clone()),
             )
             .await;
+            // No per-account counter here — there is no account to key on; the per-IP cap covers
+            // floods against unknown/inactive usernames.
             status_bail!(StatusCode::UNAUTHORIZED, "Invalid username or password");
         }
     };
+
+    // Per-account brute-force block, keyed on the resolved user id and checked before the (expensive)
+    // password verification.
+    if let Decision::Block { retry_after } = context
+        .rate_limiter
+        .is_blocked("login", &login_policy, &user.user_id, now)
+        .await
+    {
+        return Ok(LoginOutcome::RateLimited { retry_after });
+    }
 
     let bad = |message: String| {
         NewAuditEntry::new(
@@ -281,12 +343,20 @@ async fn login(
                 bad("Login failed: account has no password".into()),
             )
             .await;
+            let _ = context
+                .rate_limiter
+                .record_failure("login", &login_policy, &user.user_id, now)
+                .await;
             status_bail!(StatusCode::UNAUTHORIZED, "Invalid username or password");
         }
     };
 
     if !password::verify(&request.password, password_hash)? {
         record_best_effort(&context.audit, bad("Login failed: wrong password".into())).await;
+        let _ = context
+            .rate_limiter
+            .record_failure("login", &login_policy, &user.user_id, now)
+            .await;
         status_bail!(StatusCode::UNAUTHORIZED, "Invalid username or password");
     }
 
@@ -296,14 +366,16 @@ async fn login(
         let code = match request.totp_code.as_deref() {
             Some(code) if !code.is_empty() => code,
             _ => {
-                return Ok((
-                    LoginResponse {
+                // Correct password, second factor still pending — neither a failure nor a success,
+                // so the brute-force counter is left untouched.
+                return Ok(LoginOutcome::Response {
+                    body: LoginResponse {
                         mfa_required: true,
                         access_token: None,
                         tenants: Vec::new(),
                     },
-                    None,
-                ));
+                    set_cookie: None,
+                });
             }
         };
         if !crate::auth::totp::verify_encrypted_totp(
@@ -317,6 +389,10 @@ async fn login(
                 bad("Login failed: invalid TOTP code".into()),
             )
             .await;
+            let _ = context
+                .rate_limiter
+                .record_failure("login", &login_policy, &user.user_id, now)
+                .await;
             status_bail!(StatusCode::UNAUTHORIZED, "Invalid TOTP code");
         }
     }
@@ -324,6 +400,12 @@ async fn login(
     // If the account has TOTP, we only reach here after verifying it above — so a present secret
     // means this login was TOTP-secured. (Password login never involves a passkey.)
     let mfa_totp = user.totp_secret.is_some();
+
+    // Credentials (and any second factor) verified — clear the account's failure counter/block.
+    context
+        .rate_limiter
+        .record_success("login", &login_policy, &user.user_id)
+        .await;
 
     // Default to the umami admin API when the caller didn't request a specific target.
     let api_code = request.api.as_deref().unwrap_or("umami");
@@ -342,14 +424,14 @@ async fn login(
     )
     .await;
 
-    Ok((
-        LoginResponse {
+    Ok(LoginOutcome::Response {
+        body: LoginResponse {
             mfa_required: false,
             access_token: Some(access_token),
             tenants: Vec::new(),
         },
-        Some(set_cookie),
-    ))
+        set_cookie: Some(set_cookie),
+    })
 }
 
 /// Creates a session and issues an access token + refresh cookie for an already-authenticated user.
