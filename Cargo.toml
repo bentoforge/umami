@@ -49,6 +49,7 @@ lru = "0.18"                   # bounded per-node LRU cache of known rate-limit 
 base64 = "0.22"
 cookie = "0.18"                # HttpOnly refresh cookie build/parse
 totp-rs = { version = "5", features = ["gen_secret", "otpauth"] }  # TOTP MFA
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }  # QR for TOTP enrolment (SVG only, no image deps)
 aes-gcm = "0.10"               # encrypt the TOTP secret at rest (AES-256-GCM)
 # WebAuthn/FIDO2 (passkeys + hardware keys). The state-serialisation feature lets us persist the
 # short-lived ceremony state server-side (in a TTL'd table) between start and finish.

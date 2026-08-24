@@ -142,7 +142,8 @@
     "totpCode": "6-stelliger Code",
     "totpActivate": "Aktivieren",
     "totpDisable": "Deaktivieren",
-    "totpDisableHint": "Gib einen aktuellen Code ein, um die Authenticator-App zu deaktivieren."
+    "totpDisableHint": "Gib einen aktuellen Code ein, um die Authenticator-App zu deaktivieren.",
+    "totpQrAlt": "QR-Code für die Authenticator-App"
   },
   "audit": {
     "title": "Audit-Log",

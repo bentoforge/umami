@@ -59,6 +59,8 @@ export interface TotpSetup {
   secret: string;
   /** `otpauth://` URL for QR rendering. */
   otpauthUrl: string;
+  /** Ready-to-render QR-code SVG of `otpauthUrl` (dark on white). */
+  qrSvg: string;
 }
 
 // ── Users ───────────────────────────────────────────────────────────────────

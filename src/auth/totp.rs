@@ -33,12 +33,28 @@ struct CodeRequest {
     code: String,
 }
 
-/// Setup response: the base32 secret and the `otpauth://` URL for QR rendering.
+/// Setup response: the base32 secret (manual entry), the `otpauth://` URL, and a ready-to-render QR
+/// SVG of that URL so the client can show a scannable code without pulling in a QR library.
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct SetupResponse {
     secret: String,
     otpauth_url: String,
+    qr_svg: String,
+}
+
+/// Renders an `otpauth://` URL as a self-contained QR-code SVG (dark modules on white, with a quiet
+/// zone) for the enrolment screen.
+fn qr_svg(otpauth_url: &str) -> anyhow::Result<String> {
+    let code = qrcode::QrCode::new(otpauth_url.as_bytes())
+        .map_err(|err| anyhow!("Failed to build QR code: {err}"))?;
+    Ok(code
+        .render()
+        .min_dimensions(220, 220)
+        .quiet_zone(true)
+        .dark_color(qrcode::render::svg::Color("#0f172a"))
+        .light_color(qrcode::render::svg::Color("#ffffff"))
+        .build())
 }
 
 /// Whether MFA is currently enabled after the operation.
@@ -181,6 +197,7 @@ async fn totp_setup(
         .map_err(|err| anyhow!("Failed to generate TOTP secret: {err}"))?;
     let base32 = secret.to_encoded().to_string();
     let otpauth_url = make_totp(raw.clone(), &user.username)?.get_url();
+    let qr = qr_svg(&otpauth_url)?;
 
     user.totp_pending = Some(secret_box.encrypt(&raw)?);
     let _ = users.put_user(user).await?;
@@ -188,6 +205,7 @@ async fn totp_setup(
     Ok(SetupResponse {
         secret: base32,
         otpauth_url,
+        qr_svg: qr,
     })
 }
 

@@ -142,7 +142,8 @@
     "totpCode": "6-digit code",
     "totpActivate": "Activate",
     "totpDisable": "Disable",
-    "totpDisableHint": "Enter a current code to disable the authenticator app."
+    "totpDisableHint": "Enter a current code to disable the authenticator app.",
+    "totpQrAlt": "QR code for your authenticator app"
   },
   "audit": {
     "title": "Audit log",

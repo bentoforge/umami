@@ -718,6 +718,13 @@ function TotpSection({
       ) : (
         <>
           <p className="text-sm text-slate-500">{t("profile.totpSetupHint")}</p>
+          {setup?.qrSvg && (
+            <img
+              className="h-44 w-44 rounded bg-white p-2"
+              alt={t("profile.totpQrAlt")}
+              src={`data:image/svg+xml;utf8,${encodeURIComponent(setup.qrSvg)}`}
+            />
+          )}
           <div>
             <div className="text-xs text-slate-500 mb-1">{t("profile.totpSecret")}</div>
             <code className="block break-all rounded bg-slate-100 dark:bg-slate-900 px-3 py-2 text-sm font-mono tracking-wider text-slate-900 dark:text-white">
