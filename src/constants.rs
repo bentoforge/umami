@@ -25,8 +25,20 @@ pub const MANAGE_USERS_PERMISSION: &str = "manage:users";
 /// Manage a tenant's **service keys** (M2M API tokens): create/list/revoke + assignable scopes.
 pub const MANAGE_SERVICE_KEYS_PERMISSION: &str = "manage:service-keys";
 
+/// Edit one's **own** profile — the base data (name parts + self-editable custom fields) via
+/// `PATCH /auth/me`. One of the five granular self-service permissions (replacing the old
+/// `self:readonly` deny marker).
+pub const MANAGE_PROFILE_PERMISSION: &str = "manage:profile";
+
+/// Manage one's **own** security settings: password change (`POST /auth/me/password`), TOTP setup,
+/// and passkey registration.
+pub const MANAGE_PASSWORDS_PERMISSION: &str = "manage:passwords";
+
 /// Manage one's **own** personal access tokens (`/auth/me/api-keys`).
-pub const MANAGE_PAT_PERMISSION: &str = "manage:pat";
+pub const MANAGE_PERSONAL_TOKENS_PERMISSION: &str = "manage:personal-tokens";
+
+/// See and revoke one's **own** login sessions (`/auth/sessions`, `/auth/logout-all`).
+pub const MANAGE_SESSIONS_PERMISSION: &str = "manage:sessions";
 
 /// Read/write the global config document. **Global scope** — restrict to platform admins.
 pub const MANAGE_CONFIG_PERMISSION: &str = "manage:config";
@@ -39,10 +51,6 @@ pub const MANAGE_TENANTS_PERMISSION: &str = "manage:tenants";
 /// `is:system-tenant`.
 pub const SWITCH_TENANT_PERMISSION: &str = "switch:tenant";
 
-/// **Deny** marker: when present, blocks the caller's self-service mutations (profile edit,
-/// password change). Checked via `!self:readonly` at the route (see `with_user_with`).
-pub const SELF_READONLY_PERMISSION: &str = "self:readonly";
-
 /// Claim a `(platform, externalId) → user` messaging mapping via a link code. Held by a bot backend
 /// (a system-tenant service key carrying `scope:messaging-linker`).
 pub const MESSAGING_LINK_PERMISSION: &str = "messaging:link";
@@ -54,7 +62,7 @@ pub const MESSAGING_RESOLVE_PERMISSION: &str = "messaging:resolve";
 /// Self-service management of one's own messaging links (get/regenerate code, list/unlink).
 /// Derived (in the config `apis`) from `is:messaging-configured`, so it only appears when the
 /// deployment actually has a Telegram bot and/or WhatsApp number configured.
-pub const MESSAGING_SELF_PERMISSION: &str = "messaging:self";
+pub const MANAGE_MESSAGING_PERMISSION: &str = "manage:messaging";
 
 // ── Synthetic subject markers (computed at mint time, never stored) ────────────
 

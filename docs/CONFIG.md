@@ -141,16 +141,22 @@ define their own.
 | `admin:tenant` | `GET`/`PATCH /tenants/{id}` (name + custom fields), `GET /tenants/{id}/audit` (own tenant) |
 | `manage:users` | users CRUD + admin password reset, `GET /users/{id}/assignable-roles` |
 | `manage:service-keys` | service-key create/list/revoke, `GET /tenants/{id}/assignable-scopes` |
-| `manage:pat` | own personal access tokens under `/auth/me/api-keys` |
 | `manage:config` | `GET`/`PUT /config` |
-| `self:readonly` | **deny marker** — its presence *blocks* `POST /auth/me/password` and `PATCH /auth/me` (guarded via `!self:readonly`) |
-| `messaging:self` | `/auth/me/messaging-code` (+regenerate), `/auth/me/messaging-links` (+unlink) |
+| `manage:profile` | edit own profile — `PATCH /auth/me` (name parts + self-editable custom fields) |
+| `manage:passwords` | own security settings — `POST /auth/me/password`, TOTP setup/verify/disable, passkey registration |
+| `manage:personal-tokens` | own personal access tokens under `/auth/me/api-keys` |
+| `manage:sessions` | see/revoke own sessions — `GET /auth/sessions`, `DELETE /auth/sessions/{id}`, `POST /auth/logout-all` |
+| `manage:messaging` | `/auth/me/messaging-code` (+regenerate), `/auth/me/messaging-links` (+unlink) |
 | `messaging:link` | `POST /messaging/links` (bot backend claims a mapping) |
 | `messaging:resolve` | `GET /messaging/resolve` (identity → user info / token) |
 
-**Authenticated but permission-free** (any valid token): `GET /auth/me`, `POST /auth/logout-all`,
-`GET /config/custom-fields`, plus login/refresh/logout, JWKS and the MFA ceremonies. (`POST /auth/me/password` and `PATCH /auth/me` are authenticated too, but blocked when
-`self:readonly` is present.)
+The five `manage:profile`/`passwords`/`personal-tokens`/`sessions`/`messaging` permissions are the
+**granular self-service** set. There is no `self:readonly` deny marker: a read-only user is one whose
+role simply isn't granted these; a deployment that doesn't use a given surface (e.g. no PATs) just
+doesn't grant that permission, and the corresponding UI hides itself.
+
+**Authenticated but permission-free** (any valid token): `GET /auth/me`, `GET /config/custom-fields`,
+plus login/refresh/logout, JWKS and the passkey-login ceremonies.
 
 ---
 
@@ -163,10 +169,10 @@ role matrix; see [§6](#6-proposed-standard-config) for that. The default `apis[
 
 | `when` | `grant` |
 |--------|---------|
-| `role:owner` | `admin:tenant`, `manage:users`, `manage:service-keys`, `manage:pat`, `manage:config` |
+| *(empty — always)* | `manage:profile`, `manage:passwords`, `manage:personal-tokens`, `manage:sessions` |
+| `role:owner` | `admin:tenant`, `manage:users`, `manage:service-keys`, `manage:config` |
 | `is:system-tenant` | `manage:tenants`, `switch:tenant` |
-| `role:readonly` | `self:readonly` (deny marker) |
-| `is:messaging-configured` | `messaging:self` |
+| `is:messaging-configured` | `manage:messaging` |
 | `scope:messaging-linker + is:system-tenant` | `messaging:link` |
 | `scope:messaging-resolver + is:system-tenant` | `messaging:resolve` |
 
@@ -226,12 +232,13 @@ feature/scope and a product-API entry with eligibility + claims. Copy, adjust, `
     {
       "code": "umami", "audience": "umami",
       "permissions": [
-        { "when": "role:owner",  "grant": ["admin:tenant","manage:users","manage:service-keys","manage:pat","manage:config"] },
-        { "when": "role:admin",  "grant": ["manage:users","manage:service-keys","manage:pat"] },
-        { "when": "role:member", "grant": ["manage:pat"] },
+        { "when": "role:owner",  "grant": ["admin:tenant","manage:users","manage:service-keys","manage:config"] },
+        { "when": "role:admin",  "grant": ["manage:users","manage:service-keys"] },
         { "when": "is:system-tenant", "grant": ["manage:tenants","switch:tenant"] },
-        { "when": "role:readonly", "grant": ["self:readonly"] },
-        { "when": "is:messaging-configured", "grant": ["messaging:self"] },
+        // Granular self-service for every non-read-only user (a read-only role is simply excluded —
+        // there is no separate deny marker).
+        { "when": "!role:readonly", "grant": ["manage:profile","manage:passwords","manage:personal-tokens","manage:sessions"] },
+        { "when": "is:messaging-configured + !role:readonly", "grant": ["manage:messaging"] },
         { "when": "scope:messaging-linker + is:system-tenant",   "grant": ["messaging:link"] },
         { "when": "scope:messaging-resolver + is:system-tenant", "grant": ["messaging:resolve"] }
       ]

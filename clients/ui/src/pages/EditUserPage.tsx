@@ -613,16 +613,16 @@ function PatsCard({ userId }: { userId: string }) {
 
   const roleLabel = (code: string) => defs.find((d) => d.code === code)?.name ?? code;
 
+  // Read-only admin view: hide the whole card when the user has no PATs (nothing to show, and
+  // there's no create affordance here) — keeps the edit screen uncluttered for apps that don't use
+  // PATs. Also hidden while still loading.
+  if (!pats || pats.length === 0) {
+    return null;
+  }
   return (
     <section className={card}>
       <h2 className="font-medium text-slate-800 dark:text-slate-200 mb-3">{t("pats.title")}</h2>
-      {pats === null ? (
-        <Loader />
-      ) : pats.length === 0 ? (
-        <p className="text-sm text-slate-500">{t("pats.empty")}</p>
-      ) : (
-        <PatList pats={pats} roleLabel={roleLabel} />
-      )}
+      <PatList pats={pats} roleLabel={roleLabel} />
     </section>
   );
 }
@@ -641,18 +641,16 @@ function MessagingLinksCard({ userId }: { userId: string }) {
       .catch(() => setLinks([]));
   }, [client, userId]);
 
+  // Hide the card entirely when the user has no messaging links (or while loading) — read-only view.
+  if (!links || links.length === 0) {
+    return null;
+  }
   return (
     <section className={card}>
       <h2 className="font-medium text-slate-800 dark:text-slate-200 mb-3">
         {t("messaging.linksTitle")}
       </h2>
-      {links === null ? (
-        <Loader />
-      ) : links.length === 0 ? (
-        <p className="text-sm text-slate-500">{t("messaging.empty")}</p>
-      ) : (
-        <MessagingLinkList links={links} />
-      )}
+      <MessagingLinkList links={links} />
     </section>
   );
 }

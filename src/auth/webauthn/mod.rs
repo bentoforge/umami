@@ -12,7 +12,7 @@ use crate::auth::AuthContext;
 use crate::auth::login::issue_session;
 use crate::auth::ratelimit::{Decision, Policy, too_many_requests};
 use crate::auth::webauthn::repository::WebauthnRepository;
-use crate::constants::MAX_TEXT_BODY_SIZE;
+use crate::constants::{MANAGE_PASSWORDS_PERMISSION, MAX_TEXT_BODY_SIZE};
 use crate::users::repository::UserRepository;
 use anyhow::{Context, anyhow};
 use base64::Engine;
@@ -33,7 +33,11 @@ use wasabi::aws::dynamodb::generate_id;
 use wasabi::status_bail;
 use wasabi::web::auth::authenticator::Authenticator;
 use wasabi::web::auth::user::User as AuthUser;
-use wasabi::web::auth::with_user;
+use wasabi::web::auth::with_user_with_any_permission;
+
+/// Passkey registration is a security-settings change, so it requires `manage:passwords` (the
+/// passwordless *login* routes below stay unauthenticated).
+const REQUIRE_PASSWORDS: &[&str] = &[MANAGE_PASSWORDS_PERMISSION];
 use wasabi::web::warp::{
     client_ip, into_rejection, into_response, with_body_as_json, with_cloneable,
 };
@@ -159,7 +163,10 @@ pub fn webauthn_register_start_route(
         .and(with_cloneable(service))
         .and(with_cloneable(webauthn))
         .and(with_cloneable(users))
-        .and(with_user(authenticator))
+        .and(with_user_with_any_permission(
+            authenticator,
+            REQUIRE_PASSWORDS,
+        ))
         .and_then(handle_register_start)
         .boxed()
 }
@@ -181,7 +188,10 @@ pub fn webauthn_register_finish_route(
         .and(with_cloneable(webauthn))
         .and(with_cloneable(users))
         .and(with_cloneable(audit))
-        .and(with_user(authenticator))
+        .and(with_user_with_any_permission(
+            authenticator,
+            REQUIRE_PASSWORDS,
+        ))
         .and(client_ip())
         .and_then(handle_register_finish)
         .boxed()

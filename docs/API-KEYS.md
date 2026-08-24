@@ -27,7 +27,7 @@ whose identity/permissions the exchanged token carries. The `user_id` field on t
 | Kind | `user_id` | Token `sub` | Permissions from | Managed at | Revocation |
 |------|-----------|-------------|------------------|-----------|------------|
 | **Service key** | `None` | `keyId` | the key's `scopes` | `/tenants/{id}/api-keys` (`manage:service-keys`) | delete the key |
-| **Personal access token (PAT)** | `Some(userId)` | `userId` | the **user** (∩ the key's optional `roles` restriction, never an escalation), carries `user.tokenVersion` | `/auth/me/api-keys` (`manage:pat`, self-service) | delete the key **or** deactivate / `tokenVersion`-bump the user |
+| **Personal access token (PAT)** | `Some(userId)` | `userId` | the **user** (∩ the key's optional `roles` restriction, never an escalation), carries `user.tokenVersion` | `/auth/me/api-keys` (`manage:personal-tokens`, self-service) | delete the key **or** deactivate / `tokenVersion`-bump the user |
 
 Mapping the real use-cases:
 

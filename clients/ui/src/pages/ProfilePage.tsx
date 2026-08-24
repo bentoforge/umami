@@ -42,10 +42,10 @@ export function ProfilePage() {
       <h1 className="text-xl font-semibold text-slate-900 dark:text-white">{t("profile.title")}</h1>
       <BaseDataCard />
       <AuditCard />
-      <SessionsPanel />
-      <SecurityCard />
-      {client.hasPermission("manage:pat") && <PatsPanel />}
-      {client.hasPermission("messaging:self") && <MessagingPanel />}
+      {client.hasPermission("manage:sessions") && <SessionsPanel />}
+      {client.hasPermission("manage:passwords") && <SecurityCard />}
+      {client.hasPermission("manage:personal-tokens") && <PatsPanel />}
+      {client.hasPermission("manage:messaging") && <MessagingPanel />}
     </div>
   );
 }
@@ -269,7 +269,7 @@ function BaseDataCard() {
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState(false);
 
-  const canEdit = !client.hasPermission("self:readonly");
+  const canEdit = client.hasPermission("manage:profile");
 
   useEffect(() => {
     client
@@ -479,7 +479,7 @@ function SecurityCard() {
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const canPassword = !client.hasPermission("self:readonly");
+  const canPassword = client.hasPermission("manage:passwords");
   const mfaEnabled = me?.user.mfaEnabled ?? false;
 
   const enrolPasskey = async () => {

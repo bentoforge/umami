@@ -8,7 +8,7 @@
 use crate::audit::repository::{AuditRepository, record_best_effort};
 use crate::audit::{AuditSeverity, NewAuditEntry};
 use crate::auth::secretbox::SecretBox;
-use crate::constants::MAX_TEXT_BODY_SIZE;
+use crate::constants::{MANAGE_PASSWORDS_PERMISSION, MAX_TEXT_BODY_SIZE};
 use crate::users::User;
 use crate::users::repository::UserRepository;
 use anyhow::anyhow;
@@ -20,7 +20,10 @@ use warp::filters::BoxedFilter;
 use warp::http::StatusCode;
 use wasabi::web::auth::authenticator::Authenticator;
 use wasabi::web::auth::user::User as AuthUser;
-use wasabi::web::auth::with_user;
+use wasabi::web::auth::with_user_with_any_permission;
+
+/// Permission required to manage one's own security settings (password, TOTP, passkeys).
+const REQUIRE_PASSWORDS: &[&str] = &[MANAGE_PASSWORDS_PERMISSION];
 use wasabi::web::warp::{client_ip, into_response, with_body_as_json, with_cloneable};
 use wasabi::{client_bail, status_bail};
 
@@ -100,7 +103,10 @@ pub fn totp_setup_route(
         .and(warp::post())
         .and(with_cloneable(users))
         .and(with_cloneable(secret_box))
-        .and(with_user(authenticator))
+        .and(with_user_with_any_permission(
+            authenticator,
+            REQUIRE_PASSWORDS,
+        ))
         .and_then(handle_totp_setup_route)
         .boxed()
 }
@@ -118,7 +124,10 @@ pub fn totp_verify_route(
         .and(with_cloneable(users))
         .and(with_cloneable(secret_box))
         .and(with_cloneable(audit))
-        .and(with_user(authenticator))
+        .and(with_user_with_any_permission(
+            authenticator,
+            REQUIRE_PASSWORDS,
+        ))
         .and(client_ip())
         .and_then(handle_totp_verify_route)
         .boxed()
@@ -137,7 +146,10 @@ pub fn totp_disable_route(
         .and(with_cloneable(users))
         .and(with_cloneable(secret_box))
         .and(with_cloneable(audit))
-        .and(with_user(authenticator))
+        .and(with_user_with_any_permission(
+            authenticator,
+            REQUIRE_PASSWORDS,
+        ))
         .and(client_ip())
         .and_then(handle_totp_disable_route)
         .boxed()

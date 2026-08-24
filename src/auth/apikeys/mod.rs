@@ -24,7 +24,7 @@ use crate::auth::tokens::TokenIssuer;
 use crate::config::VolumeRateLimit;
 use crate::config::repository::ConfigRepository;
 use crate::constants::{
-    MANAGE_PAT_PERMISSION, MANAGE_SERVICE_KEYS_PERMISSION, MANAGE_USERS_PERMISSION,
+    MANAGE_PERSONAL_TOKENS_PERMISSION, MANAGE_SERVICE_KEYS_PERMISSION, MANAGE_USERS_PERMISSION,
     MAX_TEXT_BODY_SIZE,
 };
 use crate::tenants::repository::TenantRepository;
@@ -67,7 +67,7 @@ const REQUIRE_MANAGE_SERVICE_KEYS: &[&str] = &[MANAGE_SERVICE_KEYS_PERMISSION];
 const REQUIRE_MANAGE_USERS: &[&str] = &[MANAGE_USERS_PERMISSION];
 
 /// Permission required to manage one's own personal access tokens.
-const REQUIRE_MANAGE_PAT: &[&str] = &[MANAGE_PAT_PERMISSION];
+const REQUIRE_MANAGE_PAT: &[&str] = &[MANAGE_PERSONAL_TOKENS_PERMISSION];
 
 /// Splits a presented `umk_<keyId>_<secret>` into `(keyId, secret)`.
 fn parse_api_key(presented: &str) -> Option<(&str, &str)> {

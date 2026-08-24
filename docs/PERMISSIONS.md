@@ -105,7 +105,7 @@ granted — enabling chaining like `role:admin → write:blocks`, then `write:bl
       "permissions": [                                  // ordered; later rules see earlier grants
         { "when": "role:owner",       "grant": ["admin:tenant","manage:users","manage:config"] },
         { "when": "role:admin",       "grant": ["manage:users"] },
-        { "when": "role:member",      "grant": ["manage:pat"] },
+        { "when": "role:member",      "grant": ["manage:profile","manage:personal-tokens"] },
         { "when": "is:system-tenant", "grant": ["manage:tenants","switch:tenant"] },   // cross-tenant admin (§6)
         { "when": "scope:messaging-linker + is:system-tenant", "grant": ["messaging:link"] }  // M2M-only
       ]

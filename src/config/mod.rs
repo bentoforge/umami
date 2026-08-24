@@ -12,11 +12,12 @@ use crate::constants::{
     DEFAULT_LOGIN_MAX_FAILURES, DEFAULT_LOGIN_WINDOW_SECS, DEFAULT_MESSAGING_CODE_TTL_SECS,
     DEFAULT_PER_IP_BLOCK_SECS, DEFAULT_PER_IP_MAX_PER_WINDOW, DEFAULT_PER_IP_WINDOW_SECS,
     DEFAULT_REFRESH_TTL_SECS, DEFAULT_TOKEN_BLOCK_SECS, DEFAULT_TOKEN_MAX_PER_WINDOW,
-    DEFAULT_TOKEN_WINDOW_SECS, MANAGE_CONFIG_PERMISSION, MANAGE_PAT_PERMISSION,
-    MANAGE_SERVICE_KEYS_PERMISSION, MANAGE_TENANTS_PERMISSION, MANAGE_USERS_PERMISSION,
-    MESSAGING_CONFIGURED_MARKER, MESSAGING_LINK_PERMISSION, MESSAGING_RESOLVE_PERMISSION,
-    MESSAGING_SELF_PERMISSION, ROLE_MEMBER, ROLE_OWNER, SELF_READONLY_PERMISSION,
-    SWITCH_TENANT_PERMISSION, SYSTEM_TENANT_MARKER,
+    DEFAULT_TOKEN_WINDOW_SECS, MANAGE_CONFIG_PERMISSION, MANAGE_MESSAGING_PERMISSION,
+    MANAGE_PASSWORDS_PERMISSION, MANAGE_PERSONAL_TOKENS_PERMISSION, MANAGE_PROFILE_PERMISSION,
+    MANAGE_SERVICE_KEYS_PERMISSION, MANAGE_SESSIONS_PERMISSION, MANAGE_TENANTS_PERMISSION,
+    MANAGE_USERS_PERMISSION, MESSAGING_CONFIGURED_MARKER, MESSAGING_LINK_PERMISSION,
+    MESSAGING_RESOLVE_PERMISSION, ROLE_MEMBER, ROLE_OWNER, SWITCH_TENANT_PERMISSION,
+    SYSTEM_TENANT_MARKER,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -702,14 +703,26 @@ impl Default for Config {
                 audience: "umami".to_owned(),
                 eligibility: None,
                 permissions: vec![
-                    // Bootstrap owner: full self-tenant administration + own PATs + config.
+                    // Baseline self-service for any logged-in user: manage your own profile,
+                    // security settings, personal access tokens, and sessions. (Empty `when` = always
+                    // fires.) A deployment that wants a read-only role simply writes a config that
+                    // does not grant these to that role — there is no separate deny marker.
+                    rule(
+                        "",
+                        &[
+                            MANAGE_PROFILE_PERMISSION,
+                            MANAGE_PASSWORDS_PERMISSION,
+                            MANAGE_PERSONAL_TOKENS_PERMISSION,
+                            MANAGE_SESSIONS_PERMISSION,
+                        ],
+                    ),
+                    // Bootstrap owner: full self-tenant administration + config.
                     rule(
                         ROLE_OWNER,
                         &[
                             ADMIN_TENANT_PERMISSION,
                             MANAGE_USERS_PERMISSION,
                             MANAGE_SERVICE_KEYS_PERMISSION,
-                            MANAGE_PAT_PERMISSION,
                             MANAGE_CONFIG_PERMISSION,
                         ],
                     ),
@@ -718,11 +731,9 @@ impl Default for Config {
                         SYSTEM_TENANT_MARKER,
                         &[MANAGE_TENANTS_PERMISSION, SWITCH_TENANT_PERMISSION],
                     ),
-                    // Deny marker: a user tagged role:readonly loses self-service mutations.
-                    rule("role:readonly", &[SELF_READONLY_PERMISSION]),
                     // Self-service messaging is available to everyone once the deployment has a bot
                     // and/or number configured.
-                    rule(MESSAGING_CONFIGURED_MARKER, &[MESSAGING_SELF_PERMISSION]),
+                    rule(MESSAGING_CONFIGURED_MARKER, &[MANAGE_MESSAGING_PERMISSION]),
                     // Messaging M2M: only system-tenant service keys carrying the scope get the
                     // cross-tenant link/resolve permissions.
                     rule(
@@ -922,14 +933,17 @@ mod tests {
             .unwrap();
         assert!(sys.contains(&"manage:tenants".to_owned()));
         assert!(sys.contains(&"switch:tenant".to_owned()));
-        // readonly maps to the deny marker; viewer (unmapped in the minimal default) maps to nothing
-        assert!(
-            umami
-                .resolve(&s(&["role:readonly"]))
-                .unwrap()
-                .contains(&"self:readonly".to_owned())
-        );
-        assert_eq!(umami.resolve(&s(&["role:viewer"])), Some(Vec::new()));
+        // Baseline self-service (empty `when`) is granted to any logged-in user, so even an
+        // otherwise-unmapped viewer gets the granular self-service permissions — and there is no
+        // longer a `self:readonly` deny marker.
+        let viewer = umami.resolve(&s(&["role:viewer"])).unwrap();
+        assert!(viewer.contains(&"manage:profile".to_owned()));
+        assert!(viewer.contains(&"manage:passwords".to_owned()));
+        assert!(viewer.contains(&"manage:personal-tokens".to_owned()));
+        assert!(viewer.contains(&"manage:sessions".to_owned()));
+        assert!(!viewer.contains(&"self:readonly".to_owned()));
+        // Tenant administration still requires the owner role, not just the self-service baseline.
+        assert!(!viewer.contains(&"admin:tenant".to_owned()));
     }
 
     #[test]

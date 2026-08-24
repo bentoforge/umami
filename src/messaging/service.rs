@@ -14,8 +14,8 @@ use crate::auth::tokens::TokenIssuer;
 use crate::config::MessagingConfig;
 use crate::config::repository::ConfigRepository;
 use crate::constants::{
-    MANAGE_USERS_PERMISSION, MAX_TEXT_BODY_SIZE, MESSAGING_LINK_PERMISSION,
-    MESSAGING_RESOLVE_PERMISSION, MESSAGING_SELF_PERMISSION,
+    MANAGE_MESSAGING_PERMISSION, MANAGE_USERS_PERMISSION, MAX_TEXT_BODY_SIZE,
+    MESSAGING_LINK_PERMISSION, MESSAGING_RESOLVE_PERMISSION,
 };
 use crate::messaging::repository::MessagingRepository;
 use crate::messaging::{MessagingLink, normalize_platform};
@@ -33,7 +33,7 @@ use wasabi::web::auth::with_user_with_any_permission;
 use wasabi::web::warp::{into_response, with_body_as_json, with_cloneable};
 use wasabi::{client_bail, status_bail};
 
-const REQUIRE_SELF: &[&str] = &[MESSAGING_SELF_PERMISSION];
+const REQUIRE_SELF: &[&str] = &[MANAGE_MESSAGING_PERMISSION];
 const REQUIRE_LINK: &[&str] = &[MESSAGING_LINK_PERMISSION];
 const REQUIRE_RESOLVE: &[&str] = &[MESSAGING_RESOLVE_PERMISSION];
 const REQUIRE_MANAGE_USERS: &[&str] = &[MANAGE_USERS_PERMISSION];

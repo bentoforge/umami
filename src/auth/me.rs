@@ -11,7 +11,10 @@ use crate::auth::password;
 use crate::auth::session::repository::SessionRepository;
 use crate::config::Config;
 use crate::config::repository::ConfigRepository;
-use crate::constants::MAX_TEXT_BODY_SIZE;
+use crate::constants::{
+    MANAGE_PASSWORDS_PERMISSION, MANAGE_PROFILE_PERMISSION, MANAGE_SESSIONS_PERMISSION,
+    MAX_TEXT_BODY_SIZE,
+};
 use crate::tenants::Tenant;
 use crate::tenants::repository::TenantRepository;
 use crate::users::repository::UserRepository;
@@ -26,7 +29,7 @@ use warp::filters::BoxedFilter;
 use warp::http::StatusCode;
 use wasabi::web::auth::authenticator::Authenticator;
 use wasabi::web::auth::user::User as AuthUser;
-use wasabi::web::auth::{with_user, with_user_with};
+use wasabi::web::auth::{with_user, with_user_with_any_permission};
 use wasabi::web::warp::{client_ip, into_response, with_body_as_json, with_cloneable};
 use wasabi::{client_bail, status_bail};
 
@@ -108,13 +111,20 @@ pub fn logout_all_route(
     warp::path!("auth" / "logout-all")
         .and(warp::post())
         .and(with_cloneable(users))
-        .and(with_user(authenticator))
+        .and(with_user_with_any_permission(
+            authenticator,
+            REQUIRE_SESSIONS,
+        ))
         .and_then(handle_logout_all_route)
         .boxed()
 }
 
-/// Guard expression for self-service mutations: blocked when the caller has `self:readonly`.
-const DENY_READONLY: &str = "!self:readonly";
+/// Permission to edit one's own profile (`PATCH /auth/me`).
+const REQUIRE_PROFILE: &[&str] = &[MANAGE_PROFILE_PERMISSION];
+/// Permission to change one's own password (`POST /auth/me/password`).
+const REQUIRE_PASSWORDS: &[&str] = &[MANAGE_PASSWORDS_PERMISSION];
+/// Permission to view/revoke one's own sessions (`/auth/sessions`, `/auth/logout-all`).
+const REQUIRE_SESSIONS: &[&str] = &[MANAGE_SESSIONS_PERMISSION];
 
 /// Request body for a self-service password change.
 #[derive(Deserialize, Debug)]
@@ -154,14 +164,17 @@ pub fn change_password_route(
         .and(with_cloneable(users))
         .and(with_cloneable(config))
         .and(with_cloneable(audit))
-        .and(with_user_with(authenticator, DENY_READONLY))
+        .and(with_user_with_any_permission(
+            authenticator,
+            REQUIRE_PASSWORDS,
+        ))
         .and(client_ip())
         .and_then(handle_change_password_route)
         .boxed()
 }
 
-/// `PATCH /auth/me` — self-service profile edit: the caller's structured name parts (always) plus
-/// any custom fields the config marks `selfEditable`. Blocked for `self:readonly`.
+/// `PATCH /auth/me` — self-service profile edit: the caller's structured name parts plus any custom
+/// fields the config marks `selfEditable`. Requires `manage:profile`.
 pub fn patch_me_route(
     users: Arc<dyn UserRepository>,
     tenants: Arc<dyn TenantRepository>,
@@ -174,7 +187,10 @@ pub fn patch_me_route(
         .and(with_cloneable(users))
         .and(with_cloneable(tenants))
         .and(with_cloneable(config))
-        .and(with_user_with(authenticator, DENY_READONLY))
+        .and(with_user_with_any_permission(
+            authenticator,
+            REQUIRE_PROFILE,
+        ))
         .and_then(handle_patch_me_route)
         .boxed()
 }
@@ -395,7 +411,10 @@ pub fn sessions_route(
         .and(warp::get())
         .and(with_cloneable(sessions))
         .and(warp::header::optional::<String>("cookie"))
-        .and(with_user(authenticator))
+        .and(with_user_with_any_permission(
+            authenticator,
+            REQUIRE_SESSIONS,
+        ))
         .and_then(handle_list_sessions_route)
         .boxed()
 }
@@ -408,7 +427,10 @@ pub fn delete_session_route(
     warp::path!("auth" / "sessions" / String)
         .and(warp::delete())
         .and(with_cloneable(sessions))
-        .and(with_user(authenticator))
+        .and(with_user_with_any_permission(
+            authenticator,
+            REQUIRE_SESSIONS,
+        ))
         .and_then(handle_delete_session_route)
         .boxed()
 }
