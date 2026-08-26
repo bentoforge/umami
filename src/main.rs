@@ -104,6 +104,8 @@ use crate::web_ui::ui_routes;
 use std::env;
 use std::sync::Arc;
 use warp::Filter;
+use warp::filters::BoxedFilter;
+use warp::http::StatusCode;
 use wasabi::aws::dynamodb::client::DynamoClient;
 use wasabi::aws::dynamodb::generate_id;
 use wasabi::aws::s3::S3Client;
@@ -235,6 +237,19 @@ async fn app() -> anyhow::Result<()> {
     )
     .await?;
 
+    // `POST /auth/token` is the one endpoint arbitrary third-party pages must reach, so it gets its
+    // own public CORS policy and is mounted outside the credentialed layer (see `serve`).
+    let token_exchange = with_public_exchange_cors(exchange_route(
+        api_key_repository.clone(),
+        user_repository.clone(),
+        tenant_repository.clone(),
+        config_repository.clone(),
+        token_issuer.clone(),
+        audit_repository.clone(),
+        rate_limiter.clone(),
+        system_tenant_id.clone(),
+    ));
+
     let api = routes![
         get_info_route(),
         get_user_info_route(authenticator.clone()),
@@ -299,17 +314,8 @@ async fn app() -> anyhow::Result<()> {
             webauthn_repository.clone()
         ),
         webauthn_login_finish_route(auth_context.clone(), webauthn_service, webauthn_repository),
-        // API keys — exchange (service keys + personal access tokens)
-        exchange_route(
-            api_key_repository.clone(),
-            user_repository.clone(),
-            tenant_repository.clone(),
-            config_repository.clone(),
-            token_issuer.clone(),
-            audit_repository.clone(),
-            rate_limiter.clone(),
-            system_tenant_id.clone()
-        ),
+        // API keys — the exchange itself is mounted separately (see `token_exchange` below), because
+        // it needs a *public* CORS policy the credentialed one cannot express.
         // tenant service keys (manage:service-keys)
         create_api_key_route(
             api_key_repository.clone(),
@@ -467,23 +473,84 @@ async fn app() -> anyhow::Result<()> {
     match ui_routes(&ui_dir, config_repository.clone()) {
         Some(ui) => {
             tracing::info!("Serving management UI from '{ui_dir}' under /app");
-            serve(api.or(ui), cors).await
+            serve(token_exchange, api.or(ui), cors).await
         }
-        None => serve(api, cors).await,
+        None => serve(token_exchange, api, cors).await,
     }
 }
 
-/// Runs the web server, wrapping the routes in the optional credentialed CORS layer when present.
-/// Generic over the route filter so the UI / API-only branches don't need a unified filter type.
-async fn serve<F>(routes: F, cors: Option<warp::filters::cors::Cors>) -> anyhow::Result<()>
+/// Runs the web server: `public` is served as-is, `routes` gets the optional credentialed CORS layer.
+///
+/// The split matters. Two CORS layers over one route would emit **two**
+/// `Access-Control-Allow-Origin` headers, which every browser rejects — so anything carrying its own
+/// policy (today: the token exchange) must be mounted outside the global one, not merely before it.
+/// Generic over both filters so the UI / API-only branches don't need a unified filter type.
+async fn serve<P, F>(
+    public: P,
+    routes: F,
+    cors: Option<warp::filters::cors::Cors>,
+) -> anyhow::Result<()>
 where
+    P: warp::Filter<Error = warp::Rejection> + Clone + Send + Sync + 'static,
+    P::Extract: warp::Reply,
     F: warp::Filter<Error = warp::Rejection> + Clone + Send + Sync + 'static,
     F::Extract: warp::Reply,
 {
     match cors {
-        Some(cors) => run_webserver(routes.with(cors)).await,
-        None => run_webserver(routes).await,
+        Some(cors) => run_webserver(public.or(routes.with(cors))).await,
+        None => run_webserver(public.or(routes)).await,
     }
+}
+
+/// Mounts `route` (the token exchange) with a public, credential-free CORS policy: it answers the
+/// preflight itself and sends a **literal** `Access-Control-Allow-Origin: *`.
+///
+/// Why this endpoint is open to every origin, and why that is not the hole it looks like:
+///
+/// - The exchange is deliberately cookie- and bearer-free — the API key (or its HMAC proof) *is* the
+///   credential — so there is no session for a foreign origin to ride on.
+/// - **CORS is not authorization.** What restricts a key to a site is `allowedOrigins` on the key,
+///   checked against the request's `Origin` header, which the browser sets and a page cannot forge.
+///   That check is untouched by this policy and runs on every exchange.
+/// - The cost cap is the rate limit (per IP and per key), which also runs regardless.
+///
+/// The alternative — every partner's origin in `CORS_ALLOWED_ORIGINS` — would make each new customer
+/// a redeploy while adding no security, since the per-key origin list already exists and is editable
+/// through the API.
+///
+/// Two implementation details are deliberate:
+///
+/// - **A literal `*`, not warp's `allow_any_origin()`.** That helper *reflects* the request's
+///   `Origin` back, which (a) would permit credentialed requests the moment someone adds
+///   `allow_credentials(true)`, and (b) makes the response origin-dependent without emitting
+///   `Vary: Origin` — behind a shared cache such as CloudFront one origin's header could be served to
+///   another. A wildcard is credential-proof *by spec* and identical for every caller, so it is both
+///   safer and cache-safe.
+/// - **Mounted outside the credentialed layer** (see [`serve`]), because two CORS layers over one
+///   route emit two `Access-Control-Allow-Origin` headers, which browsers reject.
+fn with_public_exchange_cors<R>(route: BoxedFilter<(R,)>) -> BoxedFilter<(impl warp::Reply,)>
+where
+    R: warp::Reply + 'static,
+{
+    let preflight = warp::path!("auth" / "token")
+        .and(warp::options())
+        .map(exchange_preflight_reply);
+
+    preflight.or(route.map(with_wildcard_origin)).boxed()
+}
+
+/// The preflight answer for the token exchange: what a browser must see before it sends the POST.
+fn exchange_preflight_reply() -> impl warp::Reply {
+    let reply = warp::reply::with_status(warp::reply::reply(), StatusCode::NO_CONTENT);
+    let reply = with_wildcard_origin(reply);
+    let reply = warp::reply::with_header(reply, "access-control-allow-methods", "POST, OPTIONS");
+    let reply = warp::reply::with_header(reply, "access-control-allow-headers", "content-type");
+    warp::reply::with_header(reply, "access-control-max-age", "600")
+}
+
+/// Adds the literal wildcard origin. Separate so the POST and the preflight cannot drift apart.
+fn with_wildcard_origin<R: warp::Reply>(reply: R) -> impl warp::Reply {
+    warp::reply::with_header(reply, "access-control-allow-origin", "*")
 }
 
 /// Builds a credentialed CORS layer from `CORS_ALLOWED_ORIGINS` (comma-separated exact origins, e.g.
@@ -593,4 +660,125 @@ async fn maybe_auto_init(
     );
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use warp::Filter;
+    use warp::http::{HeaderValue, StatusCode};
+
+    /// Stand-in for the real exchange route: same path and method, no dependencies.
+    fn stub_exchange() -> BoxedFilter<(&'static str,)> {
+        warp::path!("auth" / "token")
+            .and(warp::post())
+            .map(|| "token")
+            .boxed()
+    }
+
+    /// A credentialed layer like `cors_from_env` builds for our own SPAs.
+    fn credentialed_cors() -> warp::filters::cors::Cors {
+        warp::cors()
+            .allow_origins(["https://app.example.com"])
+            .allow_credentials(true)
+            .allow_methods(["GET", "POST", "OPTIONS"])
+            .allow_headers(["content-type", "authorization"])
+            .build()
+    }
+
+    /// A partner page on an origin nobody configured must still be able to exchange a key.
+    #[tokio::test]
+    async fn exchange_allows_an_arbitrary_origin() {
+        let route = with_public_exchange_cors(stub_exchange());
+
+        let response = warp::test::request()
+            .method("POST")
+            .path("/auth/token")
+            .header("origin", "https://some-shop-we-never-heard-of.example")
+            .header("content-type", "application/json")
+            .reply(&route)
+            .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get("access-control-allow-origin"),
+            Some(&HeaderValue::from_static("*"))
+        );
+    }
+
+    /// The wildcard must stay credential-free. `*` plus `Allow-Credentials: true` is both invalid per
+    /// spec and the one change that would turn this open endpoint into a session-leak — so it is
+    /// asserted rather than left to review.
+    #[tokio::test]
+    async fn exchange_never_allows_credentials() {
+        let route = with_public_exchange_cors(stub_exchange());
+
+        let response = warp::test::request()
+            .method("POST")
+            .path("/auth/token")
+            .header("origin", "https://attacker.example")
+            .reply(&route)
+            .await;
+
+        assert!(
+            response
+                .headers()
+                .get("access-control-allow-credentials")
+                .is_none(),
+            "the public exchange policy must never allow credentials"
+        );
+    }
+
+    /// The browser's preflight has to be answered by the public layer, or the POST never happens.
+    #[tokio::test]
+    async fn exchange_answers_the_preflight() {
+        let route = with_public_exchange_cors(stub_exchange());
+
+        let response = warp::test::request()
+            .method("OPTIONS")
+            .path("/auth/token")
+            .header("origin", "https://some-shop.example")
+            .header("access-control-request-method", "POST")
+            .header("access-control-request-headers", "content-type")
+            .reply(&route)
+            .await;
+
+        assert!(
+            response.status().is_success(),
+            "preflight was {}",
+            response.status()
+        );
+        assert_eq!(
+            response.headers().get("access-control-allow-origin"),
+            Some(&HeaderValue::from_static("*"))
+        );
+    }
+
+    /// Mounting order is the whole point: composed the way `serve` does it, the exchange must carry
+    /// **exactly one** `Access-Control-Allow-Origin` header. Two layers over one route emit two, and
+    /// browsers reject that — which would look like "CORS is broken" with a correct-looking config.
+    #[tokio::test]
+    async fn exchange_carries_exactly_one_allow_origin_header() {
+        let others = warp::path!("tenants").map(|| "tenants");
+        let route = with_public_exchange_cors(stub_exchange()).or(others.with(credentialed_cors()));
+
+        let response = warp::test::request()
+            .method("POST")
+            .path("/auth/token")
+            .header("origin", "https://some-shop.example")
+            .reply(&route)
+            .await;
+
+        let allow_origin: Vec<_> = response
+            .headers()
+            .get_all("access-control-allow-origin")
+            .iter()
+            .collect();
+
+        assert_eq!(allow_origin.len(), 1, "headers: {:?}", response.headers());
+        assert_eq!(
+            allow_origin.first().copied(),
+            Some(&HeaderValue::from_static("*"))
+        );
+    }
 }
