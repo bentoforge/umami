@@ -318,8 +318,7 @@ Mechanics & guarantees:
 
 - **Storage:** DynamoDB (`<DYNAMO_TABLE_PREFIX>-rate-limits`), behind a `RateLimitRepository` trait
   so the backend is swappable. Counters use an atomic `ADD` (fixed window); each row carries a
-  numeric `ttl` so DynamoDB self-cleans — **enable the table TTL out-of-band**, like the other TTL
-  tables (see `.env.example`).
+  numeric `ttl` so DynamoDB self-cleans; the TTL is enabled by umami on boot (see the README).
 - **Response:** a uniform `429 Too Many Requests` + `Retry-After`, with a generic body (no
   account-existence leak).
 - **Fail-open:** if the store is unavailable, umami **allows** auth (it never DoSes itself) and logs

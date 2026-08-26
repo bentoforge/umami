@@ -25,6 +25,9 @@ const FIELD_ID: &str = "id";
 const FIELD_USER: &str = "user";
 const FIELD_TENANT: &str = "tenant";
 const FIELD_TIMESTAMP: &str = "timestamp";
+
+/// Epoch-seconds attribute DynamoDB expires entries on (retention window).
+const FIELD_TTL: &str = "ttl";
 const INDEX_BY_USER: &str = "ByUserIndex";
 const INDEX_BY_TENANT: &str = "ByTenantIndex";
 
@@ -83,7 +86,7 @@ impl DynamoAuditRepository {
     #[tracing::instrument(skip(client), err(Display))]
     pub async fn with_client(client: &DynamoClient) -> anyhow::Result<Self> {
         client
-            .create_table(TABLE_AUDIT, |table| {
+            .create_table_with_ttl(TABLE_AUDIT, FIELD_TTL, |table| {
                 let by_user = gsi(INDEX_BY_USER, FIELD_USER)?;
                 let by_tenant = gsi(INDEX_BY_TENANT, FIELD_TENANT)?;
                 let table = table

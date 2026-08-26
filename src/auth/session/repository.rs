@@ -33,6 +33,9 @@ const FIELD_LAST_SEEN: &str = "lastSeen";
 /// Tenant the session currently acts in — rewritten by `POST /auth/switch-tenant`.
 const FIELD_ACTIVE_TENANT_ID: &str = "activeTenantId";
 
+/// Epoch-seconds attribute DynamoDB expires rows on.
+const FIELD_TTL: &str = "ttl";
+
 /// GSI listing a user's sessions by recent activity.
 const INDEX_BY_USER: &str = "ByUserIndex";
 
@@ -100,7 +103,7 @@ impl DynamoSessionRepository {
     #[tracing::instrument(skip(client), err(Display))]
     pub async fn with_client(client: &DynamoClient) -> anyhow::Result<Self> {
         client
-            .create_table(TABLE_SESSIONS, |table| {
+            .create_table_with_ttl(TABLE_SESSIONS, FIELD_TTL, |table| {
                 let by_user = GlobalSecondaryIndex::builder()
                     .index_name(INDEX_BY_USER)
                     .key_schema(

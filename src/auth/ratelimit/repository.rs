@@ -54,7 +54,7 @@ impl DynamoRateLimitRepository {
     #[tracing::instrument(skip(client), err(Display))]
     pub async fn with_client(client: &DynamoClient) -> anyhow::Result<Self> {
         client
-            .create_table(TABLE_RATE_LIMITS, |table| {
+            .create_table_with_ttl(TABLE_RATE_LIMITS, FIELD_TTL, |table| {
                 let table = table.attribute_definitions(str_attribute(FIELD_ID)?);
                 let table = with_hash_index(table, FIELD_ID)?;
                 Ok(table.billing_mode(BillingMode::PayPerRequest))

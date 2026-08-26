@@ -16,6 +16,9 @@ use wasabi::aws::dynamodb::{deserialize_entity, find_all, str};
 const TABLE_CREDENTIALS: &str = "webauthn-credentials";
 const TABLE_CEREMONIES: &str = "webauthn-ceremonies";
 
+/// Epoch-seconds attribute DynamoDB expires ceremony rows on.
+const FIELD_TTL: &str = "ttl";
+
 const FIELD_USER_ID: &str = "userId";
 const FIELD_CREDENTIAL_ID: &str = "credentialId";
 const FIELD_CEREMONY_ID: &str = "ceremonyId";
@@ -98,7 +101,7 @@ impl DynamoWebauthnRepository {
             .await?;
 
         client
-            .create_table(TABLE_CEREMONIES, |table| {
+            .create_table_with_ttl(TABLE_CEREMONIES, FIELD_TTL, |table| {
                 let table = table.attribute_definitions(str_attribute(FIELD_CEREMONY_ID)?);
                 let table = with_hash_index(table, FIELD_CEREMONY_ID)?;
                 Ok(table.billing_mode(BillingMode::PayPerRequest))

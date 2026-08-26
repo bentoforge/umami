@@ -171,10 +171,12 @@ cp .env.example .env
 cargo run --features pretty_logs
 ```
 
-> **One-time operational setup:** umami writes a numeric `ttl` on its `sessions`, `audit-log` and
-> `rate-limits` tables but does not enable the DynamoDB TTL itself — turn it on once per deployment
-> (Terraform/console) on `<prefix>-sessions`, `<prefix>-audit-log` and `<prefix>-rate-limits`,
-> attribute `ttl`, so expired rows self-clean.
+> **Expiring rows need no setup.** The four tables that carry a numeric `ttl` — `sessions`,
+> `audit-log`, `rate-limits` and `webauthn-ceremonies` — get their DynamoDB TTL enabled by umami on
+> boot, and convergence runs on *every* start, so tables created before this existed are picked up
+> too. Enabling TTL needs `dynamodb:UpdateTimeToLive` and `dynamodb:DescribeTimeToLive` on the table
+> prefix; without those permissions umami logs a warning with the manual command and carries on
+> rather than refusing to start.
 
 Build & checks:
 
