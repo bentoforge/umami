@@ -59,6 +59,7 @@ use crate::auth::apikeys::{
     create_api_key_route, create_my_pat_route, delete_api_key_route, delete_my_pat_route,
     exchange_route, list_api_keys_route, list_my_pats_route, list_user_pats_route,
 };
+use crate::auth::authorize::authorize_route;
 use crate::auth::login::{login_route, logout_route, refresh_route};
 use crate::auth::me::{
     change_password_route, delete_session_route, logout_all_route, me_route, patch_me_route,
@@ -257,6 +258,10 @@ async fn app() -> anyhow::Result<()> {
         // auth
         login_route(auth_context.clone()),
         refresh_route(auth_context.clone()),
+        // Hosted-login redirect: an app bounces the browser here, umami ensures a session
+        // exists, the browser comes back. No code, no token in the response — same-site apps
+        // then just call /auth/refresh with the cookie the browser already carries.
+        authorize_route(auth_context.clone()),
         logout_route(auth_context.clone()),
         me_route(
             user_repository.clone(),

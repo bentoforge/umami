@@ -14,7 +14,9 @@ use crate::auth::ratelimit::{Decision, Policy, too_many_requests};
 use crate::auth::session::repository::NewSession;
 use crate::auth::session::{generate_refresh_secret, hash_refresh_secret, verify_refresh_secret};
 use crate::config::Config;
-use crate::constants::MAX_TEXT_BODY_SIZE;
+use crate::constants::{
+    MAX_TEXT_BODY_SIZE, SWITCH_TENANT_PERMISSION, SYSTEM_TENANT_MARKER, UMAMI_API_CODE,
+};
 use crate::users::User;
 use anyhow::Context;
 use chrono::Utc;
@@ -209,6 +211,25 @@ fn json_with_optional_cookie<S: Serialize>(
 
 // ── Business logic ──────────────────────────────────────────────────────────────
 
+/// Whether `user` may still hold a session scoped to a foreign tenant.
+///
+/// Deliberately config-driven rather than a bare `system_tenant_id == user.tenant_id` comparison:
+/// which subjects get `switch:tenant` is a decision of the `umami` API's permission mapping, and
+/// hardcoding "only system-tenant members" here would silently diverge from it the first time
+/// somebody maps the permission differently.
+fn may_switch_tenant(context: &AuthContext, config: &Config, user: &User) -> bool {
+    let Some(api) = config.find_api(UMAMI_API_CODE) else {
+        return false;
+    };
+    // Evaluated against the user's **home** tenant, which is where the entitlement lives.
+    let mut subjects: Vec<String> = user.roles.clone();
+    if context.system_tenant_id.as_deref() == Some(user.tenant_id.as_str()) {
+        subjects.push(SYSTEM_TENANT_MARKER.to_owned());
+    }
+    api.resolve(&subjects)
+        .is_some_and(|permissions| permissions.iter().any(|p| p == SWITCH_TENANT_PERMISSION))
+}
+
 /// Mints an access token for the given target API, resolving the user's roles/features through the
 /// config `apis` catalog (eligibility, permission projection, claim mapping). Shared by password
 /// login, WebAuthn login, and refresh — every session-issued access token is minted here.
@@ -239,7 +260,13 @@ async fn mint_access_token(
             token_version: user.token_version,
             subjects: &user.roles,
             features: &features,
-            system_tenant: context.system_tenant_id.as_deref() == Some(tenant_id),
+            // Computed from the user's **home** tenant, not the tenant being minted for.
+            // A system admin who switched into a customer tenant must keep
+            // `is:system-tenant` — otherwise the very token they act with drops
+            // `switch:tenant` and they cannot switch back. This mirrors what the
+            // switch route already did explicitly before the switch became a
+            // session-level state.
+            system_tenant: context.system_tenant_id.as_deref() == Some(user.tenant_id.as_str()),
             passkey: mfa_passkey,
             totp: mfa_totp,
             user: Some(user),
@@ -490,6 +517,7 @@ pub(crate) async fn issue_session(
         &secret,
         context.cookie_domain.as_deref(),
         refresh_ttl_secs,
+        context.cookie_policy,
     );
 
     Ok((access_token, set_cookie))
@@ -578,16 +606,44 @@ async fn refresh(
             &new_secret,
             context.cookie_domain.as_deref(),
             refresh_ttl_secs,
+            context.cookie_policy,
         ))
     } else {
         None
     };
 
-    // The session's active tenant is the user's home tenant (single-tenant v1); fall back to it.
-    let tenant_id = session
-        .active_tenant_id
-        .as_deref()
-        .unwrap_or(&user.tenant_id);
+    // The session's active tenant. Normally the user's home tenant; a system admin may have
+    // re-scoped it via `POST /auth/switch-tenant`.
+    //
+    // Because that switch is durable, entitlement has to be re-checked here rather than relying on
+    // a short token lifetime to expire it: an admin removed from the system tenant (or whose role
+    // lost `switch:tenant`) must stop minting tokens for the foreign tenant on their very next
+    // refresh. No extra I/O for this — `config` and `user` are already loaded, and the check is a
+    // permission projection over data in hand.
+    let tenant_id = match session.active_tenant_id.as_deref() {
+        Some(active) if active != user.tenant_id => {
+            if may_switch_tenant(context, &config, &user) {
+                active
+            } else {
+                record_best_effort(
+                    &context.audit,
+                    NewAuditEntry::new(
+                        AuditSeverity::Bad,
+                        Some(user.tenant_id.clone()),
+                        Some(user.user_id.clone()),
+                        format!(
+                            "Session '{session_id}' was scoped to tenant '{active}' but \
+                             '{}' may no longer switch tenants — falling back to the home tenant",
+                            user.user_id
+                        ),
+                    ),
+                )
+                .await;
+                &user.tenant_id
+            }
+        }
+        _ => &user.tenant_id,
+    };
     // Mint for the API the caller asked for (default `umami`) — the session is audience-agnostic, so
     // the same cookie can be traded for a token for any API the user is eligible for. Carry the
     // session's original auth-strength markers (is:passkey/is:totp/is:2fa) across the rotation.
@@ -625,5 +681,8 @@ async fn logout(context: &AuthContext, cookie_header: Option<&str>) -> anyhow::R
         context.sessions.delete_session(&session_id).await?;
     }
 
-    Ok(clear_refresh_cookie(context.cookie_domain.as_deref()))
+    Ok(clear_refresh_cookie(
+        context.cookie_domain.as_deref(),
+        context.cookie_policy,
+    ))
 }

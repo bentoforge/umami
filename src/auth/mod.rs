@@ -3,6 +3,7 @@
 //! dependencies for the auth routes are bundled in [`AuthContext`].
 
 pub mod apikeys;
+pub mod authorize;
 pub mod broker;
 pub mod cookies;
 pub mod login;
@@ -51,6 +52,8 @@ pub struct AuthContext {
     pub system_tenant_id: Option<String>,
     /// Optional `Domain` attribute for the refresh cookie (`UMAMI_COOKIE_DOMAIN`).
     pub cookie_domain: Option<String>,
+    /// `Secure`/`SameSite` for the refresh cookie (`UMAMI_COOKIE_SECURE`/`_SAMESITE`).
+    pub cookie_policy: crate::auth::cookies::CookiePolicy,
 }
 
 impl AuthContext {
@@ -70,6 +73,7 @@ impl AuthContext {
         let cookie_domain = env::var("UMAMI_COOKIE_DOMAIN")
             .ok()
             .filter(|d| !d.is_empty());
+        let cookie_policy = crate::auth::cookies::CookiePolicy::from_env()?;
         let system_tenant_id = env::var("UMAMI_SYSTEM_TENANT_ID")
             .ok()
             .filter(|id| !id.is_empty());
@@ -85,6 +89,7 @@ impl AuthContext {
             rate_limiter,
             system_tenant_id,
             cookie_domain,
+            cookie_policy,
         })
     }
 }

@@ -70,7 +70,13 @@ Relevant environment variables:
 // SecuritySettings:
 { "minPasswordLength": 8, "accessTtlSecs": 600, "refreshTtlSecs": 2592000,
   "messagingCodeTtlSecs": 600,    // link-code validity window (single-use OTP)
-  "rateLimits": RateLimitsConfig } // auth-endpoint rate limits (see §8)
+  "rateLimits": RateLimitsConfig,  // auth-endpoint rate limits (see §8)
+  "redirectUris": [                // exact URLs GET /auth/authorize may return to
+    "https://app.example.com/auth/callback" ] }
+//   redirectUris is top-level, not per-API: logging in is not an API-scoped act — the session it
+//   creates is audience-agnostic, and which APIs the user may then call follows from their roles.
+//   Matched EXACTLY: no prefixes, no wildcards (`https://app.example.com.evil.test` would
+//   prefix-match). Empty list ⇒ the hosted-login redirect is disabled.
 
 // RateLimitsConfig — all three policies optional (older configs keep loading); a policy's
 //   max (maxFailures / maxPerWindow) of 0 disables it (e.g. run per-IP only):

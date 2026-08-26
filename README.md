@@ -11,6 +11,21 @@ umami signs short-lived **ES256** access tokens and publishes its public keys at
 umami on the hot path, no shared session store, no SDK lock-in. A service trusts umami by
 configuration alone.
 
+> ### One umami per environment — not one login for everyone
+>
+> This is the point of umami, and the sharpest difference to Auth0, Okta or Cognito: it is **not** a
+> central identity service that many organisations federate into. It is a component you **deploy
+> into your own environment**, next to the services it serves — one deployment per environment, each
+> with its own users, tenants, signing keys and config document.
+>
+> Two companies running umami share nothing: no accounts, no sessions, no operator, no blast radius.
+> A staging environment runs its own umami with its own data. „SSO between our products" means the
+> products that sit in *one* environment behind *one* umami — never across deployments.
+>
+> Practically, that keeps the deployment simple: umami and the apps it serves are normally
+> **same-site** (`iam.example.com` ↔ `app.example.com`), so the refresh cookie just works and no
+> third-party-cookie machinery is needed.
+
 ---
 
 ## What it is
@@ -36,8 +51,17 @@ umami is the identity boundary, not the application.
   (machine principals carrying `scope:*`).
 - Synthetic **auth-strength markers** (`is:passkey` / `is:totp` / `is:2fa`) carried in the token.
 
+**Hosted login**
+- One login page (`/app/login`) for every app in the deployment: `GET /auth/authorize?redirectUri=…&state=…`
+  ensures a session and bounces the browser back. **No authorization code and no token in the
+  response** — umami sits same-site with its apps, so the browser carries the refresh cookie itself
+  and the app just calls `/auth/refresh?api=…` on return. `state` is the app's own round-trip check.
+- `redirectUri` is matched against `security.redirectUris` **exactly**; without that allow-list the
+  endpoint would be an open redirector wearing the IAM domain's credibility.
+
 **Sessions & tokens**
-- `HttpOnly; Secure; SameSite=Lax` refresh cookie with **rotation + reuse detection** (a replayed
+- `HttpOnly; Path=/auth` refresh cookie — `Secure` + `SameSite=Lax` by default, both configurable
+  for local HTTP / cross-site deployments — with **rotation + reuse detection** (a replayed
   old secret revokes the session), plus a short **grace window** so racing tab refreshes don't trip
   it.
 - Short-lived **ES256** access tokens + a **JWKS** endpoint for offline verification.
@@ -45,6 +69,10 @@ umami is the identity boundary, not the application.
   the target is chosen per request (`/auth/refresh?api=…`), not pinned at login.
 - Two revocation levers: bump a user's `tokenVersion` (all sessions) or delete one session (one
   device).
+- **Tenant switching is session state**: `POST /auth/switch-tenant` re-scopes the session, so every
+  later refresh follows it, a reload keeps it, and clients need no "acting as" bookkeeping. Because
+  it is durable, refresh re-checks on every call that the user may still switch and otherwise falls
+  back to their home tenant (audited).
 - **Rate limiting** on the auth endpoints — layered per-IP + per-API-key (`/auth/token` volume cap
   to throttle non-caching clients) + per-account (`/auth/login` brute-force), fail-open, `429` +
   `Retry-After`. Thresholds in the config `security.rateLimits` (see [docs/CONFIG.md](docs/CONFIG.md)).
@@ -107,6 +135,25 @@ self-hosted service.
 
 ## Quick start
 
+### Running locally next to your app
+
+umami is deployed per environment, so the compose file that starts it belongs to
+**the environment**, not here — see the consuming repo (for noonu/WSC:
+`wsc/docker-compose.yml`). Two things bite whichever way you start it:
+
+- **Publish umami on the port its issuer names.** `AUTH_ISSUER=<iss>=jwks:/…`
+  makes umami validate its own admin tokens by fetching the JWKS at the issuer
+  URL, so that URL has to resolve identically from inside the process and from
+  the browser. Under Docker, remapping the port (`-p 8090:8080` with
+  `UMAMI_ISSUER=http://localhost:8090/`) starts fine and then rejects every
+  authenticated request, because `localhost:8090` inside the container is nothing.
+- **Set `UMAMI_COOKIE_SECURE=false` for plain HTTP.** Chrome and Firefox accept
+  `Secure` cookies from `localhost` (it counts as a trustworthy origin), Safari
+  does not. `SameSite` needs no change: an app on `localhost:5173` is *same-site*
+  with umami on `localhost:8080` — SameSite ignores ports.
+
+### From source
+
 ```bash
 # 1. AWS creds for the target account (dev uses AWS SSO)
 aws sso login --profile dbx-dev
@@ -167,7 +214,9 @@ the **system config document** (behavior — roles, features, APIs, security pol
 | `UMAMI_PREVIOUS_KEYS` | Rotation: JSON array of retired **public** JWKs, kept in the JWKS so tokens from a just-rotated key still verify until they expire. |
 | `UMAMI_DEFAULT_AUDIENCE` | Fallback `aud` when a call names none. |
 | `UMAMI_MFA_KEY` | Key (base64 of 32 bytes) encrypting TOTP secrets at rest. |
-| `UMAMI_COOKIE_DOMAIN` | Domain for the refresh cookie. |
+| `UMAMI_COOKIE_DOMAIN` | Domain for the refresh cookie. Omit for a host-only cookie. |
+| `UMAMI_COOKIE_SECURE` | `Secure` on the refresh cookie. Default `true`; set `false` only to serve umami over plain `http://localhost` (Safari refuses `Secure` there, Chrome/Firefox do not). |
+| `UMAMI_COOKIE_SAMESITE` | `lax` (default), `strict` or `none`. `none` only for an app on a different registrable domain — the cookie is then third-party, which Safari blocks and Chrome restricts. `none` without `Secure` is refused at boot. |
 | `UMAMI_WEBAUTHN_RP_ID`, `UMAMI_WEBAUTHN_ORIGIN` | WebAuthn relying-party id + site origin. |
 
 **Config store, system tenant, misc**

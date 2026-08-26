@@ -30,6 +30,9 @@ const FIELD_USER_ID: &str = "userId";
 /// GSI range key — recency (`lastSeen`), so a user's sessions sort newest-first.
 const FIELD_LAST_SEEN: &str = "lastSeen";
 
+/// Tenant the session currently acts in — rewritten by `POST /auth/switch-tenant`.
+const FIELD_ACTIVE_TENANT_ID: &str = "activeTenantId";
+
 /// GSI listing a user's sessions by recent activity.
 const INDEX_BY_USER: &str = "ByUserIndex";
 
@@ -73,6 +76,15 @@ pub trait SessionRepository: Send + Sync {
         new_refresh_hash: String,
         ttl_secs: i64,
     ) -> anyhow::Result<()>;
+
+    /// Re-scopes a session to another tenant (cross-tenant admin, `POST /auth/switch-tenant`).
+    ///
+    /// The switch is session state rather than a one-off token, so every later
+    /// `/auth/refresh` follows it and a page reload does not lose it. `rotate_session`
+    /// deliberately does not touch this field, so the switch survives refresh rotation.
+    ///
+    /// Passing the user's home tenant switches back.
+    async fn set_active_tenant(&self, session_id: &str, tenant_id: &str) -> anyhow::Result<()>;
 
     /// Deletes a session (single-device logout, or reuse-detection response).
     async fn delete_session(&self, session_id: &str) -> anyhow::Result<()>;
@@ -246,6 +258,29 @@ impl SessionRepository for DynamoSessionRepository {
                 ":ttl",
                 AttributeValue::N(expires_at.timestamp().to_string()),
             )
+            .send()
+            .await
+            .context("Error updating table 'sessions'")?;
+
+        Ok(())
+    }
+
+    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    async fn set_active_tenant(&self, session_id: &str, tenant_id: &str) -> anyhow::Result<()> {
+        // Touches `activeTenantId` and nothing else: the refresh hash, the grace window and the
+        // lifetime must survive a tenant switch untouched, or switching would silently log the
+        // admin out of every other tab.
+        let _ = self
+            .client
+            .update_item(TABLE_SESSIONS)
+            .key(FIELD_SESSION_ID, str(session_id))
+            .update_expression("SET #activeTenantId = :activeTenantId")
+            // A session deleted mid-switch (logout elsewhere, reuse detection) must not be
+            // resurrected by this write.
+            .condition_expression("attribute_exists(#sessionId)")
+            .expression_attribute_names("#sessionId", FIELD_SESSION_ID)
+            .expression_attribute_names("#activeTenantId", FIELD_ACTIVE_TENANT_ID)
+            .expression_attribute_values(":activeTenantId", str(tenant_id))
             .send()
             .await
             .context("Error updating table 'sessions'")?;

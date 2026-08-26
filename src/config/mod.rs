@@ -321,6 +321,18 @@ pub struct SecuritySettings {
     /// Rate-limit policies for the auth endpoints (see [`RateLimitsConfig`] and `docs/CONFIG.md`).
     #[serde(default)]
     pub rate_limits: RateLimitsConfig,
+    /// Exact URLs `GET /auth/authorize` may redirect back to.
+    ///
+    /// Top-level rather than per-API, because logging in is not an API-scoped act: the session it
+    /// establishes is audience-agnostic, and which APIs the user can then call follows from their
+    /// roles, not from who sent them to the login page.
+    ///
+    /// **Matched exactly — no prefixes, no wildcards.** Prefix matching is the classic hole here
+    /// (`https://app.example.com.evil.test` prefix-matches `https://app.example.com`), and without
+    /// an allow-list at all, `authorize` is an open redirector that lends the IAM domain's
+    /// credibility to any destination. Empty list = the flow is off.
+    #[serde(default)]
+    pub redirect_uris: Vec<String>,
 }
 
 /// Serde default for [`SecuritySettings::messaging_code_ttl_secs`] (back-compat for older configs).
@@ -690,6 +702,9 @@ impl Default for Config {
                 refresh_ttl_secs: DEFAULT_REFRESH_TTL_SECS,
                 messaging_code_ttl_secs: DEFAULT_MESSAGING_CODE_TTL_SECS,
                 rate_limits: RateLimitsConfig::default(),
+                // Empty by default: the hosted-login redirect stays off until a deployment
+                // names the URLs it trusts.
+                redirect_uris: Vec::new(),
             },
             messaging: MessagingConfig::default(),
             branding: BrandingConfig::default(),

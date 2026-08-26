@@ -3982,6 +3982,7 @@ dependencies = [
  "lru 0.18.2",
  "mockall",
  "p256",
+ "percent-encoding",
  "qrcode",
  "rand 0.9.5",
  "rust_decimal",

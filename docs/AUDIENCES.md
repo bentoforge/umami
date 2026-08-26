@@ -82,7 +82,8 @@ by refresh cookie vs. by API key.
    `kind: "api_key"`. No cookie, no session — this is the machine/BFF path.
 
 > **Cross-*site* SPAs** (a product SPA on a genuinely different registrable domain, where
-> `SameSite=Lax` withholds the umami cookie on background `fetch`) are **not** served by a
+> the default `SameSite=Lax` withholds the umami cookie on background `fetch`; `UMAMI_COOKIE_SAMESITE=none`
+> makes it third-party, which Safari blocks outright) are **not** served by a
 > bearer-based token exchange in v1; they use the enterprise **OIDC redirect** flow (a top-level
 > navigation, which `Lax` does carry). Same-*site* subdomains (`spa.myapp.com` → `iam.myapp.com`)
 > use path 1 directly with `fetch(..., { credentials: "include" })` + CORS.
@@ -112,3 +113,9 @@ A key requests `api=dbx-core`; its roles resolve to `{member, write:blocks}`; it
 
 - `perm:`/`feat:` namespacing in the DSL; per-API rate limits; audience-scoped API-key creation
   restrictions.
+- An **authorization code** for `GET /auth/authorize`. The redirect itself exists (hosted login,
+  `security.redirectUris`), but it hands back only control, not a credential: umami is deployed
+  next to the apps it serves, so the browser carries the refresh cookie across the redirect and the
+  app refreshes normally. A code (plus its table, TTL, single-use enforcement, reuse detection and
+  PKCE) becomes necessary only for a deployment that puts umami on a *different registrable domain*
+  than the app.

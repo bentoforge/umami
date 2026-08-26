@@ -1,12 +1,43 @@
 import { UmamiError } from "@bentoforge/umami-iam";
 import { type FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useSearchParams } from "react-router-dom";
 import { useUmami } from "../auth/UmamiProvider";
 import { Logo } from "../components";
+
+/**
+ * Where to go after a successful login, from `?next=`.
+ *
+ * Only **same-origin absolute paths** are honoured. `next` arrives in a URL that anyone can hand
+ * a user, so an unchecked value turns the login page into an open redirector — and one that runs
+ * right after the user typed their password, which is the worst possible moment to bounce them
+ * somewhere hostile.
+ *
+ * Rejected: anything with a scheme or authority (`https://evil.test`, `//evil.test`), and
+ * backslash variants that some browsers normalise into `//`. The cross-origin case is served by
+ * `GET /auth/authorize`, which has its own exact-match allow-list — `next` only ever points back
+ * at umami itself.
+ */
+function safeNext(raw: string | null): string | null {
+  if (!raw) {
+    return null;
+  }
+  if (!raw.startsWith("/") || raw.startsWith("//") || raw.startsWith("/\\")) {
+    return null;
+  }
+  if (raw.includes("\\")) {
+    return null;
+  }
+  return raw;
+}
 
 export function LoginPage() {
   const { t } = useTranslation();
   const { client, refreshMe } = useUmami();
+  const [searchParams] = useSearchParams();
+  // Set when an app sent the user here through /auth/authorize; the value points back at that
+  // endpoint, which re-decides the redirect now that a session cookie exists.
+  const next = safeNext(searchParams.get("next"));
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [totpCode, setTotpCode] = useState("");
@@ -24,7 +55,7 @@ export function LoginPage() {
         setMfaRequired(true);
         return;
       }
-      await refreshMe();
+      await afterLogin();
     } catch (err) {
       setError(err instanceof UmamiError ? err.message : t("login.failed"));
     } finally {
@@ -32,12 +63,27 @@ export function LoginPage() {
     }
   };
 
+  /**
+   * Hand control back to whoever sent us here, or fall through to the console.
+   *
+   * A full page assignment rather than a client-side navigation: `next` is a server route
+   * (`/auth/authorize`), not a route of this SPA, and it answers with a 302 the browser has to
+   * follow.
+   */
+  const afterLogin = async () => {
+    if (next) {
+      window.location.assign(next);
+      return;
+    }
+    await refreshMe();
+  };
+
   const onPasskey = async () => {
     setBusy(true);
     setError(null);
     try {
       await client.loginWithPasskey(username);
-      await refreshMe();
+      await afterLogin();
     } catch (err) {
       setError(err instanceof UmamiError ? err.message : t("login.failed"));
     } finally {

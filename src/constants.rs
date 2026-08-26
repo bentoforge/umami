@@ -51,6 +51,11 @@ pub const MANAGE_TENANTS_PERMISSION: &str = "manage:tenants";
 /// `is:system-tenant`.
 pub const SWITCH_TENANT_PERMISSION: &str = "switch:tenant";
 
+/// Config `apis` code of umami's own admin API — the default audience for the console flows
+/// (`/auth/refresh`, `/auth/switch-tenant`) and the catalog entry whose permission mapping decides
+/// who may switch tenants.
+pub const UMAMI_API_CODE: &str = "umami";
+
 /// Claim a `(platform, externalId) → user` messaging mapping via a link code. Held by a bot backend
 /// (a system-tenant service key carrying `scope:messaging-linker`).
 pub const MESSAGING_LINK_PERMISSION: &str = "messaging:link";
@@ -101,7 +106,8 @@ pub const MAX_TEXT_BODY_SIZE: u64 = 1024 * 1024;
 
 // ── Cookie names ──────────────────────────────────────────────────────────────
 
-/// Name of the `HttpOnly; Secure; SameSite=Lax` refresh cookie. Its value is
+/// Name of the `HttpOnly; Path=/auth` refresh cookie (`Secure`/`SameSite` per
+/// [`crate::auth::cookies::CookiePolicy`]). Its value is
 /// `"<sessionId>.<refreshSecret>"`; only umami's refresh endpoint ever reads it.
 pub const REFRESH_COOKIE_NAME: &str = "umami_refresh";
 
