@@ -61,13 +61,36 @@ jobs:
       - uses: ./.github/actions/verify-rust
 
   # 4. Docker → build the self-contained image (UI baked in) and push to GHCR.
+  #
+  # Multi-arch, one native runner per architecture. The image is consumed by
+  # Fargate services on ARM64 (cheaper, and what the noonu fleet runs) and by
+  # x86 hosts elsewhere, so dropping either would break somebody. Cross-building
+  # under QEMU is not an option here: the release profile compiles the whole Rust
+  # tree, and emulated that takes tens of minutes.
+  #
+  # Each runner pushes an untagged manifest **by digest**; the merge job below
+  # assembles the tag from those digests. That is the documented buildx pattern
+  # for split-runner multi-arch builds — a shared tag pushed twice would simply
+  # overwrite itself, leaving whichever arch finished last.
   docker:
-    name: Build & push image
+    name: Build image (${{ matrix.arch }})
     needs: rust
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+            platform: linux/amd64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
     permissions:
       contents: read
       packages: write
+    outputs:
+      image: ${{ steps.img.outputs.name }}
     steps:
       - uses: actions/checkout@v4
       - name: Lowercase image name
@@ -79,14 +102,61 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v6
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
         with:
           context: .
-          push: true
+          platforms: ${{ matrix.platform }}
           build-args: |
             APP_VERSION=${{ github.ref_name }}
-          tags: |
-            ${{ steps.img.outputs.name }}:${{ github.ref_name }}
-            ${{ steps.img.outputs.name }}:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          outputs: type=image,name=${{ steps.img.outputs.name }},push-by-digest=true,name-canonical=true,push=true
+          # Per-arch cache scopes: one shared scope would have the two runners
+          # evicting each other's layers on every release.
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
+      - name: Export the digest
+        run: |
+          mkdir -p /tmp/digests
+          echo "${{ steps.build.outputs.digest }}" > "/tmp/digests/${{ matrix.arch }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.arch }}
+          path: /tmp/digests/*
+          retention-days: 1
+
+  # 5. Assemble the multi-arch manifest and give it the release tags.
+  manifest:
+    name: Publish manifest
+    needs: docker
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: digest-*
+          merge-multiple: true
+          path: /tmp/digests
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create and push the manifest list
+        env:
+          IMAGE: ${{ needs.docker.outputs.image }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          refs=""
+          for f in /tmp/digests/*; do
+            refs="$refs ${IMAGE}@$(cat "$f")"
+          done
+          docker buildx imagetools create \
+            --tag "${IMAGE}:${TAG}" \
+            --tag "${IMAGE}:latest" \
+            $refs
+          docker buildx imagetools inspect "${IMAGE}:${TAG}"
