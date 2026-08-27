@@ -17,7 +17,7 @@ use crate::constants::{
     MANAGE_SERVICE_KEYS_PERMISSION, MANAGE_SESSIONS_PERMISSION, MANAGE_TENANTS_PERMISSION,
     MANAGE_USERS_PERMISSION, MESSAGING_CONFIGURED_MARKER, MESSAGING_LINK_PERMISSION,
     MESSAGING_RESOLVE_PERMISSION, ROLE_MEMBER, ROLE_OWNER, SWITCH_TENANT_PERMISSION,
-    SYSTEM_TENANT_MARKER,
+    SYSTEM_TENANT_MARKER, SYSTEM_TENANT_MEMBER_MARKER,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -758,9 +758,11 @@ impl Default for Config {
                             MANAGE_CONFIG_PERMISSION,
                         ],
                     ),
-                    // Cross-tenant admin comes only from the system tenant.
+                    // Cross-tenant admin comes from system-tenant *membership*, not from
+                    // currently acting inside it: a support user who switched into a customer
+                    // tenant has to keep `switch:tenant`, or they cannot switch back.
                     rule(
-                        SYSTEM_TENANT_MARKER,
+                        SYSTEM_TENANT_MEMBER_MARKER,
                         &[MANAGE_TENANTS_PERMISSION, SWITCH_TENANT_PERMISSION],
                     ),
                     // Self-service messaging is available to everyone once the deployment has a bot
@@ -960,11 +962,34 @@ mod tests {
         // cross-tenant permissions come only from the system-tenant marker, never a plain role
         assert!(!owner.contains(&"manage:tenants".to_owned()));
         assert!(!owner.contains(&"switch:tenant".to_owned()));
-        let sys = umami
+        // Cross-tenant admin follows *membership*, not where the token currently acts. Three
+        // situations, and the markers tell them apart:
+
+        // 1. At home in the system tenant — both markers hold.
+        let at_home = umami
+            .resolve(&s(&[
+                "role:owner",
+                "is:system-tenant",
+                "is:system-tenant-member",
+            ]))
+            .unwrap();
+        assert!(at_home.contains(&"manage:tenants".to_owned()));
+        assert!(at_home.contains(&"switch:tenant".to_owned()));
+
+        // 2. Switched into a customer tenant — member, but no longer acting in the system
+        //    tenant. Keeping `switch:tenant` here is the point of the split: without it the
+        //    token in hand cannot switch back.
+        let switched = umami
+            .resolve(&s(&["role:owner", "is:system-tenant-member"]))
+            .unwrap();
+        assert!(switched.contains(&"switch:tenant".to_owned()));
+
+        // 3. Acting inside the system tenant without being a member grants nothing cross-tenant.
+        let acting_only = umami
             .resolve(&s(&["role:owner", "is:system-tenant"]))
             .unwrap();
-        assert!(sys.contains(&"manage:tenants".to_owned()));
-        assert!(sys.contains(&"switch:tenant".to_owned()));
+        assert!(!acting_only.contains(&"manage:tenants".to_owned()));
+        assert!(!acting_only.contains(&"switch:tenant".to_owned()));
         // Baseline self-service (empty `when`) is granted to any logged-in user, so even an
         // otherwise-unmapped viewer gets the granular self-service permissions — and there is no
         // longer a `self:readonly` deny marker.

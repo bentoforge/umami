@@ -150,10 +150,13 @@ async fn switch_tenant(
             token_version: user.token_version,
             subjects: &user.roles,
             features: &target.features,
-            // Retain system-admin: keep is:system-tenant so manage:tenants + switch:tenant and
-            // the ability to switch again (or back) persist. `mint_access_token` on the refresh
-            // path derives the same thing from the user's home tenant.
-            system_tenant: true,
+            // Only a system-tenant member may switch, so the member marker always holds here —
+            // that is what keeps `switch:tenant` alive and lets them switch again or back. The
+            // acting marker follows the *target*: switching into a customer tenant means no
+            // longer acting inside the system tenant. `mint_access_token` on the refresh path
+            // derives both the same way.
+            system_tenant: context.system_tenant_id.as_deref() == Some(target.tenant_id.as_str()),
+            system_tenant_member: true,
             passkey,
             totp,
             user: Some(&user),

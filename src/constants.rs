@@ -72,7 +72,13 @@ pub const MANAGE_MESSAGING_PERMISSION: &str = "manage:messaging";
 // ── Synthetic subject markers (computed at mint time, never stored) ────────────
 
 /// Added to the subject set when the token's tenant is the configured `UMAMI_SYSTEM_TENANT_ID`.
+/// The **tenant being acted in** is the system tenant. Describes *where*, not *who*.
 pub const SYSTEM_TENANT_MARKER: &str = "is:system-tenant";
+/// The principal's **home** tenant is the system tenant. Describes *who*, and survives a tenant
+/// switch — support staff live in the system tenant and work inside customer tenants, where they
+/// keep this marker but lose [`SYSTEM_TENANT_MARKER`]. Splitting the two is what lets a rule say
+/// "manage users anywhere except in the system tenant itself".
+pub const SYSTEM_TENANT_MEMBER_MARKER: &str = "is:system-tenant-member";
 
 /// Added to every token's subject set when the config has a Telegram bot and/or WhatsApp number
 /// set (`messaging.telegramBot` / `messaging.whatsappNumber`). A global capability marker.

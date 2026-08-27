@@ -5,8 +5,8 @@
 use crate::auth::tokens::{AccessTokenClaims, TokenIssuer};
 use crate::config::Config;
 use crate::constants::{
-    MESSAGING_CONFIGURED_MARKER, PASSKEY_MARKER, SYSTEM_TENANT_MARKER, TOTP_MARKER,
-    TWO_FACTOR_MARKER,
+    MESSAGING_CONFIGURED_MARKER, PASSKEY_MARKER, SYSTEM_TENANT_MARKER, SYSTEM_TENANT_MEMBER_MARKER,
+    TOTP_MARKER, TWO_FACTOR_MARKER,
 };
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -38,9 +38,13 @@ pub struct MintParams<'a> {
     pub subjects: &'a [String],
     /// The tenant's granted features (namespaced `feature:*`).
     pub features: &'a [String],
-    /// Whether the token's tenant is the configured system tenant (adds the `is:system-tenant`
-    /// synthetic marker to the subject set).
+    /// Whether the tenant this token acts in is the configured system tenant (adds
+    /// `is:system-tenant`).
     pub system_tenant: bool,
+    /// Whether the principal's **home** tenant is the system tenant (adds
+    /// `is:system-tenant-member`). Unlike [`Self::system_tenant`] this survives a tenant switch:
+    /// it says who the principal is, not where they are working.
+    pub system_tenant_member: bool,
     /// Whether the session authenticated with a passkey (adds `is:passkey` + `is:2fa`).
     pub passkey: bool,
     /// Whether the session authenticated with a TOTP second factor (adds `is:totp` + `is:2fa`).
@@ -74,6 +78,9 @@ pub async fn mint_for_api(
     subject_set.extend(params.features.iter().cloned());
     if params.system_tenant {
         subject_set.push(SYSTEM_TENANT_MARKER.to_owned());
+    }
+    if params.system_tenant_member {
+        subject_set.push(SYSTEM_TENANT_MEMBER_MARKER.to_owned());
     }
     // Authentication-strength markers reflecting how *this* session was authenticated, so permission
     // rules / API eligibility can require a second factor (e.g. `when: "is:2fa"`).

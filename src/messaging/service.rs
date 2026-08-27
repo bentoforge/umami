@@ -499,6 +499,7 @@ async fn resolve(query: ResolveQuery, deps: ResolveDeps) -> anyhow::Result<Value
                 features: &features,
                 // A messaging-resolved token never carries system-admin rights.
                 system_tenant: false,
+                system_tenant_member: false,
                 passkey: false,
                 totp: false,
                 user: Some(&user),

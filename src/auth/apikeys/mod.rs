@@ -691,7 +691,9 @@ async fn exchange(
                     token_version: user.token_version,
                     subjects: &subjects,
                     features: &features,
+                    // A key never switches tenants, so acting-in and membership coincide.
                     system_tenant: is_system(&user.tenant_id),
+                    system_tenant_member: is_system(&user.tenant_id),
                     passkey: false,
                     totp: false,
                     user: Some(&user),
@@ -717,7 +719,9 @@ async fn exchange(
                     token_version: 0,
                     subjects: &key.scopes,
                     features: &features,
+                    // A key never switches tenants, so acting-in and membership coincide.
                     system_tenant: is_system(&key.tenant_id),
+                    system_tenant_member: is_system(&key.tenant_id),
                     passkey: false,
                     totp: false,
                     user: None,

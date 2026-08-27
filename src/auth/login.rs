@@ -15,7 +15,8 @@ use crate::auth::session::repository::NewSession;
 use crate::auth::session::{generate_refresh_secret, hash_refresh_secret, verify_refresh_secret};
 use crate::config::Config;
 use crate::constants::{
-    MAX_TEXT_BODY_SIZE, SWITCH_TENANT_PERMISSION, SYSTEM_TENANT_MARKER, UMAMI_API_CODE,
+    MAX_TEXT_BODY_SIZE, SWITCH_TENANT_PERMISSION, SYSTEM_TENANT_MARKER,
+    SYSTEM_TENANT_MEMBER_MARKER, UMAMI_API_CODE,
 };
 use crate::users::User;
 use anyhow::Context;
@@ -221,10 +222,13 @@ fn may_switch_tenant(context: &AuthContext, config: &Config, user: &User) -> boo
     let Some(api) = config.find_api(UMAMI_API_CODE) else {
         return false;
     };
-    // Evaluated against the user's **home** tenant, which is where the entitlement lives.
+    // Evaluated against the user's **home** tenant, which is where the entitlement lives — and
+    // at home both markers hold: the user is a member of that tenant *and* acting in it. Pushing
+    // only one would silently answer a different question than the config rule asks.
     let mut subjects: Vec<String> = user.roles.clone();
     if context.system_tenant_id.as_deref() == Some(user.tenant_id.as_str()) {
         subjects.push(SYSTEM_TENANT_MARKER.to_owned());
+        subjects.push(SYSTEM_TENANT_MEMBER_MARKER.to_owned());
     }
     api.resolve(&subjects)
         .is_some_and(|permissions| permissions.iter().any(|p| p == SWITCH_TENANT_PERMISSION))
@@ -260,13 +264,15 @@ async fn mint_access_token(
             token_version: user.token_version,
             subjects: &user.roles,
             features: &features,
-            // Computed from the user's **home** tenant, not the tenant being minted for.
-            // A system admin who switched into a customer tenant must keep
-            // `is:system-tenant` — otherwise the very token they act with drops
-            // `switch:tenant` and they cannot switch back. This mirrors what the
-            // switch route already did explicitly before the switch became a
-            // session-level state.
-            system_tenant: context.system_tenant_id.as_deref() == Some(user.tenant_id.as_str()),
+            // The two markers deliberately disagree after a tenant switch. `is:system-tenant`
+            // follows the tenant being minted for — a support user working inside a customer
+            // tenant is *not* acting in the system tenant, and rules like "manage users
+            // everywhere except in the system tenant itself" depend on that being false.
+            // `is:system-tenant-member` follows the user's **home** tenant, so the same token
+            // keeps `switch:tenant`; without it the switched admin could not switch back.
+            system_tenant: context.system_tenant_id.as_deref() == Some(tenant_id),
+            system_tenant_member: context.system_tenant_id.as_deref()
+                == Some(user.tenant_id.as_str()),
             passkey: mfa_passkey,
             totp: mfa_totp,
             user: Some(user),
