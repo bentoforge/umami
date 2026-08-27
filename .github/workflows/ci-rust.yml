@@ -20,6 +20,6 @@ jobs:
     name: fmt + clippy + build + test + audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Runs fmt --check, clippy -D warnings, build, test and cargo audit in a pinned rust container.
       - uses: ./.github/actions/verify-rust

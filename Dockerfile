@@ -2,7 +2,7 @@
 
 # ── Stage 1: build the management UI (Vite/React SPA) ──────────────────────────
 # The UI depends on the TS client lib via `file:../typescript`, so build the lib first.
-FROM node:22-slim AS ui
+FROM node:24-slim AS ui
 WORKDIR /build
 COPY clients/typescript ./clients/typescript
 RUN cd clients/typescript && npm ci && npm run build
