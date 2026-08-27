@@ -295,11 +295,7 @@ async fn mint_access_token(
             // Always filled, so no service downstream has to re-derive it: the user's stated
             // preference if they have one, otherwise what this request's `Accept-Language` says,
             // otherwise the deployment default.
-            locale: &crate::i18n::resolve(
-                user.locale.as_deref(),
-                accept_language,
-                &config.default_locale,
-            ),
+            locale: &crate::i18n::resolve(config, user.locale.as_deref(), accept_language),
             system_tenant: context.system_tenant_id.as_deref() == Some(tenant_id),
             system_tenant_member: context.system_tenant_id.as_deref()
                 == Some(user.tenant_id.as_str()),

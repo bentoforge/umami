@@ -702,9 +702,9 @@ async fn exchange(
                     // A relaying service states the language of the person it acts for; a PAT
                     // otherwise inherits its owner's.
                     locale: &crate::i18n::resolve(
+                        &config,
                         request.locale.as_deref().or(user.locale.as_deref()),
                         None,
-                        &config.default_locale,
                     ),
                     system_tenant: is_system(&user.tenant_id),
                     system_tenant_member: is_system(&user.tenant_id),
@@ -735,11 +735,7 @@ async fn exchange(
                     features: &features,
                     // A key never switches tenants, so acting-in and membership coincide.
                     // A pure machine key has no user to inherit from.
-                    locale: &crate::i18n::resolve(
-                        request.locale.as_deref(),
-                        None,
-                        &config.default_locale,
-                    ),
+                    locale: &crate::i18n::resolve(&config, request.locale.as_deref(), None),
                     system_tenant: is_system(&key.tenant_id),
                     system_tenant_member: is_system(&key.tenant_id),
                     passkey: false,

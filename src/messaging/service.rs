@@ -499,7 +499,7 @@ async fn resolve(query: ResolveQuery, deps: ResolveDeps) -> anyhow::Result<Value
                 features: &features,
                 // A messaging-resolved token never carries system-admin rights.
                 // Session tokens carry the user's own language; nothing overrides it here.
-                locale: &crate::i18n::resolve(user.locale.as_deref(), None, &config.default_locale),
+                locale: &crate::i18n::resolve(&config, user.locale.as_deref(), None),
                 system_tenant: false,
                 system_tenant_member: false,
                 passkey: false,

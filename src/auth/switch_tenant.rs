@@ -157,7 +157,7 @@ async fn switch_tenant(
             // derives both the same way.
             // Session tokens carry the user's own language; nothing overrides it here.
             // Switching keeps the user's language; the header played its part at sign-in.
-            locale: &crate::i18n::resolve(user.locale.as_deref(), None, &config.default_locale),
+            locale: &crate::i18n::resolve(&config, user.locale.as_deref(), None),
             system_tenant: context.system_tenant_id.as_deref() == Some(target.tenant_id.as_str()),
             system_tenant_member: true,
             passkey,

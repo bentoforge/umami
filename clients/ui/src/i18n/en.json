@@ -47,6 +47,8 @@
     "logoutAllConfirm": "End all sessions of “{{name}}”? Every device loses access on its next refresh.",
     "username": "Username",
     "email": "Email",
+    "locale": "Language",
+    "localeAuto": "Automatic (browser)",
     "salutation": "Salutation",
     "salutationSir": "Mr",
     "salutationMadam": "Ms",
@@ -204,5 +206,9 @@
     "delete": "Delete",
     "deleteConfirm": "Remove the {{platform}} link \"{{id}}\"?",
     "menu": "Actions"
+  },
+  "locale": {
+    "de": "German",
+    "en": "English"
   }
 }

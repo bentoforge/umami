@@ -22,6 +22,8 @@
 //! developer text, they end up in logs, and translating them would only make an incident harder
 //! to search.
 
+use crate::config::Config;
+
 // The catalogue itself is loaded at the crate root (see `main.rs`): `i18n!` generates items that
 // `t!` resolves against `crate::`, so it only works from there.
 /// Renders `key` in `locale`, falling back to English when the catalogue has no entry.
@@ -32,7 +34,7 @@
 /// and nothing anywhere says why.
 pub fn message(locale: &str, key: &str) -> String {
     let tag = locale.trim().to_ascii_lowercase();
-    let effective = if SUPPORTED.contains(&tag.as_str()) {
+    let effective = if rust_i18n::available_locales!().iter().any(|l| l == &tag) {
         tag
     } else {
         tag.split(['-', '_']).next().unwrap_or_default().to_owned()
@@ -59,8 +61,41 @@ macro_rules! bail_i18n {
     };
 }
 
-/// The languages the catalogue actually speaks. Anything else negotiates down to the default.
-pub const SUPPORTED: &[&str] = &["de", "en"];
+/// The languages this deployment answers in.
+///
+/// Derived from the catalogue, not configured. A config list would be free to claim a language we
+/// cannot write and to omit one we ship — and the two consumers, header negotiation and the
+/// language picker in the user editor, would then be wrong in the same invisible way. What a
+/// deployment *may* do is offer fewer than we ship; it can never offer more, so `config.locales`
+/// narrows this set and never extends it.
+pub fn supported(config: &Config) -> Vec<String> {
+    let catalogue: Vec<String> = rust_i18n::available_locales!()
+        .into_iter()
+        .map(|l| l.to_string())
+        .collect();
+    if config.locales.is_empty() {
+        return catalogue;
+    }
+    let wanted: Vec<String> = config
+        .locales
+        .iter()
+        .map(|l| l.trim().to_ascii_lowercase())
+        .collect();
+    let narrowed: Vec<String> = catalogue
+        .iter()
+        .filter(|l| wanted.contains(l))
+        .cloned()
+        .collect();
+    if narrowed.is_empty() {
+        // A misconfigured list must not leave the deployment with no language at all.
+        tracing::warn!(
+            "config `locales` {:?} matches none of the translations we ship — ignoring it",
+            config.locales
+        );
+        return catalogue;
+    }
+    narrowed
+}
 
 /// The language for a token, in the order that respects what people have told us.
 ///
@@ -72,9 +107,15 @@ pub const SUPPORTED: &[&str] = &["de", "en"];
 ///
 /// Resolved once, here, and written into the claim. Downstream services then read one value
 /// instead of re-deriving this chain — and getting it subtly different.
-pub fn resolve(user_locale: Option<&str>, accept_language: Option<&str>, default: &str) -> String {
+pub fn resolve(
+    config: &Config,
+    user_locale: Option<&str>,
+    accept_language: Option<&str>,
+) -> String {
     if let Some(locale) = user_locale.map(str::trim).filter(|l| !l.is_empty()) {
         return locale.to_owned();
     }
-    wasabi::web::locale::negotiate_language(accept_language, SUPPORTED, default)
+    let supported = supported(config);
+    let refs: Vec<&str> = supported.iter().map(String::as_str).collect();
+    wasabi::web::locale::negotiate_language(accept_language, &refs, &config.default_locale)
 }

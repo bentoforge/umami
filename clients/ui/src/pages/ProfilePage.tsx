@@ -265,6 +265,8 @@ function BaseDataCard() {
   const [salutation, setSalutation] = useState<Salutation>("");
   const [firstname, setFirstname] = useState("");
   const [lastname, setLastname] = useState("");
+  const [locale, setLocale] = useState("");
+  const [locales, setLocales] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState(false);
@@ -274,7 +276,12 @@ function BaseDataCard() {
   useEffect(() => {
     client
       .getCustomFields()
-      .then((schema) => setDefs(schema.user))
+      .then((schema) => {
+        setDefs(schema.user);
+        // From the server: it knows which translations it was built with. A list kept here would
+        // offer languages the backend then answers in English.
+        setLocales(schema.locales);
+      })
       .catch(() => setDefs([]));
   }, [client]);
 
@@ -284,6 +291,7 @@ function BaseDataCard() {
     setSalutation(me?.user.salutation ?? "");
     setFirstname(me?.user.firstname ?? "");
     setLastname(me?.user.lastname ?? "");
+    setLocale(me?.user.locale ?? "");
   }, [me?.user]);
 
   useEffect(() => reset(), [reset]);
@@ -301,7 +309,17 @@ function BaseDataCard() {
       for (const def of editableDefs) {
         customFields[def.code] = values[def.code];
       }
-      await client.patchMe({ title, salutation, firstname, lastname, customFields });
+      const localeChanged = locale !== (me.user.locale ?? "");
+      await client.patchMe({ title, salutation, firstname, lastname, locale, customFields });
+
+      if (localeChanged) {
+        // Three things have to move, and none of them implies the others.
+        //
+        // The token carries the language as a claim, so until it rotates the server keeps
+        // answering in the old one. `refresh()` mints a new one from the preference just saved;
+        // the interface itself follows from `refreshMe()` below, via the provider.
+        await client.refresh().catch(() => false);
+      }
       await refreshMe();
       setOk(true);
       setEditing(false);
@@ -363,6 +381,18 @@ function BaseDataCard() {
                 value={lastname}
                 onChange={(e) => setLastname(e.target.value)}
               />
+            </Field>
+            <Field label={t("users.locale")}>
+              <select className={input} value={locale} onChange={(e) => setLocale(e.target.value)}>
+                {/* Empty = no preference, which lets the browser's Accept-Language decide and
+                    falls back to the deployment default. */}
+                <option value="">{t("users.localeAuto")}</option>
+                {locales.map((code) => (
+                  <option key={code} value={code}>
+                    {t(`locale.${code}`, { defaultValue: code })}
+                  </option>
+                ))}
+              </select>
             </Field>
             {editableDefs.length > 0 && (
               <CustomFieldsForm defs={editableDefs} values={values} onChange={setValues} />

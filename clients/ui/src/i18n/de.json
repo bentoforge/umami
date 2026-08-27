@@ -47,6 +47,8 @@
     "logoutAllConfirm": "Alle Sitzungen von „{{name}}“ beenden? Alle Geräte verlieren beim nächsten Refresh den Zugang.",
     "username": "Benutzername",
     "email": "E-Mail",
+    "locale": "Sprache",
+    "localeAuto": "Automatisch (Browser)",
     "salutation": "Anrede",
     "salutationSir": "Herr",
     "salutationMadam": "Frau",
@@ -204,5 +206,9 @@
     "delete": "Löschen",
     "deleteConfirm": "Verknüpfung mit {{platform}} „{{id}}“ entfernen?",
     "menu": "Aktionen"
+  },
+  "locale": {
+    "de": "Deutsch",
+    "en": "Englisch"
   }
 }

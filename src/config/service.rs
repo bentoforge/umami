@@ -21,12 +21,23 @@ use wasabi::web::warp::{into_response, with_body_as_json, with_cloneable};
 /// Permission required to read/write the global config.
 const REQUIRE_MANAGE_CONFIG: &[&str] = &[MANAGE_CONFIG_PERMISSION];
 
-/// The custom-field schemas any authenticated admin needs to render user/tenant forms + tables.
+/// What any authenticated admin needs to render user/tenant forms + tables.
+///
+/// Deliberately not behind `manage:config`: rendering a form is not administering the deployment.
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct CustomFieldsResponse {
     user: Vec<CustomFieldDef>,
     tenant: Vec<CustomFieldDef>,
+    /// Languages offered in the user editor's picker.
+    ///
+    /// Comes from here rather than from a list in the UI, because the truth is the message
+    /// catalogue the server was built with. A UI-side list would offer languages the server
+    /// cannot answer in — the user picks Bulgarian and is answered in English, with nothing
+    /// anywhere saying why.
+    locales: Vec<String>,
+    /// The one used when a user expresses no preference.
+    default_locale: String,
 }
 
 /// `GET /config` — return the whole config document (requires `manage:config`).
@@ -111,6 +122,8 @@ async fn custom_fields(config: Arc<dyn ConfigRepository>) -> anyhow::Result<Cust
     Ok(CustomFieldsResponse {
         user: config.custom_user_fields.clone(),
         tenant: config.custom_tenant_fields.clone(),
+        locales: crate::i18n::supported(&config),
+        default_locale: config.default_locale.clone(),
     })
 }
 

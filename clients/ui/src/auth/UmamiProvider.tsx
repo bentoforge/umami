@@ -1,5 +1,6 @@
 import { type MeResponse, UmamiClient } from "@bentoforge/umami-iam";
 import { createContext, type ReactNode, useContext, useEffect, useMemo, useState } from "react";
+import i18n from "../i18n/i18n";
 
 interface AuthContextValue {
   client: UmamiClient;
@@ -77,6 +78,16 @@ export function UmamiProvider({ baseUrl, children }: { baseUrl: string; children
       cancelled = true;
     };
   }, [client]);
+
+  // The user's stated language wins over the browser's, for the interface exactly as it does for
+  // the server's messages — otherwise someone who chose German on an English laptop reads a
+  // German error inside an English page. No preference set: the browser's guess stands.
+  useEffect(() => {
+    const preferred = me?.user.locale;
+    if (preferred && preferred !== i18n.language) {
+      void i18n.changeLanguage(preferred);
+    }
+  }, [me?.user.locale]);
 
   return (
     <AuthContext.Provider

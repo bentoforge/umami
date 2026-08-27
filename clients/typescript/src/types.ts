@@ -277,6 +277,12 @@ export interface CustomFieldDef {
 export interface CustomFieldsSchema {
   user: CustomFieldDef[];
   tenant: CustomFieldDef[];
+  /** Languages the deployment can actually answer in — the message catalogue, narrowed by
+   *  `config.locales`. Render the language picker from this, never from a list of your own: a
+   *  UI-side list offers languages the server will then answer in English. */
+  locales: string[];
+  /** Used when a user expresses no preference. */
+  defaultLocale: string;
 }
 export interface SecuritySettings {
   minPasswordLength: number;

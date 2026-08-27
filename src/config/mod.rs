@@ -455,6 +455,12 @@ pub struct Config {
     /// [`crate::users::compose_display_names`].
     #[serde(default = "default_locale")]
     pub default_locale: String,
+    /// Languages this deployment offers, narrowing what umami ships. Empty = all of them.
+    ///
+    /// Can only take away. Listing a language umami has no translations for would put it in the
+    /// user's picker and then answer them in English anyway.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub locales: Vec<String>,
     /// Security/token settings.
     pub security: SecuritySettings,
     /// Messaging integration (Telegram/WhatsApp) settings.
@@ -723,6 +729,7 @@ impl Default for Config {
             custom_tenant_fields: Vec::new(),
             custom_user_fields: Vec::new(),
             default_locale: default_locale(),
+            locales: Vec::new(),
             security: SecuritySettings {
                 min_password_length: 8,
                 access_ttl_secs: DEFAULT_ACCESS_TTL_SECS,
