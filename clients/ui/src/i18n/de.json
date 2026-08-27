@@ -66,7 +66,8 @@
     "lastUpdated": "Zuletzt geändert",
     "yes": "Ja",
     "no": "Nein",
-    "rolesEmpty": "keine Rollen zuweisbar"
+    "rolesEmpty": "keine Rollen zuweisbar",
+    "roleUnknown": "Nicht mehr im Katalog — kann nur noch entfernt werden"
   },
   "sessions": {
     "logoutAll": "Überall abmelden",

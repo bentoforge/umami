@@ -408,12 +408,17 @@ function RolesCard({
     }
   };
 
-  // The catalog, plus any already-assigned code the catalog no longer defines (never hide a grant).
+  // Only what this tenant can actually hold: the server's assignable list, plus whatever is
+  // already granted. A role the tenant cannot get is absent, not greyed out — a disabled row
+  // reads as "you lack a right" when the truth is usually "this does not apply here".
+  //
+  // Already-granted codes stay visible even when unassignable, including ones the catalogue no
+  // longer defines: hiding a grant would make it unremovable and invisible at the same time.
   const catalog: RoleDef[] = [
-    ...defs,
+    ...defs.filter((d) => assignable.includes(d.code) || user.roles.includes(d.code)),
     ...user.roles
       .filter((code) => !defs.some((d) => d.code === code))
-      .map((code) => ({ code, name: code })),
+      .map((code) => ({ code, name: code, description: t("users.roleUnknown") })),
   ];
 
   return (

@@ -1052,6 +1052,30 @@ mod tests {
         assert!(!config.can_grant_feature("is:system-tenant", &base));
     }
 
+    /// Roles the catalogue no longer defines must stay removable.
+    ///
+    /// The admin UI resubmits the whole role list on every toggle. When validation covered the
+    /// whole list, a single stale code refused every patch — and with two of them there was no
+    /// order that got rid of either. `can_assign_role` is the predicate that made them stale;
+    /// what fixes it is validating only the additions, which is why this test pins the predicate
+    /// itself as "undefined ⇒ not assignable".
+    #[test]
+    fn undefined_roles_are_never_assignable() {
+        let config = Config::default();
+        let anything = config.eval_feature_set(&[], true);
+
+        assert!(
+            !config.can_assign_role("role:gone", &anything),
+            "a code the catalogue does not define cannot be granted — not even in the system tenant"
+        );
+        assert!(
+            !config
+                .assignable_roles(&anything)
+                .contains(&"role:gone".to_owned()),
+            "and it must not be offered either"
+        );
+    }
+
     /// The bug this newtype exists to prevent: `is:system-tenant` is synthetic — it is never
     /// stored on the tenant — so a caller that hands over the *stored* features makes every role
     /// gated on it unassignable, in the system tenant too. `assignable_roles` and

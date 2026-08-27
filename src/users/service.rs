@@ -460,11 +460,13 @@ async fn create_user(
         .roles
         .filter(|roles| !roles.is_empty())
         .unwrap_or_else(|| vec![ROLE_MEMBER.to_owned()]);
+    // A new user holds nothing yet, so every requested role is an addition.
     validate_roles(
         &config,
         &tenants,
         &tenant_id,
         system_tenant_id.as_deref(),
+        &[],
         &roles,
     )
     .await?;
@@ -498,8 +500,21 @@ async fn validate_roles(
     tenants: &Arc<dyn TenantRepository>,
     tenant_id: &str,
     system_tenant_id: Option<&str>,
+    current: &[String],
     roles: &[String],
 ) -> anyhow::Result<()> {
+    // Only what is *newly added* is checked. Keeping or dropping a role the user already holds is
+    // never an escalation — and validating the whole list made a role the catalogue no longer
+    // defines impossible to get rid of: the UI resubmits the full set on every toggle, so each
+    // patch still carried the stale code and each patch was refused. With two such codes there was
+    // no order that worked.
+    let added: Vec<&String> = roles
+        .iter()
+        .filter(|role| !current.contains(role))
+        .collect();
+    if added.is_empty() {
+        return Ok(());
+    }
     let features = tenants
         .get_tenant(tenant_id)
         .await?
@@ -508,7 +523,7 @@ async fn validate_roles(
     // Synthetic markers included, or every `is:system-tenant`-gated role would read as
     // unassignable — even inside the system tenant.
     let features = config.eval_feature_set(&features, system_tenant_id == Some(tenant_id));
-    for role in roles {
+    for role in added {
         if !config.can_assign_role(role, &features) {
             client_bail!("Role '{role}' is not assignable in this tenant");
         }
@@ -586,6 +601,7 @@ async fn patch_user(
             &tenants,
             tenant_id,
             system_tenant_id.as_deref(),
+            &user.roles,
             &roles,
         )
         .await?;
