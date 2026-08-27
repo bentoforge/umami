@@ -93,6 +93,7 @@ export function LoginPage() {
    */
   const afterLoginRef = useRef<() => Promise<void>>(async () => {});
   const autofillRef = useRef<AbortController | null>(null);
+  const autofillErrorRef = useRef<(err: unknown) => void>(() => {});
 
   const startAutofill = useCallback(() => {
     const controller = new AbortController();
@@ -100,9 +101,7 @@ export function LoginPage() {
     client
       .loginWithPasskeyAutofill({ signal: controller.signal })
       .then((offered) => (offered ? afterLoginRef.current() : undefined))
-      // Aborted, or the browser has no conditional mediation. Neither is worth showing: the
-      // explicit button remains as the way in.
-      .catch(() => undefined);
+      .catch((err) => autofillErrorRef.current(err));
   }, [client]);
 
   useEffect(() => {
@@ -111,6 +110,21 @@ export function LoginPage() {
   }, [startAutofill]);
 
   afterLoginRef.current = afterLogin;
+
+  /**
+   * A login started from the autofill list has to fail just as visibly as one started from the
+   * button. Only our own aborts stay silent — the effect cleanup on unmount, and the button
+   * retiring the pending request before it opens the modal picker.
+   *
+   * Held in a ref rather than closed over by `startAutofill`, so `t` changing identity on a
+   * language switch cannot restart the ceremony.
+   */
+  autofillErrorRef.current = (err: unknown) => {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      return;
+    }
+    setError(err instanceof UmamiError ? err.message : t("login.failed"));
+  };
 
   const onPasskey = async () => {
     // The autofill request from mount is still pending, and a browser rejects a second
