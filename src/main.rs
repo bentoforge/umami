@@ -564,11 +564,7 @@ fn with_wildcard_origin<R: warp::Reply>(reply: R) -> impl warp::Reply {
 /// allow-list; the browser must also send `credentials: "include"` for the cookie to travel.
 fn cors_from_env() -> Option<warp::filters::cors::Cors> {
     let raw = env::var("CORS_ALLOWED_ORIGINS").ok()?;
-    let origins: Vec<String> = raw
-        .split(',')
-        .map(|s| s.trim().to_owned())
-        .filter(|s| !s.is_empty())
-        .collect();
+    let origins = allowed_origins(&raw, env::var("UMAMI_ISSUER").ok().as_deref());
     if origins.is_empty() {
         return None;
     }
@@ -582,6 +578,55 @@ fn cors_from_env() -> Option<warp::filters::cors::Cors> {
             .max_age(600)
             .build(),
     )
+}
+
+/// Assembles the allow-list from the raw `CORS_ALLOWED_ORIGINS` value plus the deployment's
+/// own issuer. Empty result means "no CORS layer at all", which is umami's default.
+fn allowed_origins(raw: &str, issuer: Option<&str>) -> Vec<String> {
+    let mut origins: Vec<String> = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .filter_map(|s| match origin_of(s) {
+            Some(origin) => Some(origin),
+            // warp's `allow_origins` *panics* on an entry without scheme+host, which
+            // would take the whole IAM — and every product's login with it — down over
+            // a config typo. Dropping the entry degrades one SPA instead.
+            None => {
+                tracing::warn!("Ignoring unparsable CORS_ALLOWED_ORIGINS entry '{s}'");
+                None
+            }
+        })
+        .collect();
+    if origins.is_empty() {
+        return origins;
+    }
+
+    // The layer wraps *every* API route and warp refuses any `Origin` outside the
+    // allow-list — including umami's own. Without this, configuring CORS for an
+    // external SPA locks the bundled management UI under /app out of `/auth/login`
+    // with a 403, because a same-origin POST carrying JSON still sends `Origin`.
+    if let Some(own) = issuer.and_then(origin_of) {
+        if !origins.contains(&own) {
+            origins.push(own);
+        }
+    }
+    origins
+}
+
+/// Reduces a URL to its CORS origin: scheme + host + port, no path, no trailing slash.
+/// `https://iam.example.com/` becomes `https://iam.example.com`. Returns `None` when the
+/// input has no scheme or no host — the two things warp requires of an origin.
+fn origin_of(url: &str) -> Option<String> {
+    let (scheme, rest) = url.split_once("://")?;
+    if scheme.is_empty() {
+        return None;
+    }
+    let authority = rest.split('/').next().unwrap_or_default();
+    if authority.is_empty() {
+        return None;
+    }
+    Some(format!("{scheme}://{authority}"))
 }
 
 /// Bootstraps the first tenant + owner on an empty deployment when `UMAMI_AUTO_INIT=true`.
@@ -679,6 +724,67 @@ mod tests {
             .and(warp::post())
             .map(|| "token")
             .boxed()
+    }
+
+    #[test]
+    fn origin_of_strips_path_and_trailing_slash() {
+        assert_eq!(
+            origin_of("https://iam.example.com/").as_deref(),
+            Some("https://iam.example.com")
+        );
+        assert_eq!(
+            origin_of("http://localhost:8080/.well-known/jwks.json").as_deref(),
+            Some("http://localhost:8080")
+        );
+        assert_eq!(
+            origin_of("http://localhost:8080").as_deref(),
+            Some("http://localhost:8080")
+        );
+    }
+
+    #[test]
+    fn origin_of_rejects_input_without_scheme_or_host() {
+        assert_eq!(origin_of("iam.example.com"), None);
+        assert_eq!(origin_of("https://"), None);
+        assert_eq!(origin_of("://iam.example.com"), None);
+    }
+
+    /// The regression: a CORS config for an external SPA must not lock umami's own
+    /// management UI out of its own login.
+    #[test]
+    fn own_issuer_origin_is_always_allowed() {
+        let origins = allowed_origins("https://app.example.com", Some("https://iam.example.com/"));
+        assert_eq!(
+            origins,
+            vec!["https://app.example.com", "https://iam.example.com"]
+        );
+    }
+
+    #[test]
+    fn own_origin_is_not_duplicated() {
+        let origins = allowed_origins("https://iam.example.com/", Some("https://iam.example.com/"));
+        assert_eq!(origins, vec!["https://iam.example.com"]);
+    }
+
+    /// No configured origin means no layer, and no layer means no CORS check — so the
+    /// issuer must not single-handedly switch CORS on.
+    #[test]
+    fn issuer_alone_does_not_enable_cors() {
+        assert!(allowed_origins("", Some("https://iam.example.com/")).is_empty());
+        assert!(allowed_origins("  , ", Some("https://iam.example.com/")).is_empty());
+    }
+
+    /// A typo'd entry is dropped rather than panicking warp at boot.
+    #[test]
+    fn unparsable_entries_are_dropped_not_fatal() {
+        let origins = allowed_origins(
+            "not-a-url, https://app.example.com",
+            Some("https://iam.example.com/"),
+        );
+        assert_eq!(
+            origins,
+            vec!["https://app.example.com", "https://iam.example.com"]
+        );
     }
 
     /// A credentialed layer like `cors_from_env` builds for our own SPAs.
