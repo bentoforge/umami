@@ -589,13 +589,28 @@ async fn login_finish(
                 serde_json::from_str(&ceremony.state).context("Corrupt ceremony state")?;
             let (handle, credential_id) = service.identify_discoverable(&request.credential)?;
             let credential_id = URL_SAFE_NO_PAD.encode(credential_id);
+            // Both failures below answer with the same opaque message on purpose — the client
+            // must not learn which credentials exist. The log is where they are told apart.
             let user_id = match webauthn.find_user_by_credential(&credential_id).await? {
                 Some(user_id) => user_id,
-                None => status_bail!(StatusCode::UNAUTHORIZED, "No passkey login available"),
+                None => {
+                    tracing::warn!(
+                        credential_id,
+                        "Discoverable login: no user owns this credential (index not yet \
+                         populated, or the credential was removed)"
+                    );
+                    status_bail!(StatusCode::UNAUTHORIZED, "No passkey login available")
+                }
             };
             // The credential id and the user handle are two independent statements about who
             // this is; if they disagree, something is wrong and no signature check would notice.
             if WebauthnService::user_handle(&user_id) != handle {
+                tracing::warn!(
+                    credential_id,
+                    user_id,
+                    "Discoverable login: user handle does not match the user the credential \
+                     resolves to"
+                );
                 status_bail!(StatusCode::UNAUTHORIZED, "No passkey login available");
             }
             let keys: Vec<DiscoverableKey> =
