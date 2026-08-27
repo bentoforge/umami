@@ -4,7 +4,7 @@ description: "Run fmt --check, clippy -D warnings, build, test and cargo audit i
 inputs:
   rust-version:
     description: "Rust version (must match a rust: Docker image tag)"
-    default: "1.97.0"
+    default: "1.98.0"
   audit-ignore:
     description: >
       Comma/newline separated RustSec advisory IDs to ignore in cargo audit

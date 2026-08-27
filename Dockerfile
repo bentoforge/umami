@@ -10,7 +10,7 @@ COPY clients/ui ./clients/ui
 RUN cd clients/ui && npm ci && npm run build
 
 # ── Stage 2: build the Rust binary (release) ───────────────────────────────────
-FROM rust:1.97 AS builder
+FROM rust:1.98 AS builder
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
