@@ -58,8 +58,8 @@ struct MeUser {
 }
 
 impl MeUser {
-    fn build(user: User, salutations: &BTreeMap<String, String>) -> Self {
-        let names = user.display_names(salutations);
+    fn build(user: User, default_locale: &str) -> Self {
+        let names = user.display_names(default_locale);
         MeUser {
             user_id: user.user_id,
             tenant_id: user.tenant_id,
@@ -140,6 +140,8 @@ struct ChangePasswordRequest {
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct PatchMeRequest {
+    /// BCP-47 language tag; empty string clears it back to the deployment default.
+    locale: Option<String>,
     title: Option<String>,
     salutation: Option<Salutation>,
     firstname: Option<String>,
@@ -226,11 +228,11 @@ async fn me(
         None => status_bail!(StatusCode::UNAUTHORIZED, "User no longer exists"),
     };
 
-    let salutations = config.current().await?.salutations.clone();
+    let default_locale = config.current().await?.default_locale.clone();
     let tenant = tenants.get_tenant(&user.tenant_id).await?;
 
     Ok(MeResponse {
-        user: MeUser::build(user, &salutations),
+        user: MeUser::build(user, &default_locale),
         tenant,
     })
 }
@@ -280,6 +282,16 @@ async fn patch_me(
     Config::validate_custom_fields(&config.custom_user_fields, &user.custom_fields)?;
 
     // Structured name parts are always the user's own to edit.
+    if let Some(locale) = request.locale {
+        // Empty string clears it, so a user can go back to the deployment default without an
+        // extra endpoint — same shape as `email` on the admin patch.
+        let locale = locale.trim();
+        user.locale = if locale.is_empty() {
+            None
+        } else {
+            Some(locale.to_owned())
+        };
+    }
     if let Some(title) = request.title {
         user.title = normalize_name(Some(title));
     }
@@ -296,7 +308,7 @@ async fn patch_me(
     let updated = users.put_user(user).await?;
     let tenant = tenants.get_tenant(&updated.tenant_id).await?;
     Ok(MeResponse {
-        user: MeUser::build(updated, &config.salutations),
+        user: MeUser::build(updated, &config.default_locale),
         tenant,
     })
 }

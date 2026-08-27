@@ -126,6 +126,9 @@ pub struct ClaimContext<'a> {
     pub display_names: &'a crate::users::DisplayNames,
     pub title: Option<&'a str>,
     pub salutation: &'a str,
+    /// The effective language: the user's own `locale`, else the config's `defaultLocale`. Already
+    /// resolved, so a product service never has to know about the fallback.
+    pub locale: &'a str,
     pub firstname: Option<&'a str>,
     pub lastname: Option<&'a str>,
     pub roles: &'a [String],
@@ -140,7 +143,7 @@ pub struct ClaimContext<'a> {
 /// The **single** place a claim-mapping *source* string is interpreted:
 /// - a plain string is used **literally** (e.g. `"dbx-core"` → `"dbx-core"`);
 /// - `$user.<field>` — one of `id`, `username`, `email`, `title`, `salutation`, `firstname`,
-///   `lastname`, `name`, `fullName`, `addressableName`, `roles`;
+///   `lastname`, `locale`, `name`, `fullName`, `addressableName`, `roles`;
 /// - `$tenant.<field>` — one of `id`, `name`, `slug`, `features`;
 /// - `$user.custom.<code>` / `$tenant.custom.<code>` — the named custom field's value.
 ///
@@ -167,6 +170,7 @@ pub fn resolve_claim_source(source: &str, ctx: &ClaimContext<'_>) -> Option<Valu
         "user.name" => Some(json!(ctx.display_names.name)),
         "user.fullName" => Some(json!(ctx.display_names.full_name)),
         "user.addressableName" => Some(json!(ctx.display_names.addressable_name)),
+        "user.locale" => Some(json!(ctx.locale)),
         "user.roles" => Some(json!(ctx.roles)),
         "tenant.id" => Some(json!(ctx.tenant_id)),
         "tenant.name" => Some(json!(ctx.tenant_name)),
@@ -443,10 +447,14 @@ pub struct Config {
     /// Custom user field schemas.
     #[serde(default)]
     pub custom_user_fields: Vec<CustomFieldDef>,
-    /// Salutation labels (`salutationCode → word`, e.g. `SIR → "Mr"`) in the deployment's language.
-    /// The server uses these to compose `fullName`/`addressableName` for API responses and claims.
-    #[serde(default)]
-    pub salutations: BTreeMap<String, String>,
+    /// Language used wherever umami renders text itself and no user preference applies — BCP-47
+    /// (e.g. `de`, `en`). A user's own `locale` takes precedence.
+    ///
+    /// Salutation *words* are no longer configured here: they are per-locale constants in code, so
+    /// that a reader gets their own language rather than the deployment's. See
+    /// [`crate::users::compose_display_names`].
+    #[serde(default = "default_locale")]
+    pub default_locale: String,
     /// Security/token settings.
     pub security: SecuritySettings,
     /// Messaging integration (Telegram/WhatsApp) settings.
@@ -658,6 +666,11 @@ pub fn is_synthetic(code: &str) -> bool {
     code.starts_with("is:")
 }
 
+/// Serde default for [`Config::default_locale`].
+fn default_locale() -> String {
+    "en".to_owned()
+}
+
 /// Evaluates an optional `assignableIf` against a feature set — `None` means always assignable.
 fn assignable(assignable_if: &Option<String>, set: &BTreeSet<&str>) -> bool {
     match assignable_if {
@@ -709,10 +722,7 @@ impl Default for Config {
             features: Vec::new(),
             custom_tenant_fields: Vec::new(),
             custom_user_fields: Vec::new(),
-            salutations: BTreeMap::from([
-                ("SIR".to_owned(), "Mr".to_owned()),
-                ("MADAM".to_owned(), "Ms".to_owned()),
-            ]),
+            default_locale: default_locale(),
             security: SecuritySettings {
                 min_password_length: 8,
                 access_ttl_secs: DEFAULT_ACCESS_TTL_SECS,
@@ -1102,6 +1112,7 @@ mod tests {
             display_names: &names,
             title: None,
             salutation: "",
+            locale: "de",
             firstname: None,
             lastname: None,
             roles: &[],

@@ -69,6 +69,8 @@ struct PatchUserRequest {
     email: Option<String>,
     roles: Option<Vec<String>>,
     locked: Option<bool>,
+    /// BCP-47 language tag; empty string clears it back to the deployment default.
+    locale: Option<String>,
     title: Option<String>,
     salutation: Option<Salutation>,
     firstname: Option<String>,
@@ -127,8 +129,8 @@ struct UserView {
 
 impl UserView {
     /// Builds a view, composing the derived display names with the config salutation labels.
-    fn build(user: User, salutations: &BTreeMap<String, String>) -> Self {
-        let names = user.display_names(salutations);
+    fn build(user: User, default_locale: &str) -> Self {
+        let names = user.display_names(default_locale);
         // "Generated password" = an admin reset the password and the user has not changed it since.
         let password_generated = match user.last_password_reset {
             Some(reset) => user
@@ -359,8 +361,8 @@ async fn get_user(
     caller: AuthUser,
 ) -> anyhow::Result<UserView> {
     let user = scoped_user(&users, &user_id, &caller).await?;
-    let salutations = config.current().await?.salutations.clone();
-    Ok(UserView::build(user, &salutations))
+    let default_locale = config.current().await?.default_locale.clone();
+    Ok(UserView::build(user, &default_locale))
 }
 
 #[tracing::instrument(level = "debug", name = "PATCH /users/{id}", skip_all)]
@@ -484,7 +486,7 @@ async fn create_user(
         .await?;
 
     Ok(CreateUserResponse {
-        user: UserView::build(user, &config.salutations),
+        user: UserView::build(user, &config.default_locale),
         temporary_password: generated.then_some(password),
     })
 }
@@ -526,12 +528,12 @@ async fn list_users(
         .limit
         .unwrap_or(MAX_LIST_RESULTS)
         .clamp(1, MAX_LIST_RESULTS);
-    let salutations = config.current().await?.salutations.clone();
+    let default_locale = config.current().await?.default_locale.clone();
 
     let (users, truncated) = users.find_users(tenant_id, &search, limit).await?;
     let users = users
         .into_iter()
-        .map(|user| UserView::build(user, &salutations))
+        .map(|user| UserView::build(user, &default_locale))
         .collect();
     Ok(UserListResponse { users, truncated })
 }
@@ -592,6 +594,16 @@ async fn patch_user(
     if let Some(locked) = request.locked {
         user.locked = locked;
     }
+    if let Some(locale) = request.locale {
+        // Empty string clears it, so a user can go back to the deployment default without an
+        // extra endpoint — same shape as `email` on the admin patch.
+        let locale = locale.trim();
+        user.locale = if locale.is_empty() {
+            None
+        } else {
+            Some(locale.to_owned())
+        };
+    }
     if let Some(title) = request.title {
         user.title = normalize_name(Some(title));
     }
@@ -636,7 +648,7 @@ async fn patch_user(
         .await;
     }
 
-    Ok(UserView::build(updated, &config.salutations))
+    Ok(UserView::build(updated, &config.default_locale))
 }
 
 async fn delete_user(

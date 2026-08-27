@@ -71,14 +71,17 @@ export type Salutation = "" | "SIR" | "MADAM";
 /** Structured name parts (editable) plus the server-composed display names (read-only). */
 export interface NameParts {
   title: string | null;
+  /** BCP-47 tag, or `null` for the deployment's `defaultLocale`. */
+  locale?: string | null;
   salutation: Salutation;
   firstname: string | null;
   lastname: string | null;
-  /** `title firstname lastname`. */
+  /** `title firstname lastname` — **no** salutation. Render this in a localized UI and prepend
+   * the salutation word from your own catalogue; the two fields below carry the server's word. */
   name: string;
-  /** `salutation title firstname lastname`. */
+  /** `salutation title firstname lastname`, salutation in the user's (or deployment's) language. */
   fullName: string;
-  /** `salutation title lastname`. */
+  /** `salutation title lastname`, same language rule. For addressing in mail/messaging. */
   addressableName: string;
 }
 
@@ -113,6 +116,8 @@ export interface UserView extends NameParts {
 /** The editable structured name parts (all optional; omitted = unset, `""` clears). */
 export interface NameInput {
   title?: string;
+  /** BCP-47 tag; `""` clears it back to the deployment default. */
+  locale?: string;
   salutation?: Salutation;
   firstname?: string;
   lastname?: string;
@@ -309,8 +314,9 @@ export interface Config {
   features: FeatureDef[];
   customTenantFields: CustomFieldDef[];
   customUserFields: CustomFieldDef[];
-  /** Salutation labels (`salutationCode → word`) in the deployment's language. */
-  salutations: Record<string, string>;
+  /** Language umami renders in when no user preference applies (BCP-47). A user's own `locale`
+   * wins. Salutation *words* are per-locale constants in umami, not configuration. */
+  defaultLocale: string;
   security: SecuritySettings;
   /** Messaging integration (Telegram/WhatsApp) settings. */
   messaging?: MessagingConfig;

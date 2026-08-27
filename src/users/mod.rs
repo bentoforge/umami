@@ -28,9 +28,10 @@ pub mod service;
 
 use serde::{Deserialize, Serialize};
 
-/// How to address a user. Only the stable code is stored; the rendered word (e.g. "Mr"/"Herr",
-/// "Ms"/"Frau") is composed server-side from the config `salutations` label map. `Unspecified`
-/// serializes to `""`.
+/// How to address a user. Only the stable code is stored; the word (e.g. "Mr"/"Herr", "Ms"/"Frau")
+/// is looked up per locale — server-side from [`SALUTATION_WORDS`] where there is no reader to ask,
+/// and from its own catalogue in the management UI, which knows the reader's language.
+/// `Unspecified` serializes to `""`.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Salutation {
     /// No salutation set (wire value `""`).
@@ -84,7 +85,12 @@ pub struct User {
     /// into the display names.
     #[serde(default)]
     pub title: Option<String>,
-    /// How to address the user; the word is localized in the UI (see [`Salutation`]).
+    /// Preferred language as a BCP-47 tag (e.g. `de`, `de-AT`). `None` falls back to the config's
+    /// `defaultLocale`. Drives the server-composed display names and, once localized, the texts
+    /// umami renders itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locale: Option<String>,
+    /// How to address the user; the word is resolved per locale (see [`Salutation`]).
     #[serde(default)]
     pub salutation: Salutation,
     /// Given name.
@@ -183,50 +189,78 @@ pub struct DisplayNames {
 
 impl User {
     /// Composes [`DisplayNames`] from this user's structured parts (see [`compose_display_names`]).
-    pub fn display_names(
-        &self,
-        salutation_labels: &std::collections::BTreeMap<String, String>,
-    ) -> DisplayNames {
+    ///
+    /// The user's own `locale` wins; `default_locale` is the deployment's fallback from the config.
+    pub fn display_names(&self, default_locale: &str) -> DisplayNames {
         compose_display_names(
             self.title.as_deref(),
             self.salutation,
             self.firstname.as_deref(),
             self.lastname.as_deref(),
-            salutation_labels,
+            self.locale.as_deref().unwrap_or(default_locale),
         )
     }
 }
 
-/// Composes [`DisplayNames`] from structured name parts, resolving the salutation word via the
-/// config-provided label map (`salutationCode → word`, e.g. `SIR → "Mr"`). `Unspecified` or an
-/// unmapped code contributes nothing. Shared by the entity views and the token broker (claims).
+/// Salutation words per locale, as `(locale, SIR, MADAM)`.
+///
+/// Fixed in code, not configurable. The word belongs to the language, not to the deployment — a
+/// single configurable map made every consumer speak the deployment's language rather than the
+/// reader's, which is how a German installation ended up greeting people as "Mr". Adding a
+/// language is deliberately a code change: it is a translation, and translations belong with the
+/// other translations.
+const SALUTATION_WORDS: &[(&str, &str, &str)] = &[("de", "Herr", "Frau"), ("en", "Mr", "Ms")];
+
+/// The locale used when the tag is unknown or absent — also the last resort if a deployment
+/// configures a `defaultLocale` nothing translates into.
+const FALLBACK_LOCALE: &str = "en";
+
+/// Resolves a BCP-47 tag against [`SALUTATION_WORDS`]: exact match first, then the primary subtag
+/// (`de-AT` → `de`), then [`FALLBACK_LOCALE`]. Case-insensitive, because tags arrive as typed.
+fn salutation_row(locale: &str) -> (&'static str, &'static str) {
+    let tag = locale.trim().to_ascii_lowercase();
+    let primary = tag.split(['-', '_']).next().unwrap_or_default().to_owned();
+    for candidate in [tag.as_str(), primary.as_str(), FALLBACK_LOCALE] {
+        if let Some(row) = SALUTATION_WORDS
+            .iter()
+            .find(|(code, _, _)| *code == candidate)
+        {
+            return (row.1, row.2);
+        }
+    }
+    // Unreachable while FALLBACK_LOCALE is in the table, but stating a value beats an unwrap.
+    ("", "")
+}
+
+/// Composes [`DisplayNames`] from structured name parts, resolving the salutation word for
+/// `locale`. `Unspecified` contributes nothing. Shared by the entity views and the token broker.
+///
+/// `name` carries **no** salutation, and that is the field a localized UI should render: it can
+/// prepend its own word for the reader's language. `fullName`/`addressableName` exist for what the
+/// server renders alone — claims, mail and messaging templates — where no reader can be asked.
 pub fn compose_display_names(
     title: Option<&str>,
     salutation: Salutation,
     firstname: Option<&str>,
     lastname: Option<&str>,
-    salutation_labels: &std::collections::BTreeMap<String, String>,
+    locale: &str,
 ) -> DisplayNames {
-    let word = salutation_word(salutation, salutation_labels);
+    let word = salutation_word(salutation, locale);
     DisplayNames {
         name: join_name_parts(&[title, firstname, lastname]),
-        full_name: join_name_parts(&[word.as_deref(), title, firstname, lastname]),
-        addressable_name: join_name_parts(&[word.as_deref(), title, lastname]),
+        full_name: join_name_parts(&[word, title, firstname, lastname]),
+        addressable_name: join_name_parts(&[word, title, lastname]),
     }
 }
 
-/// Resolves the localized word for a salutation code from the config label map. `Unspecified` (and
-/// any unmapped code) yields `None`.
-fn salutation_word(
-    salutation: Salutation,
-    labels: &std::collections::BTreeMap<String, String>,
-) -> Option<String> {
-    let code = match salutation {
-        Salutation::Unspecified => return None,
-        Salutation::Sir => "SIR",
-        Salutation::Madam => "MADAM",
-    };
-    labels.get(code).cloned()
+/// The word for a salutation in `locale`. `Unspecified` yields `None`.
+fn salutation_word(salutation: Salutation, locale: &str) -> Option<&'static str> {
+    let (sir, madam) = salutation_row(locale);
+    match salutation {
+        Salutation::Unspecified => None,
+        Salutation::Sir => Some(sir),
+        Salutation::Madam => Some(madam),
+    }
 }
 
 /// Space-joins the present, non-empty name parts.
@@ -241,15 +275,6 @@ fn join_name_parts(parts: &[Option<&str>]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
-
-    fn labels() -> BTreeMap<String, String> {
-        BTreeMap::from([
-            ("SIR".to_owned(), "Mr".to_owned()),
-            ("MADAM".to_owned(), "Ms".to_owned()),
-        ])
-    }
-
     #[test]
     fn composes_all_name_forms() {
         let names = compose_display_names(
@@ -257,17 +282,48 @@ mod tests {
             Salutation::Madam,
             Some("Jane"),
             Some("Doe"),
-            &labels(),
+            "en",
         );
         assert_eq!(names.name, "Dr. Jane Doe");
         assert_eq!(names.full_name, "Ms Dr. Jane Doe");
         assert_eq!(names.addressable_name, "Ms Dr. Doe");
     }
 
+    /// The reason the words moved out of the config: the same user reads differently per language,
+    /// and `name` stays free of the salutation so a localized UI can prepend its own word.
+    #[test]
+    fn salutation_word_follows_the_locale() {
+        let compose = |locale: &str| {
+            compose_display_names(
+                None,
+                Salutation::Sir,
+                Some("Andreas"),
+                Some("Haufler"),
+                locale,
+            )
+        };
+        assert_eq!(compose("de").full_name, "Herr Andreas Haufler");
+        assert_eq!(compose("en").full_name, "Mr Andreas Haufler");
+        assert_eq!(compose("de").name, "Andreas Haufler");
+    }
+
+    /// Region subtags resolve to their language; anything unknown lands on the fallback rather
+    /// than dropping the salutation silently.
+    #[test]
+    fn locale_tags_fall_back_predictably() {
+        let compose = |locale: &str| {
+            compose_display_names(None, Salutation::Madam, None, Some("Doe"), locale).full_name
+        };
+        assert_eq!(compose("de-AT"), "Frau Doe");
+        assert_eq!(compose("DE"), "Frau Doe");
+        assert_eq!(compose("de_CH"), "Frau Doe");
+        assert_eq!(compose("fr"), "Ms Doe", "unknown locale uses the fallback");
+        assert_eq!(compose(""), "Ms Doe");
+    }
+
     #[test]
     fn skips_absent_parts_and_unspecified_salutation() {
-        let names =
-            compose_display_names(None, Salutation::Unspecified, Some("Jane"), None, &labels());
+        let names = compose_display_names(None, Salutation::Unspecified, Some("Jane"), None, "en");
         assert_eq!(names.name, "Jane");
         assert_eq!(names.full_name, "Jane");
         assert_eq!(names.addressable_name, "");

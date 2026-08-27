@@ -225,6 +225,7 @@ impl UserRepository for DynamoUserRepository {
         let now = Utc::now();
 
         let user = User {
+            locale: None,
             user_id: generate_id(),
             tenant_id: new_user.tenant_id,
             roles: new_user.roles,

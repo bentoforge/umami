@@ -111,7 +111,7 @@ pub async fn mint_for_api(
     // Assemble the claim context once, then let the config-driven mapping resolve `$…` references
     // against it (the single interpretation point lives in `config::resolve_claim_source`).
     let display_names = match params.user {
-        Some(user) => user.display_names(&config.salutations),
+        Some(user) => user.display_names(&config.default_locale),
         None => crate::users::DisplayNames::default(),
     };
     let empty_fields = BTreeMap::new();
@@ -122,6 +122,12 @@ pub async fn mint_for_api(
         display_names: &display_names,
         title: params.user.and_then(|user| user.title.as_deref()),
         salutation: params.user.map_or("", |user| user.salutation.code()),
+        // Resolved here so every consumer of the claim sees one answer, not a preference plus a
+        // fallback rule they each have to reimplement.
+        locale: params
+            .user
+            .and_then(|user| user.locale.as_deref())
+            .unwrap_or(&config.default_locale),
         firstname: params.user.and_then(|user| user.firstname.as_deref()),
         lastname: params.user.and_then(|user| user.lastname.as_deref()),
         roles: params.user.map_or(&[][..], |user| user.roles.as_slice()),
