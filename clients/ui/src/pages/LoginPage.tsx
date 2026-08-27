@@ -1,5 +1,5 @@
 import { UmamiError } from "@bentoforge/umami-iam";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router-dom";
 import { useUmami } from "../auth/UmamiProvider";
@@ -78,11 +78,40 @@ export function LoginPage() {
     await refreshMe();
   };
 
+  /**
+   * Passkey autofill (conditional mediation).
+   *
+   * Started once on mount and then left pending: it resolves only if the user actually picks a
+   * passkey out of the username field's autofill list, which is the one place a passkey can
+   * appear next to — and above — a saved password. How a password manager orders its own
+   * suggestions is not something this page can influence, so offering the passkey through that
+   * channel is the whole mechanism.
+   *
+   * `refreshMe` is deliberately not a dependency, for the same reason the provider's bootstrap
+   * omits it: it is recreated on every render and would restart the ceremony each time. The
+   * ref keeps the effect pointed at the current one.
+   */
+  const afterLoginRef = useRef<() => Promise<void>>(async () => {});
+  useEffect(() => {
+    const controller = new AbortController();
+    client
+      .loginWithPasskeyAutofill({ signal: controller.signal })
+      .then((offered) => (offered ? afterLoginRef.current() : undefined))
+      // Aborted on unmount, or the browser declined to offer autofill at all. Neither is worth
+      // showing: the explicit button is still there.
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [client]);
+
+  afterLoginRef.current = afterLogin;
+
   const onPasskey = async () => {
     setBusy(true);
     setError(null);
     try {
-      await client.loginWithPasskey(username);
+      // No username typed? Then this is a discoverable login and the authenticator picks the
+      // user itself — which is why the button no longer waits for the field to be filled.
+      await client.loginWithPasskey(username.trim() || undefined);
       await afterLogin();
     } catch (err) {
       setError(err instanceof UmamiError ? err.message : t("login.failed"));
@@ -111,7 +140,9 @@ export function LoginPage() {
             <input
               type="text"
               required
-              autoComplete="username"
+              // "webauthn" is what lets the browser put a passkey into this field's autofill
+              // list; without it, conditional mediation has nothing to attach to.
+              autoComplete="username webauthn"
               readOnly={mfaRequired}
               value={username}
               onChange={(e) => setUsername(e.target.value)}
@@ -160,7 +191,7 @@ export function LoginPage() {
           <button
             type="button"
             onClick={onPasskey}
-            disabled={busy || !username}
+            disabled={busy}
             className={secondaryButtonClass}
           >
             {t("login.passkey")}

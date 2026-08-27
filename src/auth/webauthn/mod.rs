@@ -42,9 +42,9 @@ use wasabi::web::warp::{
     client_ip, into_rejection, into_response, with_body_as_json, with_cloneable,
 };
 use webauthn_rs::prelude::{
-    AuthenticationResult, CreationChallengeResponse, CredentialID, Passkey, PasskeyAuthentication,
-    PasskeyRegistration, PublicKeyCredential, RegisterPublicKeyCredential,
-    RequestChallengeResponse, Url, Uuid, Webauthn, WebauthnBuilder,
+    AuthenticationResult, CreationChallengeResponse, CredentialID, DiscoverableAuthentication,
+    DiscoverableKey, Passkey, PasskeyAuthentication, PasskeyRegistration, PublicKeyCredential,
+    RegisterPublicKeyCredential, RequestChallengeResponse, Url, Uuid, Webauthn, WebauthnBuilder,
 };
 
 /// Ceremony state lifetime (seconds) — a passkey ceremony must complete within this window.
@@ -79,7 +79,11 @@ impl WebauthnService {
     }
 
     /// Derives the stable 16-byte WebAuthn user handle from a user id.
-    fn user_handle(user_id: &str) -> Uuid {
+    ///
+    /// One-way on purpose, which is why a discoverable login cannot recover the user id from the
+    /// handle the authenticator returns and resolves it through the credential id instead. The
+    /// handle is still worth comparing afterwards: it must agree with the resolved user.
+    pub fn user_handle(user_id: &str) -> Uuid {
         // SHA-256 always yields 32 bytes, so the first 16 are always present.
         let bytes = Sha256::digest(user_id.as_bytes())
             .first_chunk::<16>()
@@ -130,6 +134,41 @@ impl WebauthnService {
         self.webauthn
             .start_passkey_authentication(passkeys)
             .map_err(|err| anyhow!("Failed to start passkey authentication: {err}"))
+    }
+
+    /// Begins a discoverable ("conditional UI") authentication: no allow-list, so the
+    /// authenticator offers whatever resident credential it holds for this relying party.
+    pub fn start_discoverable_authentication(
+        &self,
+    ) -> anyhow::Result<(RequestChallengeResponse, DiscoverableAuthentication)> {
+        self.webauthn
+            .start_discoverable_authentication()
+            .map_err(|err| anyhow!("Failed to start discoverable authentication: {err}"))
+    }
+
+    /// Reads the user handle and credential id out of a discoverable assertion. This is
+    /// **unverified** input — it only says which credential the authenticator claims to have
+    /// used, so it may do no more than select which keys the signature is then checked against.
+    pub fn identify_discoverable(
+        &self,
+        credential: &PublicKeyCredential,
+    ) -> anyhow::Result<(Uuid, Vec<u8>)> {
+        self.webauthn
+            .identify_discoverable_authentication(credential)
+            .map(|(handle, credential_id)| (handle, credential_id.to_vec()))
+            .map_err(|err| anyhow!("Failed to identify discoverable credential: {err}"))
+    }
+
+    /// Completes a discoverable authentication against the resolved user's keys.
+    pub fn finish_discoverable_authentication(
+        &self,
+        credential: &PublicKeyCredential,
+        state: DiscoverableAuthentication,
+        keys: &[DiscoverableKey],
+    ) -> anyhow::Result<AuthenticationResult> {
+        self.webauthn
+            .finish_discoverable_authentication(credential, state, keys)
+            .map_err(|err| anyhow!("Failed to finish discoverable authentication: {err}"))
     }
 
     /// Completes passkey authentication.
@@ -259,7 +298,10 @@ struct RegisterFinishResponse {
 /// Login-start request.
 #[derive(Deserialize, Debug)]
 struct LoginStartRequest {
-    username: String,
+    /// Omitted for a discoverable login: the authenticator picks the credential, and with it
+    /// the user. Required for the classic flow, where the allow-list is that user's passkeys.
+    #[serde(default)]
+    username: Option<String>,
 }
 
 /// Login-start response: the ceremony id + the request options for the browser.
@@ -392,7 +434,7 @@ async fn register_start(
     webauthn
         .store_ceremony(
             &ceremony_id,
-            &user.user_id,
+            Some(user.user_id.as_str()),
             serde_json::to_string(&state).context("Failed to serialize ceremony state")?,
             CEREMONY_TTL_SECS,
         )
@@ -417,7 +459,13 @@ async fn register_finish(
         Some(ceremony) => ceremony,
         None => status_bail!(StatusCode::BAD_REQUEST, "Unknown or expired ceremony"),
     };
-    if ceremony.user_id != caller.user_id()? {
+    // Registration is authenticated, so its ceremony always carries the enroling user. A
+    // discoverable (user-less) ceremony must never be redeemable as a registration.
+    let ceremony_user = match ceremony.user_id.as_deref() {
+        Some(user_id) => user_id,
+        None => status_bail!(StatusCode::BAD_REQUEST, "Not a registration ceremony"),
+    };
+    if ceremony_user != caller.user_id()? {
         status_bail!(StatusCode::FORBIDDEN, "Ceremony does not belong to you");
     }
 
@@ -428,15 +476,15 @@ async fn register_finish(
 
     webauthn
         .put_credential(
-            &ceremony.user_id,
+            ceremony_user,
             &credential_id,
             serde_json::to_string(&passkey).context("Failed to serialize passkey")?,
         )
         .await?;
 
     // Best-effort denormalized flag for the admin user list; a failure here just hides the badge.
-    if let Err(err) = users.set_has_passkey(&ceremony.user_id).await {
-        tracing::warn!("failed to set hasPasskey for {}: {err:#}", ceremony.user_id);
+    if let Err(err) = users.set_has_passkey(ceremony_user).await {
+        tracing::warn!("failed to set hasPasskey for {ceremony_user}: {err:#}");
     }
 
     // A new second factor enrolled is a security-relevant change → audit it (with the client IP).
@@ -446,7 +494,7 @@ async fn register_finish(
         NewAuditEntry::new(
             AuditSeverity::Good,
             tenant_id,
-            Some(ceremony.user_id.clone()),
+            Some(ceremony_user.to_owned()),
             "Passkey registered".to_owned(),
         )
         .with_ip(ip),
@@ -462,7 +510,31 @@ async fn login_start(
     service: Arc<WebauthnService>,
     webauthn: Arc<dyn WebauthnRepository>,
 ) -> anyhow::Result<LoginStartResponse> {
-    let user = match context.users.find_by_username(&request.username).await? {
+    // No username: discoverable flow. The challenge carries no allow-list, so the response
+    // leaks nothing about who exists — which is also why it is safe to answer unconditionally.
+    let Some(username) = request
+        .username
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        let (options, state) = service.start_discoverable_authentication()?;
+        let ceremony_id = generate_id();
+        webauthn
+            .store_ceremony(
+                &ceremony_id,
+                None,
+                serde_json::to_string(&state).context("Failed to serialize ceremony state")?,
+                CEREMONY_TTL_SECS,
+            )
+            .await?;
+        return Ok(LoginStartResponse {
+            ceremony_id,
+            options,
+        });
+    };
+
+    let user = match context.users.find_by_username(username).await? {
         Some(user) if !user.locked => user,
         _ => status_bail!(StatusCode::UNAUTHORIZED, "No passkey login available"),
     };
@@ -478,7 +550,7 @@ async fn login_start(
     webauthn
         .store_ceremony(
             &ceremony_id,
-            &user.user_id,
+            Some(user.user_id.as_str()),
             serde_json::to_string(&state).context("Failed to serialize ceremony state")?,
             CEREMONY_TTL_SECS,
         )
@@ -503,17 +575,47 @@ async fn login_finish(
         None => status_bail!(StatusCode::UNAUTHORIZED, "Unknown or expired ceremony"),
     };
 
-    let state: PasskeyAuthentication =
-        serde_json::from_str(&ceremony.state).context("Corrupt ceremony state")?;
-    let result = service.finish_authentication(&request.credential, &state)?;
+    // Which flavour of ceremony this is decides how the user is found: the classic flow knows
+    // them up front, the discoverable one learns them from the credential the authenticator used.
+    let (user_id, result) = match ceremony.user_id {
+        Some(user_id) => {
+            let state: PasskeyAuthentication =
+                serde_json::from_str(&ceremony.state).context("Corrupt ceremony state")?;
+            let result = service.finish_authentication(&request.credential, &state)?;
+            (user_id, result)
+        }
+        None => {
+            let state: DiscoverableAuthentication =
+                serde_json::from_str(&ceremony.state).context("Corrupt ceremony state")?;
+            let (handle, credential_id) = service.identify_discoverable(&request.credential)?;
+            let credential_id = URL_SAFE_NO_PAD.encode(credential_id);
+            let user_id = match webauthn.find_user_by_credential(&credential_id).await? {
+                Some(user_id) => user_id,
+                None => status_bail!(StatusCode::UNAUTHORIZED, "No passkey login available"),
+            };
+            // The credential id and the user handle are two independent statements about who
+            // this is; if they disagree, something is wrong and no signature check would notice.
+            if WebauthnService::user_handle(&user_id) != handle {
+                status_bail!(StatusCode::UNAUTHORIZED, "No passkey login available");
+            }
+            let keys: Vec<DiscoverableKey> =
+                parse_passkeys(webauthn.list_passkeys(&user_id).await?)?
+                    .iter()
+                    .map(DiscoverableKey::from)
+                    .collect();
+            let result =
+                service.finish_discoverable_authentication(&request.credential, state, &keys)?;
+            (user_id, result)
+        }
+    };
 
     // Persist the updated signature counter (replay/clone detection).
-    for mut passkey in parse_passkeys(webauthn.list_passkeys(&ceremony.user_id).await?)? {
+    for mut passkey in parse_passkeys(webauthn.list_passkeys(&user_id).await?)? {
         if passkey.cred_id() == result.cred_id() {
             if passkey.update_credential(&result).is_some() {
                 webauthn
                     .put_credential(
-                        &ceremony.user_id,
+                        &user_id,
                         &credential_id_string(&passkey),
                         serde_json::to_string(&passkey).context("Failed to serialize passkey")?,
                     )
@@ -523,7 +625,7 @@ async fn login_finish(
         }
     }
 
-    let user = match context.users.get_user(&ceremony.user_id).await? {
+    let user = match context.users.get_user(&user_id).await? {
         Some(user) if !user.locked => user,
         _ => status_bail!(StatusCode::UNAUTHORIZED, "Account not active"),
     };
@@ -593,5 +695,48 @@ mod tests {
 
         assert_eq!(result.cred_id(), passkey.cred_id());
         assert!(result.user_verified());
+    }
+
+    /// What can be checked of the discoverable ceremony without a discoverable authenticator:
+    /// the challenge must name no credential at all, and its state must survive the trip through
+    /// the ceremony table.
+    ///
+    /// The full round trip is **not** covered, and cannot be with the current test harness:
+    /// both soft authenticators in `webauthn-authenticator-rs` 0.5.5 hardcode
+    /// `user_handle: None` in the assertion, and without that handle
+    /// `identify_discoverable_authentication` has nothing to resolve. Exercising the rest needs a
+    /// real authenticator.
+    #[test]
+    fn discoverable_challenge_names_no_credential() {
+        let service = WebauthnService::new("localhost", ORIGIN).unwrap();
+
+        let (rcr, auth_state) = service.start_discoverable_authentication().unwrap();
+
+        assert!(
+            rcr.public_key.allow_credentials.is_empty(),
+            "a discoverable challenge must not name any credential — naming one would both \
+             defeat the purpose and leak which credentials exist"
+        );
+        // Same JSON hop the DynamoDB-backed ceremony table performs.
+        let reloaded = roundtrip(&auth_state);
+        assert_eq!(
+            serde_json::to_string(&reloaded).unwrap(),
+            serde_json::to_string(&auth_state).unwrap()
+        );
+    }
+
+    /// A handle derived from a different user must not match — this is the check that makes the
+    /// credential-id lookup and the handle two independent statements rather than one.
+    #[test]
+    fn user_handles_are_distinct_per_user() {
+        assert_ne!(
+            WebauthnService::user_handle("user-1"),
+            WebauthnService::user_handle("user-2")
+        );
+        assert_eq!(
+            WebauthnService::user_handle("user-1"),
+            WebauthnService::user_handle("user-1"),
+            "the handle has to be stable, it is what the authenticator stored"
+        );
     }
 }

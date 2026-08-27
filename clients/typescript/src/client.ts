@@ -266,18 +266,61 @@ export class UmamiClient {
     });
   }
 
-  /** Passwordless login with a passkey via `navigator.credentials.get`; stores the token. Pass
-   * `api` to mint the token for a product API directly (default: umami); the session keeps that
-   * audience across refreshes. */
-  async loginWithPasskey(username: string, api?: string): Promise<void> {
+  /** Passwordless login with a passkey via `navigator.credentials.get`; stores the token.
+   *
+   * Omit `username` for a discoverable login: the challenge then carries no allow-list and the
+   * authenticator picks both the credential and, with it, the user. Pass `api` to mint the token
+   * for a product API directly (default: umami); the session keeps that audience across
+   * refreshes. */
+  async loginWithPasskey(username?: string, api?: string): Promise<void> {
+    await this.passkeyCeremony(username, api);
+  }
+
+  /** Passkey autofill (WebAuthn conditional mediation).
+   *
+   * Offers the passkey inside the browser's own autofill UI for the username field instead of
+   * behind a button. This is the only way to have a passkey surface alongside — and above — a
+   * saved password, because how a password manager ranks its own suggestions is not something a
+   * page can influence.
+   *
+   * Resolves once the user picks a passkey, which may be never: call it and leave the promise
+   * pending for the lifetime of the login page, aborting via `signal` when it unmounts. Rejects
+   * with `AbortError` in that case. Resolves to `false` without starting anything when the
+   * browser has no conditional mediation, so the caller can keep the explicit button.
+   *
+   * Requires a field marked `autocomplete="username webauthn"` to attach to. */
+  async loginWithPasskeyAutofill(options?: {
+    signal?: AbortSignal;
+    api?: string;
+  }): Promise<boolean> {
+    const available = await globalThis.PublicKeyCredential?.isConditionalMediationAvailable?.();
+    if (!available) return false;
+    await this.passkeyCeremony(undefined, options?.api, {
+      mediation: "conditional",
+      signal: options?.signal,
+    });
+    return true;
+  }
+
+  /** The shared start → `navigator.credentials.get` → finish ceremony. */
+  private async passkeyCeremony(
+    username: string | undefined,
+    api: string | undefined,
+    get?: { mediation?: CredentialMediationRequirement; signal?: AbortSignal },
+  ): Promise<void> {
     const start = await this.request<{ ceremonyId: string; options: any }>(
       "/auth/webauthn/login/start",
-      { method: "POST", body: JSON.stringify({ username }) },
+      // An absent username is what selects the discoverable flow server-side, so send the key
+      // only when there is one — `{ username: undefined }` would serialize it away anyway, but
+      // being explicit keeps the two flows visibly distinct.
+      { method: "POST", body: JSON.stringify(username ? { username } : {}) },
       false,
     );
     const publicKey = toRequestOptions(start.options.publicKey);
     const credential = (await navigator.credentials.get({
       publicKey,
+      mediation: get?.mediation,
+      signal: get?.signal,
     })) as PublicKeyCredential | null;
     if (!credential) throw new Error("Passkey login was cancelled");
     const data = await this.request<TokenResponse>(
