@@ -9,7 +9,7 @@ pub mod repository;
 use crate::audit::repository::{AuditRepository, record_best_effort};
 use crate::audit::{AuditSeverity, NewAuditEntry};
 use crate::auth::AuthContext;
-use crate::auth::login::issue_session;
+use crate::auth::login::{AuthStrength, issue_session};
 use crate::auth::ratelimit::{Decision, Policy, too_many_requests};
 use crate::auth::webauthn::repository::WebauthnRepository;
 use crate::constants::{MANAGE_PASSWORDS_PERMISSION, MAX_TEXT_BODY_SIZE};
@@ -649,7 +649,22 @@ async fn login_finish(
     // A passkey login is a strong factor → is:passkey + is:2fa.
     let api_code = request.api.as_deref().unwrap_or("umami");
     let audit_ip = ip.clone();
-    let issued = issue_session(context, &user, api_code, true, false, user_agent, ip).await?;
+    // A passkey login is a strong factor → is:passkey + is:2fa. No `Accept-Language` here: the
+    // ceremony is driven by a client that already knows who it is talking to, and the user's own
+    // preference (or the deployment default) is the honest answer.
+    let issued = issue_session(
+        context,
+        &user,
+        api_code,
+        AuthStrength {
+            passkey: true,
+            totp: false,
+        },
+        None,
+        user_agent,
+        ip,
+    )
+    .await?;
 
     record_best_effort(
         &context.audit,

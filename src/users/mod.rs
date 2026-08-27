@@ -29,8 +29,7 @@ pub mod service;
 use serde::{Deserialize, Serialize};
 
 /// How to address a user. Only the stable code is stored; the word (e.g. "Mr"/"Herr", "Ms"/"Frau")
-/// is looked up per locale — server-side from [`SALUTATION_WORDS`] where there is no reader to ask,
-/// and from its own catalogue in the management UI, which knows the reader's language.
+/// is looked up per locale in the message catalogue, like every other translated string.
 /// `Unspecified` serializes to `""`.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Salutation {
@@ -202,36 +201,6 @@ impl User {
     }
 }
 
-/// Salutation words per locale, as `(locale, SIR, MADAM)`.
-///
-/// Fixed in code, not configurable. The word belongs to the language, not to the deployment — a
-/// single configurable map made every consumer speak the deployment's language rather than the
-/// reader's, which is how a German installation ended up greeting people as "Mr". Adding a
-/// language is deliberately a code change: it is a translation, and translations belong with the
-/// other translations.
-const SALUTATION_WORDS: &[(&str, &str, &str)] = &[("de", "Herr", "Frau"), ("en", "Mr", "Ms")];
-
-/// The locale used when the tag is unknown or absent — also the last resort if a deployment
-/// configures a `defaultLocale` nothing translates into.
-const FALLBACK_LOCALE: &str = "en";
-
-/// Resolves a BCP-47 tag against [`SALUTATION_WORDS`]: exact match first, then the primary subtag
-/// (`de-AT` → `de`), then [`FALLBACK_LOCALE`]. Case-insensitive, because tags arrive as typed.
-fn salutation_row(locale: &str) -> (&'static str, &'static str) {
-    let tag = locale.trim().to_ascii_lowercase();
-    let primary = tag.split(['-', '_']).next().unwrap_or_default().to_owned();
-    for candidate in [tag.as_str(), primary.as_str(), FALLBACK_LOCALE] {
-        if let Some(row) = SALUTATION_WORDS
-            .iter()
-            .find(|(code, _, _)| *code == candidate)
-        {
-            return (row.1, row.2);
-        }
-    }
-    // Unreachable while FALLBACK_LOCALE is in the table, but stating a value beats an unwrap.
-    ("", "")
-}
-
 /// Composes [`DisplayNames`] from structured name parts, resolving the salutation word for
 /// `locale`. `Unspecified` contributes nothing. Shared by the entity views and the token broker.
 ///
@@ -248,19 +217,19 @@ pub fn compose_display_names(
     let word = salutation_word(salutation, locale);
     DisplayNames {
         name: join_name_parts(&[title, firstname, lastname]),
-        full_name: join_name_parts(&[word, title, firstname, lastname]),
-        addressable_name: join_name_parts(&[word, title, lastname]),
+        full_name: join_name_parts(&[word.as_deref(), title, firstname, lastname]),
+        addressable_name: join_name_parts(&[word.as_deref(), title, lastname]),
     }
 }
 
-/// The word for a salutation in `locale`. `Unspecified` yields `None`.
-fn salutation_word(salutation: Salutation, locale: &str) -> Option<&'static str> {
-    let (sir, madam) = salutation_row(locale);
-    match salutation {
-        Salutation::Unspecified => None,
-        Salutation::Sir => Some(sir),
-        Salutation::Madam => Some(madam),
-    }
+/// The word for a salutation in `locale`, from the message catalogue. `Unspecified` yields `None`.
+fn salutation_word(salutation: Salutation, locale: &str) -> Option<String> {
+    let code = match salutation {
+        Salutation::Unspecified => return None,
+        Salutation::Sir => "SIR",
+        Salutation::Madam => "MADAM",
+    };
+    Some(crate::i18n::message(locale, &format!("salutation.{code}")))
 }
 
 /// Space-joins the present, non-empty name parts.

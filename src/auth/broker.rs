@@ -41,6 +41,13 @@ pub struct MintParams<'a> {
     /// Whether the tenant this token acts in is the configured system tenant (adds
     /// `is:system-tenant`).
     pub system_tenant: bool,
+    /// The language for this token, already resolved (BCP-47).
+    ///
+    /// Resolved by the caller, not here, because only the caller has the inputs: a session knows
+    /// the user's profile *and* the request's `Accept-Language`, a key exchange knows what the
+    /// relaying service asked for. umami always fills the claim, so no service downstream has to
+    /// guess when a user is present.
+    pub locale: &'a str,
     /// Whether the principal's **home** tenant is the system tenant (adds
     /// `is:system-tenant-member`). Unlike [`Self::system_tenant`] this survives a tenant switch:
     /// it says who the principal is, not where they are working.
@@ -124,10 +131,7 @@ pub async fn mint_for_api(
         salutation: params.user.map_or("", |user| user.salutation.code()),
         // Resolved here so every consumer of the claim sees one answer, not a preference plus a
         // fallback rule they each have to reimplement.
-        locale: params
-            .user
-            .and_then(|user| user.locale.as_deref())
-            .unwrap_or(&config.default_locale),
+        locale: params.locale,
         firstname: params.user.and_then(|user| user.firstname.as_deref()),
         lastname: params.user.and_then(|user| user.lastname.as_deref()),
         roles: params.user.map_or(&[][..], |user| user.roles.as_slice()),

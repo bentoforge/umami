@@ -13,6 +13,7 @@ use crate::auth::password;
 use crate::auth::ratelimit::{Decision, Policy, too_many_requests};
 use crate::auth::session::repository::NewSession;
 use crate::auth::session::{generate_refresh_secret, hash_refresh_secret, verify_refresh_secret};
+use crate::bail_i18n;
 use crate::config::Config;
 use crate::constants::{
     MAX_TEXT_BODY_SIZE, SWITCH_TENANT_PERMISSION, SYSTEM_TENANT_MARKER,
@@ -29,6 +30,7 @@ use warp::http::StatusCode;
 use warp::http::header::{CONTENT_TYPE, HeaderValue, SET_COOKIE};
 use warp::reply::Response;
 use wasabi::status_bail;
+use wasabi::web::locale::accept_language as accept_language_filter;
 use wasabi::web::warp::{client_ip, into_rejection, with_body_as_json, with_cloneable};
 
 /// Login request body. A user belongs to exactly one tenant, so no tenant selection is needed.
@@ -98,6 +100,7 @@ pub fn login_route(context: AuthContext) -> BoxedFilter<(impl warp::Reply,)> {
         .and(with_body_as_json::<LoginRequest>(MAX_TEXT_BODY_SIZE))
         .and(with_cloneable(Arc::new(context)))
         .and(warp::header::optional::<String>("user-agent"))
+        .and(accept_language_filter())
         .and(client_ip())
         .and_then(handle_login_route)
         .boxed()
@@ -112,6 +115,7 @@ pub fn refresh_route(context: AuthContext) -> BoxedFilter<(impl warp::Reply,)> {
         .and(with_cloneable(Arc::new(context)))
         .and(warp::header::optional::<String>("cookie"))
         .and(warp::query::<RefreshQuery>())
+        .and(accept_language_filter())
         .and(client_ip())
         .and_then(handle_refresh_route)
         .boxed()
@@ -134,9 +138,18 @@ async fn handle_login_route(
     request: LoginRequest,
     context: Arc<AuthContext>,
     user_agent: Option<String>,
+    accept_language: Option<String>,
     ip: Option<String>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    match login(&context, request, user_agent, ip).await {
+    match login(
+        &context,
+        request,
+        user_agent,
+        accept_language.as_deref(),
+        ip,
+    )
+    .await
+    {
         Ok(LoginOutcome::Response { body, set_cookie }) => {
             match json_with_optional_cookie(StatusCode::OK, &body, set_cookie) {
                 Ok(reply) => Ok(reply),
@@ -155,9 +168,18 @@ async fn handle_refresh_route(
     context: Arc<AuthContext>,
     cookie_header: Option<String>,
     query: RefreshQuery,
+    accept_language: Option<String>,
     ip: Option<String>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    match refresh(&context, cookie_header.as_deref(), query.api.as_deref(), ip).await {
+    match refresh(
+        &context,
+        cookie_header.as_deref(),
+        query.api.as_deref(),
+        accept_language.as_deref(),
+        ip,
+    )
+    .await
+    {
         Ok((body, set_cookie)) => {
             json_with_optional_cookie(StatusCode::OK, &body, set_cookie).map_err(into_rejection)
         }
@@ -243,8 +265,8 @@ async fn mint_access_token(
     user: &User,
     tenant_id: &str,
     api_code: &str,
-    mfa_passkey: bool,
-    mfa_totp: bool,
+    accept_language: Option<&str>,
+    strength: AuthStrength,
 ) -> anyhow::Result<String> {
     let access_ttl_secs = config.security.access_ttl_secs as i64;
 
@@ -270,11 +292,19 @@ async fn mint_access_token(
             // everywhere except in the system tenant itself" depend on that being false.
             // `is:system-tenant-member` follows the user's **home** tenant, so the same token
             // keeps `switch:tenant`; without it the switched admin could not switch back.
+            // Always filled, so no service downstream has to re-derive it: the user's stated
+            // preference if they have one, otherwise what this request's `Accept-Language` says,
+            // otherwise the deployment default.
+            locale: &crate::i18n::resolve(
+                user.locale.as_deref(),
+                accept_language,
+                &config.default_locale,
+            ),
             system_tenant: context.system_tenant_id.as_deref() == Some(tenant_id),
             system_tenant_member: context.system_tenant_id.as_deref()
                 == Some(user.tenant_id.as_str()),
-            passkey: mfa_passkey,
-            totp: mfa_totp,
+            passkey: strength.passkey,
+            totp: strength.totp,
             user: Some(user),
             tenant: tenant.as_ref(),
             kind: None,
@@ -290,6 +320,7 @@ async fn login(
     context: &AuthContext,
     request: LoginRequest,
     user_agent: Option<String>,
+    accept_language: Option<&str>,
     ip: Option<String>,
 ) -> anyhow::Result<LoginOutcome> {
     // Clone for the audit records: `ip` itself is moved into `issue_session` on the success path.
@@ -302,6 +333,10 @@ async fn login(
     // per-IP cap. Everything is fail-open (a rate-limit-store outage never blocks login).
     let now = Utc::now();
     let config = context.config.current().await?;
+    // Pre-login there is no token and so no stated preference; the deployment default is the only
+    // signal. `Accept-Language` would be the better one here — and only here — but it has to reach
+    // the handler first; see `i18n.rs`.
+    let locale = config.default_locale.clone();
     let limits = &config.security.rate_limits;
     let per_ip = Policy::new(
         limits.per_ip.max_per_window,
@@ -344,7 +379,11 @@ async fn login(
             .await;
             // No per-account counter here — there is no account to key on; the per-IP cap covers
             // floods against unknown/inactive usernames.
-            status_bail!(StatusCode::UNAUTHORIZED, "Invalid username or password");
+            bail_i18n!(
+                StatusCode::UNAUTHORIZED,
+                &locale,
+                "auth.invalid_credentials"
+            );
         }
     };
 
@@ -380,7 +419,11 @@ async fn login(
                 .rate_limiter
                 .record_failure("login", &login_policy, &user.user_id, now)
                 .await;
-            status_bail!(StatusCode::UNAUTHORIZED, "Invalid username or password");
+            bail_i18n!(
+                StatusCode::UNAUTHORIZED,
+                &locale,
+                "auth.invalid_credentials"
+            );
         }
     };
 
@@ -390,7 +433,11 @@ async fn login(
             .rate_limiter
             .record_failure("login", &login_policy, &user.user_id, now)
             .await;
-        status_bail!(StatusCode::UNAUTHORIZED, "Invalid username or password");
+        bail_i18n!(
+            StatusCode::UNAUTHORIZED,
+            &locale,
+            "auth.invalid_credentials"
+        );
     }
 
     // Second factor: if TOTP MFA is enabled, a valid code is required. Without one, return a
@@ -426,7 +473,7 @@ async fn login(
                 .rate_limiter
                 .record_failure("login", &login_policy, &user.user_id, now)
                 .await;
-            status_bail!(StatusCode::UNAUTHORIZED, "Invalid TOTP code");
+            bail_i18n!(StatusCode::UNAUTHORIZED, &locale, "auth.mfa_invalid");
         }
     }
 
@@ -442,8 +489,19 @@ async fn login(
 
     // Default to the umami admin API when the caller didn't request a specific target.
     let api_code = request.api.as_deref().unwrap_or("umami");
-    let (access_token, set_cookie) =
-        issue_session(context, &user, api_code, false, mfa_totp, user_agent, ip).await?;
+    let (access_token, set_cookie) = issue_session(
+        context,
+        &user,
+        api_code,
+        AuthStrength {
+            passkey: false,
+            totp: mfa_totp,
+        },
+        accept_language,
+        user_agent,
+        ip,
+    )
+    .await?;
 
     record_best_effort(
         &context.audit,
@@ -471,12 +529,21 @@ async fn login(
 /// `api_code` selects the target API for the *initial* access token only — the session is
 /// audience-agnostic, so later `/auth/refresh` calls pick their own `api`. Shared by password login
 /// and the WebAuthn passkey login. Returns `(access_token, set_cookie)`.
+/// How strongly this session authenticated — the two markers travel together everywhere and mean
+/// nothing apart, so they are one value rather than two adjacent booleans nobody can tell apart at
+/// a call site.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct AuthStrength {
+    pub passkey: bool,
+    pub totp: bool,
+}
+
 pub(crate) async fn issue_session(
     context: &AuthContext,
     user: &User,
     api_code: &str,
-    mfa_passkey: bool,
-    mfa_totp: bool,
+    strength: AuthStrength,
+    accept_language: Option<&str>,
     user_agent: Option<String>,
     ip: Option<String>,
 ) -> anyhow::Result<(String, String)> {
@@ -490,8 +557,8 @@ pub(crate) async fn issue_session(
         user,
         &user.tenant_id,
         api_code,
-        mfa_passkey,
-        mfa_totp,
+        accept_language,
+        strength,
     )
     .await?;
 
@@ -505,8 +572,8 @@ pub(crate) async fn issue_session(
             active_tenant_id: Some(user.tenant_id.clone()),
             refresh_hash,
             token_version_at_issue: user.token_version,
-            mfa_passkey,
-            mfa_totp,
+            mfa_passkey: strength.passkey,
+            mfa_totp: strength.totp,
             ttl_secs: refresh_ttl_secs,
             user_agent,
             ip,
@@ -533,6 +600,7 @@ async fn refresh(
     context: &AuthContext,
     cookie_header: Option<&str>,
     api: Option<&str>,
+    accept_language: Option<&str>,
     ip: Option<String>,
 ) -> anyhow::Result<(TokenResponse, Option<String>)> {
     let (session_id, secret) = match parse_refresh_cookie(cookie_header) {
@@ -660,8 +728,14 @@ async fn refresh(
         &user,
         tenant_id,
         api_code,
-        session.mfa_passkey,
-        session.mfa_totp,
+        // Also on refresh, not just at sign-in: without it a user who never set a preference
+        // would be greeted in their browser's language and then switched to the deployment
+        // default ten minutes later, when the access token rotates.
+        accept_language,
+        AuthStrength {
+            passkey: session.mfa_passkey,
+            totp: session.mfa_totp,
+        },
     )
     .await?;
 

@@ -44,6 +44,11 @@
 mod audit;
 mod auth;
 mod authz;
+mod i18n;
+
+// Message catalogue for localized API errors; must live at the crate root because `t!` resolves
+// the generated items against `crate::`. See `i18n.rs` for what is translated and what is not.
+rust_i18n::i18n!("locales", fallback = "en");
 mod config;
 mod constants;
 mod messaging;

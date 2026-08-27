@@ -1,0 +1,33 @@
+_version: 2
+
+# Anreden. Frueher eine Tabelle im Code, davor eine einsprachige Map im Config-Dokument — beides
+# nur, weil es keinen Katalog gab. Jetzt sind es Eintraege wie alle anderen, und eine Sprache
+# ergaenzt man, indem man uebersetzt.
+salutation.SIR:
+  de: Herr
+  en: Mr
+salutation.MADAM:
+  de: Frau
+  en: Ms
+
+auth.invalid_credentials:
+  de: Benutzername oder Passwort ist falsch.
+  en: Invalid username or password.
+auth.account_locked:
+  de: Dieses Konto ist gesperrt.
+  en: This account is locked.
+auth.mfa_required:
+  de: Bitte gib deinen Einmalcode ein.
+  en: Please enter your one-time code.
+auth.mfa_invalid:
+  de: Der Einmalcode stimmt nicht.
+  en: That one-time code is not correct.
+auth.no_passkey:
+  de: Für dieses Konto ist kein Passkey-Login möglich.
+  en: No passkey login available for this account.
+auth.ceremony_unknown:
+  de: Der Anmeldevorgang ist abgelaufen. Bitte versuche es erneut.
+  en: The sign-in attempt expired. Please try again.
+auth.session_expired:
+  de: Deine Sitzung ist abgelaufen. Bitte melde dich erneut an.
+  en: Your session has expired. Please sign in again.

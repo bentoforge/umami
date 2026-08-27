@@ -155,6 +155,9 @@ async fn switch_tenant(
             // acting marker follows the *target*: switching into a customer tenant means no
             // longer acting inside the system tenant. `mint_access_token` on the refresh path
             // derives both the same way.
+            // Session tokens carry the user's own language; nothing overrides it here.
+            // Switching keeps the user's language; the header played its part at sign-in.
+            locale: &crate::i18n::resolve(user.locale.as_deref(), None, &config.default_locale),
             system_tenant: context.system_tenant_id.as_deref() == Some(target.tenant_id.as_str()),
             system_tenant_member: true,
             passkey,

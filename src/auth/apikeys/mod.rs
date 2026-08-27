@@ -129,6 +129,13 @@ struct ExchangeRequest {
     /// Mode 2: the HMAC proof (base64url).
     mac: Option<String>,
     api: Option<String>,
+    /// Language for the minted token (BCP-47), landing in the `locale` claim.
+    ///
+    /// A machine has no language of its own, so a service key carries none. What it does have is
+    /// an end user it is acting for: a bot relaying a failure into a chat, a backend rendering a
+    /// page. Passing that user's language here puts it in the token, and every service down the
+    /// line answers in it without a second channel. Absent = the deployment default.
+    locale: Option<String>,
 }
 
 /// Exchange response: the short-lived access token.
@@ -692,6 +699,13 @@ async fn exchange(
                     subjects: &subjects,
                     features: &features,
                     // A key never switches tenants, so acting-in and membership coincide.
+                    // A relaying service states the language of the person it acts for; a PAT
+                    // otherwise inherits its owner's.
+                    locale: &crate::i18n::resolve(
+                        request.locale.as_deref().or(user.locale.as_deref()),
+                        None,
+                        &config.default_locale,
+                    ),
                     system_tenant: is_system(&user.tenant_id),
                     system_tenant_member: is_system(&user.tenant_id),
                     passkey: false,
@@ -720,6 +734,12 @@ async fn exchange(
                     subjects: &key.scopes,
                     features: &features,
                     // A key never switches tenants, so acting-in and membership coincide.
+                    // A pure machine key has no user to inherit from.
+                    locale: &crate::i18n::resolve(
+                        request.locale.as_deref(),
+                        None,
+                        &config.default_locale,
+                    ),
                     system_tenant: is_system(&key.tenant_id),
                     system_tenant_member: is_system(&key.tenant_id),
                     passkey: false,
