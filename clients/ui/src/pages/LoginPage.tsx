@@ -1,5 +1,5 @@
 import { UmamiError } from "@bentoforge/umami-iam";
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router-dom";
 import { useUmami } from "../auth/UmamiProvider";
@@ -92,20 +92,31 @@ export function LoginPage() {
    * ref keeps the effect pointed at the current one.
    */
   const afterLoginRef = useRef<() => Promise<void>>(async () => {});
-  useEffect(() => {
+  const autofillRef = useRef<AbortController | null>(null);
+
+  const startAutofill = useCallback(() => {
     const controller = new AbortController();
+    autofillRef.current = controller;
     client
       .loginWithPasskeyAutofill({ signal: controller.signal })
       .then((offered) => (offered ? afterLoginRef.current() : undefined))
-      // Aborted on unmount, or the browser declined to offer autofill at all. Neither is worth
-      // showing: the explicit button is still there.
+      // Aborted, or the browser has no conditional mediation. Neither is worth showing: the
+      // explicit button remains as the way in.
       .catch(() => undefined);
-    return () => controller.abort();
   }, [client]);
+
+  useEffect(() => {
+    startAutofill();
+    return () => autofillRef.current?.abort();
+  }, [startAutofill]);
 
   afterLoginRef.current = afterLogin;
 
   const onPasskey = async () => {
+    // The autofill request from mount is still pending, and a browser rejects a second
+    // concurrent `navigator.credentials.get()`. Retire it before opening the modal picker.
+    autofillRef.current?.abort();
+    autofillRef.current = null;
     setBusy(true);
     setError(null);
     try {
@@ -115,6 +126,9 @@ export function LoginPage() {
       await afterLogin();
     } catch (err) {
       setError(err instanceof UmamiError ? err.message : t("login.failed"));
+      // Cancelled or failed: hand the passkey back to the username field, otherwise the
+      // autofill offer stays gone until a reload.
+      startAutofill();
     } finally {
       setBusy(false);
     }
