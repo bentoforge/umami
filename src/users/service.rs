@@ -193,6 +193,7 @@ pub fn create_user_route(
     users: Arc<dyn UserRepository>,
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
+    system_tenant_id: Option<String>,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("users")
@@ -201,6 +202,7 @@ pub fn create_user_route(
         .and(with_cloneable(users))
         .and(with_cloneable(tenants))
         .and(with_cloneable(config))
+        .and(with_cloneable(system_tenant_id))
         .and(with_user_with_any_permission(
             authenticator,
             REQUIRE_MANAGE_USERS,
@@ -254,6 +256,7 @@ pub fn patch_user_route(
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
     audit: Arc<dyn AuditRepository>,
+    system_tenant_id: Option<String>,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("users" / String)
@@ -262,6 +265,7 @@ pub fn patch_user_route(
         .and(with_cloneable(users))
         .and(with_cloneable(tenants))
         .and(with_cloneable(config))
+        .and(with_cloneable(system_tenant_id))
         .and(with_cloneable(audit))
         .and(with_user_with_any_permission(
             authenticator,
@@ -322,9 +326,10 @@ async fn handle_create_user_route(
     users: Arc<dyn UserRepository>,
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
+    system_tenant_id: Option<String>,
     caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(create_user(request, users, tenants, config, caller).await)
+    into_response(create_user(request, users, tenants, config, system_tenant_id, caller).await)
 }
 
 #[tracing::instrument(level = "debug", name = "GET /users", skip_all)]
@@ -366,11 +371,25 @@ async fn handle_patch_user_route(
     users: Arc<dyn UserRepository>,
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
+    system_tenant_id: Option<String>,
     audit: Arc<dyn AuditRepository>,
     caller: AuthUser,
     ip: Option<String>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(patch_user(user_id, request, users, tenants, config, audit, caller, ip).await)
+    into_response(
+        patch_user(
+            user_id,
+            request,
+            users,
+            tenants,
+            config,
+            system_tenant_id,
+            audit,
+            caller,
+            ip,
+        )
+        .await,
+    )
 }
 
 #[tracing::instrument(level = "debug", name = "DELETE /users/{id}", skip_all)]
@@ -402,6 +421,7 @@ async fn create_user(
     users: Arc<dyn UserRepository>,
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
+    system_tenant_id: Option<String>,
     caller: AuthUser,
 ) -> anyhow::Result<CreateUserResponse> {
     let tenant_id = caller.tenant_id()?.to_owned();
@@ -438,7 +458,14 @@ async fn create_user(
         .roles
         .filter(|roles| !roles.is_empty())
         .unwrap_or_else(|| vec![ROLE_MEMBER.to_owned()]);
-    validate_roles(&config, &tenants, &tenant_id, &roles).await?;
+    validate_roles(
+        &config,
+        &tenants,
+        &tenant_id,
+        system_tenant_id.as_deref(),
+        &roles,
+    )
+    .await?;
     let user = users
         .create_user(NewUser {
             tenant_id,
@@ -468,6 +495,7 @@ async fn validate_roles(
     config: &Config,
     tenants: &Arc<dyn TenantRepository>,
     tenant_id: &str,
+    system_tenant_id: Option<&str>,
     roles: &[String],
 ) -> anyhow::Result<()> {
     let features = tenants
@@ -475,6 +503,9 @@ async fn validate_roles(
         .await?
         .map(|tenant| tenant.features)
         .unwrap_or_default();
+    // Synthetic markers included, or every `is:system-tenant`-gated role would read as
+    // unassignable — even inside the system tenant.
+    let features = config.eval_feature_set(&features, system_tenant_id == Some(tenant_id));
     for role in roles {
         if !config.can_assign_role(role, &features) {
             client_bail!("Role '{role}' is not assignable in this tenant");
@@ -512,6 +543,7 @@ async fn patch_user(
     users: Arc<dyn UserRepository>,
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
+    system_tenant_id: Option<String>,
     audit: Arc<dyn AuditRepository>,
     caller: AuthUser,
     ip: Option<String>,
@@ -547,7 +579,14 @@ async fn patch_user(
         };
     }
     if let Some(roles) = request.roles {
-        validate_roles(&config, &tenants, tenant_id, &roles).await?;
+        validate_roles(
+            &config,
+            &tenants,
+            tenant_id,
+            system_tenant_id.as_deref(),
+            &roles,
+        )
+        .await?;
         user.roles = roles;
     }
     if let Some(locked) = request.locked {

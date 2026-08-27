@@ -52,6 +52,7 @@ pub fn assignable_roles_route(
     users: Arc<dyn UserRepository>,
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
+    system_tenant_id: Option<String>,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("users" / String / "assignable-roles")
@@ -59,6 +60,7 @@ pub fn assignable_roles_route(
         .and(with_cloneable(users))
         .and(with_cloneable(tenants))
         .and(with_cloneable(config))
+        .and(with_cloneable(system_tenant_id))
         .and(with_user_with_any_permission(
             authenticator,
             REQUIRE_MANAGE_USERS,
@@ -91,12 +93,14 @@ pub fn assignable_scopes_route(
 pub fn assignable_features_route(
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
+    system_tenant_id: Option<String>,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("tenants" / String / "assignable-features")
         .and(warp::get())
         .and(with_cloneable(tenants))
         .and(with_cloneable(config))
+        .and(with_cloneable(system_tenant_id))
         .and(with_user_with_any_permission(
             authenticator,
             REQUIRE_MANAGE_TENANTS,
@@ -109,12 +113,14 @@ pub fn assignable_features_route(
 pub fn grant_feature_route(
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
+    system_tenant_id: Option<String>,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("tenants" / String / "features" / DecodedSegment)
         .and(warp::post())
         .and(with_cloneable(tenants))
         .and(with_cloneable(config))
+        .and(with_cloneable(system_tenant_id))
         .and(with_user_with_any_permission(
             authenticator,
             REQUIRE_MANAGE_TENANTS,
@@ -149,9 +155,10 @@ async fn handle_assignable_roles_route(
     users: Arc<dyn UserRepository>,
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
+    system_tenant_id: Option<String>,
     caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(assignable_roles(user_id, users, tenants, config, caller).await)
+    into_response(assignable_roles(user_id, users, tenants, config, system_tenant_id, caller).await)
 }
 
 #[tracing::instrument(
@@ -178,9 +185,10 @@ async fn handle_assignable_features_route(
     tenant_id: String,
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
+    system_tenant_id: Option<String>,
     _caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(assignable_features(tenant_id, tenants, config).await)
+    into_response(assignable_features(tenant_id, tenants, config, system_tenant_id).await)
 }
 
 #[tracing::instrument(level = "debug", name = "POST /tenants/{id}/features/{code}", skip_all)]
@@ -189,9 +197,10 @@ async fn handle_grant_feature_route(
     code: DecodedSegment,
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
+    system_tenant_id: Option<String>,
     caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(grant_feature(tenant_id, code.0, tenants, config, caller).await)
+    into_response(grant_feature(tenant_id, code.0, tenants, config, system_tenant_id, caller).await)
 }
 
 #[tracing::instrument(
@@ -224,6 +233,7 @@ async fn assignable_roles(
     users: Arc<dyn UserRepository>,
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
+    system_tenant_id: Option<String>,
     caller: AuthUser,
 ) -> anyhow::Result<CodesResponse> {
     let tenant_id = caller.tenant_id()?;
@@ -233,7 +243,10 @@ async fn assignable_roles(
         _ => client_bail!("No such user in this tenant"),
     };
     let features = tenant_features(&tenants, &user.tenant_id).await?;
-    let codes = config.current().await?.assignable_roles(&features);
+    let config = config.current().await?;
+    let is_system = system_tenant_id.as_deref() == Some(user.tenant_id.as_str());
+    let set = config.eval_feature_set(&features, is_system);
+    let codes = config.assignable_roles(&set);
     Ok(CodesResponse { codes })
 }
 
@@ -258,9 +271,13 @@ async fn assignable_features(
     tenant_id: String,
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
+    system_tenant_id: Option<String>,
 ) -> anyhow::Result<CodesResponse> {
     let features = tenant_features(&tenants, &tenant_id).await?;
-    let codes = config.current().await?.assignable_features(&features);
+    let config = config.current().await?;
+    let is_system = system_tenant_id.as_deref() == Some(tenant_id.as_str());
+    let set = config.eval_feature_set(&features, is_system);
+    let codes = config.assignable_features(&set);
     Ok(CodesResponse { codes })
 }
 
@@ -269,6 +286,7 @@ async fn grant_feature(
     code: String,
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
+    system_tenant_id: Option<String>,
     caller: AuthUser,
 ) -> anyhow::Result<Value> {
     let config = config.current().await?;
@@ -280,7 +298,9 @@ async fn grant_feature(
     if tenant.features.iter().any(|f| f == &code) {
         return Ok(json!({ "status": "granted" }));
     }
-    if !config.can_grant_feature(&code, &tenant.features) {
+    let is_system = system_tenant_id.as_deref() == Some(tenant_id.as_str());
+    let effective = config.eval_feature_set(&tenant.features, is_system);
+    if !config.can_grant_feature(&code, &effective) {
         client_bail!("Feature '{code}' is not grantable for this tenant");
     }
 

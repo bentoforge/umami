@@ -460,6 +460,23 @@ pub struct Config {
     pub apis: Vec<ApiDef>,
 }
 
+/// A tenant's feature set *including* the synthetic markers `assignableIf` gates on
+/// (`is:system-tenant`, `feature:messaging-configured`).
+///
+/// A newtype rather than a bare `Vec<String>`, and only producible by
+/// [`Config::eval_feature_set`], because the distinction is invisible at a call site and easy to
+/// get wrong: the markers are derived, not stored on the tenant. Three of five call sites once
+/// passed the raw stored features, which silently made every `is:system-tenant`-gated role and
+/// feature unassignable — in the system tenant too. That mistake no longer compiles.
+#[derive(Debug, Clone)]
+pub struct EffectiveFeatures(Vec<String>);
+
+impl EffectiveFeatures {
+    fn as_set(&self) -> BTreeSet<&str> {
+        self.0.iter().map(String::as_str).collect()
+    }
+}
+
 impl Config {
     /// Finds a target API by code.
     pub fn find_api(&self, code: &str) -> Option<&ApiDef> {
@@ -546,8 +563,8 @@ impl Config {
 
     /// The role codes assignable to a user in a tenant with the given (namespaced) feature set —
     /// i.e. those whose `assignableIf` holds against `feature:*`/`is:*`.
-    pub fn assignable_roles(&self, tenant_features: &[String]) -> Vec<String> {
-        let set: BTreeSet<&str> = tenant_features.iter().map(String::as_str).collect();
+    pub fn assignable_roles(&self, features: &EffectiveFeatures) -> Vec<String> {
+        let set = features.as_set();
         self.roles
             .iter()
             .filter(|role| assignable(&role.assignable_if, &set))
@@ -556,8 +573,8 @@ impl Config {
     }
 
     /// Whether a specific role is assignable in a tenant with the given feature set (and is defined).
-    pub fn can_assign_role(&self, code: &str, tenant_features: &[String]) -> bool {
-        let set: BTreeSet<&str> = tenant_features.iter().map(String::as_str).collect();
+    pub fn can_assign_role(&self, code: &str, features: &EffectiveFeatures) -> bool {
+        let set = features.as_set();
         self.roles
             .iter()
             .find(|role| role.code == code)
@@ -571,7 +588,7 @@ impl Config {
         &self,
         tenant_features: &[String],
         is_system_tenant: bool,
-    ) -> Vec<String> {
+    ) -> EffectiveFeatures {
         let mut set: Vec<String> = tenant_features.to_vec();
         if is_system_tenant {
             set.push(SYSTEM_TENANT_MARKER.to_owned());
@@ -579,12 +596,12 @@ impl Config {
         if self.messaging.is_configured() {
             set.push(MESSAGING_CONFIGURED_MARKER.to_owned());
         }
-        set
+        EffectiveFeatures(set)
     }
 
     /// The scope codes assignable to a key in a tenant with the given feature set.
-    pub fn assignable_scopes(&self, tenant_features: &[String]) -> Vec<String> {
-        let set: BTreeSet<&str> = tenant_features.iter().map(String::as_str).collect();
+    pub fn assignable_scopes(&self, features: &EffectiveFeatures) -> Vec<String> {
+        let set = features.as_set();
         self.scopes
             .iter()
             .filter(|scope| assignable(&scope.assignable_if, &set))
@@ -593,8 +610,8 @@ impl Config {
     }
 
     /// Whether a specific scope is assignable in a tenant with the given feature set (and is defined).
-    pub fn can_assign_scope(&self, code: &str, tenant_features: &[String]) -> bool {
-        let set: BTreeSet<&str> = tenant_features.iter().map(String::as_str).collect();
+    pub fn can_assign_scope(&self, code: &str, features: &EffectiveFeatures) -> bool {
+        let set = features.as_set();
         self.scopes
             .iter()
             .find(|scope| scope.code == code)
@@ -603,11 +620,11 @@ impl Config {
 
     /// Whether a feature is grantable given the tenant's **current** features (its `assignableIf`
     /// holds and it is defined and not synthetic).
-    pub fn can_grant_feature(&self, code: &str, current_features: &[String]) -> bool {
+    pub fn can_grant_feature(&self, code: &str, features: &EffectiveFeatures) -> bool {
         if is_synthetic(code) {
             return false;
         }
-        let set: BTreeSet<&str> = current_features.iter().map(String::as_str).collect();
+        let set = features.as_set();
         self.features
             .iter()
             .find(|feature| feature.code == code)
@@ -616,12 +633,12 @@ impl Config {
 
     /// Feature codes grantable to a tenant right now: defined, non-synthetic, not already granted,
     /// and whose `assignableIf` holds against the current feature set.
-    pub fn assignable_features(&self, current_features: &[String]) -> Vec<String> {
-        let set: BTreeSet<&str> = current_features.iter().map(String::as_str).collect();
+    pub fn assignable_features(&self, features: &EffectiveFeatures) -> Vec<String> {
+        let set = features.as_set();
         self.features
             .iter()
             .filter(|feature| !is_synthetic(&feature.code))
-            .filter(|feature| !current_features.iter().any(|f| f == &feature.code))
+            .filter(|feature| !set.contains(feature.code.as_str()))
             .filter(|feature| assignable(&feature.assignable_if, &set))
             .map(|feature| feature.code.clone())
             .collect()
@@ -987,17 +1004,54 @@ mod tests {
             ..Config::default()
         };
         // role:ai only assignable when the tenant has feature:ai
-        assert!(!config.can_assign_role("role:ai", &[]));
-        assert!(config.can_assign_role("role:ai", &s(&["feature:ai"])));
+        let none = config.eval_feature_set(&[], false);
+        assert!(!config.can_assign_role("role:ai", &none));
+        let ai = config.eval_feature_set(&s(&["feature:ai"]), false);
+        assert!(config.can_assign_role("role:ai", &ai));
         // feature:ai grantable only once feature:base is present; and not if already granted
-        assert!(!config.can_grant_feature("feature:ai", &[]));
-        assert!(config.can_grant_feature("feature:ai", &s(&["feature:base"])));
-        assert_eq!(
-            config.assignable_features(&s(&["feature:base"])),
-            s(&["feature:ai"])
-        );
+        assert!(!config.can_grant_feature("feature:ai", &none));
+        let base = config.eval_feature_set(&s(&["feature:base"]), false);
+        assert!(config.can_grant_feature("feature:ai", &base));
+        assert_eq!(config.assignable_features(&base), s(&["feature:ai"]));
         // synthetic markers are never grantable
-        assert!(!config.can_grant_feature("is:system-tenant", &s(&["feature:base"])));
+        assert!(!config.can_grant_feature("is:system-tenant", &base));
+    }
+
+    /// The bug this newtype exists to prevent: `is:system-tenant` is synthetic — it is never
+    /// stored on the tenant — so a caller that hands over the *stored* features makes every role
+    /// gated on it unassignable, in the system tenant too. `assignable_roles` and
+    /// `validate_roles` both did exactly that, which is why no admin role could be granted.
+    #[test]
+    fn system_tenant_roles_need_the_synthetic_marker() {
+        let config = Config {
+            roles: vec![RoleDef {
+                code: "role:platform-admin".to_owned(),
+                name: "Platform admin".to_owned(),
+                description: None,
+                assignable_if: Some(SYSTEM_TENANT_MARKER.to_owned()),
+            }],
+            ..Config::default()
+        };
+
+        // Stored features of the system tenant — empty, as they are in practice.
+        let stored: Vec<String> = Vec::new();
+
+        let outside = config.eval_feature_set(&stored, false);
+        assert!(
+            !config.can_assign_role("role:platform-admin", &outside),
+            "a normal tenant must not reach a system-tenant role"
+        );
+        assert!(config.assignable_roles(&outside).is_empty());
+
+        let inside = config.eval_feature_set(&stored, true);
+        assert!(
+            config.can_assign_role("role:platform-admin", &inside),
+            "the system tenant must reach it — the marker is added, not stored"
+        );
+        assert_eq!(
+            config.assignable_roles(&inside),
+            vec!["role:platform-admin"]
+        );
     }
 
     #[test]

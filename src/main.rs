@@ -396,6 +396,7 @@ async fn app() -> anyhow::Result<()> {
             user_repository.clone(),
             tenant_repository.clone(),
             config_repository.clone(),
+            system_tenant_id.clone(),
             authenticator.clone()
         ),
         list_users_route(
@@ -413,6 +414,7 @@ async fn app() -> anyhow::Result<()> {
             tenant_repository.clone(),
             config_repository.clone(),
             audit_repository.clone(),
+            system_tenant_id.clone(),
             authenticator.clone()
         ),
         delete_user_route(user_repository.clone(), authenticator.clone()),
@@ -438,6 +440,7 @@ async fn app() -> anyhow::Result<()> {
             user_repository,
             tenant_repository.clone(),
             config_repository.clone(),
+            system_tenant_id.clone(),
             authenticator.clone()
         ),
         assignable_scopes_route(
@@ -449,11 +452,13 @@ async fn app() -> anyhow::Result<()> {
         assignable_features_route(
             tenant_repository.clone(),
             config_repository.clone(),
+            system_tenant_id.clone(),
             authenticator.clone()
         ),
         grant_feature_route(
             tenant_repository.clone(),
             config_repository.clone(),
+            system_tenant_id.clone(),
             authenticator.clone()
         ),
         revoke_feature_route(
