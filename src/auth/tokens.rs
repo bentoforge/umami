@@ -72,20 +72,60 @@ impl EnvKeyRepository {
 /// (for the signer) and its `kid`. Using one JWK keeps the active-key config consistent with
 /// `UMAMI_PREVIOUS_KEYS` (also JWKs) and carries the key id in the same object as the material.
 fn active_key_from_jwk(jwk: &str) -> anyhow::Result<(String, String)> {
-    let secret_key = SecretKey::from_jwk_str(jwk)
-        .map_err(|err| anyhow::anyhow!("UMAMI_SIGNING_KEY is not a valid private EC JWK: {err}"))?;
+    let value: Value = serde_json::from_str(jwk)
+        .context("UMAMI_SIGNING_KEY is not valid JSON — it must be a private EC P-256 JWK")?;
+
+    let kid = value
+        .get("kid")
+        .and_then(Value::as_str)
+        .filter(|kid| !kid.is_empty())
+        .context("UMAMI_SIGNING_KEY JWK must include a non-empty \"kid\"")?
+        .to_owned();
+
+    // `elliptic_curve`'s JWK deserializer rejects **any** member outside
+    // kty/crv/x/y/d — including the `kid` this function requires, and the
+    // `alg`/`use` that every generator emits (`step crypto jwk create`, node's
+    // `export({format:"jwk"})`, jose). Hand it only the five it accepts and keep
+    // the metadata on the side. `build_key_set` does the mirror image when it
+    // publishes the public half.
+    let stripped = strip_to_ec_members(&value)?;
+
+    let secret_key = SecretKey::from_jwk_str(&stripped).map_err(|err| {
+        // The crate collapses every failure into an opaque "crypto error", which
+        // tells an operator nothing. Say what we handed it instead.
+        anyhow::anyhow!(
+            "UMAMI_SIGNING_KEY is not a valid private EC P-256 JWK ({err}). Checked members: \
+             kty/crv/x/y/d — kty must be \"EC\", crv \"P-256\", and x/y/d base64url of 32 bytes each."
+        )
+    })?;
     let pem = secret_key
         .to_pkcs8_pem(LineEnding::LF)
         .context("Failed to re-encode the signing key")?
         .to_string();
-    let kid = serde_json::from_str::<Value>(jwk)
-        .ok()
-        .as_ref()
-        .and_then(|value| value.get("kid"))
-        .and_then(Value::as_str)
-        .context("UMAMI_SIGNING_KEY JWK must include a \"kid\"")?
-        .to_owned();
+
     Ok((pem, kid))
+}
+
+/// Reduces a JWK object to exactly the five members `elliptic_curve` accepts.
+///
+/// Missing members are named individually: the underlying parser reports nothing
+/// useful, and "which field is absent" is the whole diagnosis in practice.
+fn strip_to_ec_members(value: &Value) -> anyhow::Result<String> {
+    let mut out = serde_json::Map::new();
+    for member in ["kty", "crv", "x", "y", "d"] {
+        let found = value.get(member).and_then(Value::as_str).with_context(|| {
+            if member == "d" {
+                format!(
+                    "UMAMI_SIGNING_KEY is missing \"{member}\" — this looks like a *public* \
+                         JWK; the private key is required for signing"
+                )
+            } else {
+                format!("UMAMI_SIGNING_KEY is missing \"{member}\"")
+            }
+        })?;
+        let _ = out.insert(member.to_owned(), Value::from(found));
+    }
+    Ok(Value::Object(out).to_string())
 }
 
 /// Parses `UMAMI_PREVIOUS_KEYS` (optional) as a JSON array of public JWK objects. Unset/empty ⇒ none.
@@ -273,6 +313,47 @@ mod tests {
         async fn current(&self) -> anyhow::Result<Arc<KeySet>> {
             Ok(self.0.clone())
         }
+    }
+
+    /// A real generated key, with the `kid`/`alg`/`use` that generators emit.
+    const TEST_JWK: &str = r#"{"kty":"EC","x":"lb7Cz8dAfAft8gQ9u4x7eBt6pE9dtTxREGfDZORBLZk","y":"gwm95Jds7UGl6EoeCifp8YO9w4vyiJZjSPf1J-Lp9nk","crv":"P-256","d":"0vtvOGS8yU9z1HXHYCE68_AWDN9xR2_ihZCA_keMsxY","kid":"test-1","alg":"ES256","use":"sig"}"#;
+
+    #[test]
+    fn active_key_accepts_a_jwk_with_kid_alg_and_use() {
+        // The regression this guards: `elliptic_curve`'s deserializer errors on any
+        // member outside kty/crv/x/y/d, so passing the JWK through verbatim made
+        // every real-world key fail with an opaque "crypto error" — while the kid
+        // this function needs is itself one of the rejected members.
+        let (pem, kid) = active_key_from_jwk(TEST_JWK).unwrap();
+        assert_eq!(kid, "test-1");
+        assert!(pem.starts_with("-----BEGIN PRIVATE KEY-----"));
+    }
+
+    #[test]
+    fn active_key_requires_a_kid() {
+        let without_kid = r#"{"kty":"EC","crv":"P-256","x":"AAAA","y":"BBBB","d":"CCCC"}"#;
+        let err = active_key_from_jwk(without_kid).unwrap_err().to_string();
+        assert!(err.contains("kid"), "{err}");
+    }
+
+    #[test]
+    fn active_key_names_the_missing_member() {
+        let public_only: Value = serde_json::from_str(TEST_JWK).unwrap();
+        let mut map = public_only.as_object().unwrap().clone();
+        let _ = map.remove("d");
+        let err = active_key_from_jwk(&Value::Object(map).to_string())
+            .unwrap_err()
+            .to_string();
+        // A public JWK is the likeliest wrong input, so it gets named as such.
+        assert!(err.contains("public"), "{err}");
+    }
+
+    #[test]
+    fn active_key_rejects_a_wrong_curve() {
+        let p384: Value = serde_json::from_str(TEST_JWK).unwrap();
+        let mut map = p384.as_object().unwrap().clone();
+        let _ = map.insert("crv".to_owned(), Value::from("P-384"));
+        assert!(active_key_from_jwk(&Value::Object(map).to_string()).is_err());
     }
 
     #[test]
