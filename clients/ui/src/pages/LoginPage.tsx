@@ -50,11 +50,7 @@ export function LoginPage() {
     setBusy(true);
     setError(null);
     try {
-      const res = await client.login(
-        username,
-        password,
-        mfaRequired ? totpCode : undefined,
-      );
+      const res = await client.login(username, password, mfaRequired ? totpCode : undefined);
       if (res.mfaRequired) {
         setMfaRequired(true);
         return;
@@ -152,9 +148,7 @@ export function LoginPage() {
                 onChange={(e) => setTotpCode(e.target.value)}
                 className={inputClass}
               />
-              <p className="mt-1 text-xs text-slate-500">
-                {t("login.mfaHint")}
-              </p>
+              <p className="mt-1 text-xs text-slate-500">{t("login.mfaHint")}</p>
             </Field>
           )}
           {error && <p className="text-sm text-red-600">{error}</p>}
@@ -177,13 +171,7 @@ export function LoginPage() {
   );
 }
 
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
       <span className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
