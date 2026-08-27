@@ -606,10 +606,10 @@ fn allowed_origins(raw: &str, issuer: Option<&str>) -> Vec<String> {
     // allow-list — including umami's own. Without this, configuring CORS for an
     // external SPA locks the bundled management UI under /app out of `/auth/login`
     // with a 403, because a same-origin POST carrying JSON still sends `Origin`.
-    if let Some(own) = issuer.and_then(origin_of) {
-        if !origins.contains(&own) {
-            origins.push(own);
-        }
+    if let Some(own) = issuer.and_then(origin_of)
+        && !origins.contains(&own)
+    {
+        origins.push(own);
     }
     origins
 }
