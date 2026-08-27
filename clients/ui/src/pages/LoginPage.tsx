@@ -102,30 +102,47 @@ export function LoginPage() {
           {t("login.heading")}
         </h1>
         <form onSubmit={onSubmit} className="space-y-4">
+          {/*
+            Two-step form: step one asks for username + password, step two for the
+            one-time code. The username stays visible (read-only) so the password
+            manager keeps the entry associated with this form.
+          */}
           <Field label={t("login.username")}>
             <input
               type="text"
               required
               autoComplete="username"
+              readOnly={mfaRequired}
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              className={inputClass}
+              className={mfaRequired ? readOnlyInputClass : inputClass}
             />
           </Field>
-          <Field label={t("login.password")}>
-            <input
-              type="password"
-              required
-              autoComplete="current-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className={inputClass}
-            />
-          </Field>
+          {/*
+            The password input is *removed* in the MFA step rather than hidden. As long
+            as a fillable `current-password` field sits in the DOM, password managers
+            keep treating step two as a password form and drop the one-time code into
+            it. The value lives in React state, so the second submit still carries it.
+          */}
+          {!mfaRequired && (
+            <Field label={t("login.password")}>
+              <input
+                type="password"
+                required
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className={inputClass}
+              />
+            </Field>
+          )}
           {mfaRequired && (
             <Field label={t("login.totp")}>
               <input
+                type="text"
                 inputMode="numeric"
+                required
+                autoFocus
                 autoComplete="one-time-code"
                 value={totpCode}
                 onChange={(e) => setTotpCode(e.target.value)}
@@ -139,14 +156,16 @@ export function LoginPage() {
             {t("login.submit")}
           </button>
         </form>
-        <button
-          type="button"
-          onClick={onPasskey}
-          disabled={busy || !username}
-          className={secondaryButtonClass}
-        >
-          {t("login.passkey")}
-        </button>
+        {!mfaRequired && (
+          <button
+            type="button"
+            onClick={onPasskey}
+            disabled={busy || !username}
+            className={secondaryButtonClass}
+          >
+            {t("login.passkey")}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -165,6 +184,10 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 const inputClass =
   "w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 px-3 py-2 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary";
+
+/** Same box, visibly inert: the username in the MFA step is context, not an input. */
+const readOnlyInputClass =
+  "w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-slate-500 dark:text-slate-400 focus:outline-none";
 const primaryButtonClass =
   "w-full rounded-lg bg-primary hover:bg-primary-dark text-white font-medium py-2 transition disabled:opacity-50";
 const secondaryButtonClass =
