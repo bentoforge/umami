@@ -8,16 +8,16 @@ pub mod repository;
 pub mod service;
 
 use crate::constants::{
-    ADMIN_TENANT_PERMISSION, DEFAULT_ACCESS_TTL_SECS, DEFAULT_LOGIN_BLOCK_SECS,
-    DEFAULT_LOGIN_MAX_FAILURES, DEFAULT_LOGIN_WINDOW_SECS, DEFAULT_MESSAGING_CODE_TTL_SECS,
-    DEFAULT_PER_IP_BLOCK_SECS, DEFAULT_PER_IP_MAX_PER_WINDOW, DEFAULT_PER_IP_WINDOW_SECS,
-    DEFAULT_REFRESH_TTL_SECS, DEFAULT_TOKEN_BLOCK_SECS, DEFAULT_TOKEN_MAX_PER_WINDOW,
-    DEFAULT_TOKEN_WINDOW_SECS, MANAGE_CONFIG_PERMISSION, MANAGE_MESSAGING_PERMISSION,
-    MANAGE_PASSWORDS_PERMISSION, MANAGE_PERSONAL_TOKENS_PERMISSION, MANAGE_PROFILE_PERMISSION,
-    MANAGE_SERVICE_KEYS_PERMISSION, MANAGE_SESSIONS_PERMISSION, MANAGE_TENANTS_PERMISSION,
-    MANAGE_USERS_PERMISSION, MESSAGING_CONFIGURED_MARKER, MESSAGING_LINK_PERMISSION,
-    MESSAGING_RESOLVE_PERMISSION, ROLE_MEMBER, ROLE_OWNER, SWITCH_TENANT_PERMISSION,
-    SYSTEM_TENANT_MARKER, SYSTEM_TENANT_MEMBER_MARKER,
+    DEFAULT_ACCESS_TTL_SECS, DEFAULT_LOGIN_BLOCK_SECS, DEFAULT_LOGIN_MAX_FAILURES,
+    DEFAULT_LOGIN_WINDOW_SECS, DEFAULT_MESSAGING_CODE_TTL_SECS, DEFAULT_PER_IP_BLOCK_SECS,
+    DEFAULT_PER_IP_MAX_PER_WINDOW, DEFAULT_PER_IP_WINDOW_SECS, DEFAULT_REFRESH_TTL_SECS,
+    DEFAULT_TOKEN_BLOCK_SECS, DEFAULT_TOKEN_MAX_PER_WINDOW, DEFAULT_TOKEN_WINDOW_SECS,
+    MANAGE_CONFIG_PERMISSION, MANAGE_MESSAGING_PERMISSION, MANAGE_PASSWORDS_PERMISSION,
+    MANAGE_PERSONAL_TOKENS_PERMISSION, MANAGE_PROFILE_PERMISSION, MANAGE_SERVICE_KEYS_PERMISSION,
+    MANAGE_SESSIONS_PERMISSION, MANAGE_TENANTS_PERMISSION, MANAGE_USERS_PERMISSION,
+    MESSAGING_CONFIGURED_MARKER, MESSAGING_LINK_PERMISSION, MESSAGING_RESOLVE_PERMISSION,
+    ROLE_MEMBER, ROLE_OWNER, SWITCH_TENANT_PERMISSION, SYSTEM_TENANT_MARKER,
+    SYSTEM_TENANT_MEMBER_MARKER, VIEW_AUDIT_PERMISSION,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -752,7 +752,7 @@ impl Default for Config {
                     rule(
                         ROLE_OWNER,
                         &[
-                            ADMIN_TENANT_PERMISSION,
+                            VIEW_AUDIT_PERMISSION,
                             MANAGE_USERS_PERMISSION,
                             MANAGE_SERVICE_KEYS_PERMISSION,
                             MANAGE_CONFIG_PERMISSION,
@@ -956,7 +956,7 @@ mod tests {
     fn default_umami_maps_roles_and_system_marker() {
         let umami = Config::default().find_api("umami").unwrap().clone();
         let owner = umami.resolve(&s(&["role:owner"])).unwrap();
-        assert!(owner.contains(&"admin:tenant".to_owned()));
+        assert!(owner.contains(&"view:audit".to_owned()));
         assert!(owner.contains(&"manage:users".to_owned()));
         assert!(owner.contains(&"manage:config".to_owned()));
         // cross-tenant permissions come only from the system-tenant marker, never a plain role
@@ -1000,7 +1000,7 @@ mod tests {
         assert!(viewer.contains(&"manage:sessions".to_owned()));
         assert!(!viewer.contains(&"self:readonly".to_owned()));
         // Tenant administration still requires the owner role, not just the self-service baseline.
-        assert!(!viewer.contains(&"admin:tenant".to_owned()));
+        assert!(!viewer.contains(&"view:audit".to_owned()));
     }
 
     #[test]

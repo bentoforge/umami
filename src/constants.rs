@@ -16,8 +16,13 @@ pub const MAX_LIST_RESULTS: usize = 250;
 // features/markers to permissions lives entirely in the config `apis` block (see `docs/CONFIG.md`).
 // Product-service permission strings (e.g. dbx-core's `write:blocks`) are defined by those services.
 
-/// Administer the caller's **own** tenant (settings, features, custom fields, audit).
-pub const ADMIN_TENANT_PERMISSION: &str = "admin:tenant";
+/// Read a tenant's audit trail.
+///
+/// Deliberately *only* the audit trail. Its predecessor `admin:tenant` also carried reading and
+/// **editing** the tenant record, which made "let support read the log" and "let a tenant
+/// administer itself" the same grant. Tenant records are now `manage:tenants` territory, so a
+/// tenant cannot rename itself or touch its custom fields; the log is a separate, narrower right.
+pub const VIEW_AUDIT_PERMISSION: &str = "view:audit";
 
 /// Manage a tenant's users (create/list/patch/delete, roles, status, password reset).
 pub const MANAGE_USERS_PERMISSION: &str = "manage:users";

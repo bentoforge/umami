@@ -2,7 +2,7 @@
 
 use crate::audit::AuditEntry;
 use crate::audit::repository::AuditRepository;
-use crate::constants::{ADMIN_TENANT_PERMISSION, MAX_LIST_RESULTS};
+use crate::constants::{MAX_LIST_RESULTS, VIEW_AUDIT_PERMISSION};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use warp::Filter;
@@ -17,7 +17,7 @@ use wasabi::web::warp::{into_response, with_cloneable};
 /// Default number of entries returned when `limit` is omitted.
 const DEFAULT_LIMIT: i32 = 100;
 
-const REQUIRE_ADMIN_TENANT: &[&str] = &[ADMIN_TENANT_PERMISSION];
+const REQUIRE_VIEW_AUDIT: &[&str] = &[VIEW_AUDIT_PERMISSION];
 
 /// Optional `?limit=` (clamped to `1..=MAX_LIST_RESULTS`) + `?cursor=` (resume after a prior page).
 #[derive(Deserialize, Debug)]
@@ -43,7 +43,7 @@ struct AuditListResponse {
     next_cursor: Option<String>,
 }
 
-/// `GET /tenants/{id}/audit[?limit=]` — the tenant's audit trail (requires `admin:tenant`, own tenant).
+/// `GET /tenants/{id}/audit[?limit=]` — the tenant's audit trail (requires `view:audit`, own tenant).
 pub fn tenant_audit_route(
     audit: Arc<dyn AuditRepository>,
     authenticator: Arc<Authenticator>,
@@ -54,7 +54,7 @@ pub fn tenant_audit_route(
         .and(with_cloneable(audit))
         .and(with_user_with_any_permission(
             authenticator,
-            REQUIRE_ADMIN_TENANT,
+            REQUIRE_VIEW_AUDIT,
         ))
         .and_then(handle_tenant_audit_route)
         .boxed()

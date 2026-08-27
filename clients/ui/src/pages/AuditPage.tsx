@@ -19,7 +19,7 @@ const SEVERITY_DOT: Record<AuditSeverity, string> = {
  * the Tailwind cascade — so swap the class rather than append it. */
 const tdTop = td.replace("align-middle", "align-top");
 
-/** Tenant audit trail (admin:tenant), newest first, paged with a "load more" button. */
+/** Tenant audit trail (view:audit), newest first, paged with a "load more" button. */
 export function AuditPage() {
   const { client, me } = useUmami();
   const { t } = useTranslation();

@@ -4,14 +4,13 @@
 //! `DELETE /tenants/{id}` (refused for the system tenant, the caller's current tenant, or a tenant
 //! that still has users/API keys) are **cross-tenant** operations guarded by the `manage:tenants`
 //! permission, projected from `is:system-tenant` (see docs/CONFIG.md). `GET`/`PATCH /tenants/{id}`
-//! accept `admin:tenant` (own tenant) or `manage:tenants` (any tenant, for system admins).
+//! need it too — a tenant does not administer itself.
 
 use crate::auth::apikeys::repository::ApiKeyRepository;
 use crate::config::Config;
 use crate::config::repository::ConfigRepository;
 use crate::constants::{
-    ADMIN_TENANT_PERMISSION, MANAGE_TENANTS_PERMISSION, MAX_LIST_RESULTS, MAX_TEXT_BODY_SIZE,
-    ROLE_OWNER,
+    MANAGE_TENANTS_PERMISSION, MAX_LIST_RESULTS, MAX_TEXT_BODY_SIZE, ROLE_OWNER,
 };
 use crate::tenants::repository::TenantRepository;
 use crate::tenants::{Tenant, slugify};
@@ -29,13 +28,13 @@ use wasabi::web::auth::with_user_with_any_permission;
 use wasabi::web::warp::{into_response, with_body_as_json, with_cloneable};
 use wasabi::{client_bail, status_bail};
 
-/// Permission required to read/administer a tenant: own-tenant self-service (`admin:tenant`) **or**
-/// cross-tenant administration (`manage:tenants`). [`enforce_own_tenant`] then narrows an
-/// `admin:tenant`-only caller to their own tenant.
-const REQUIRE_ADMIN_TENANT: &[&str] = &[ADMIN_TENANT_PERMISSION, MANAGE_TENANTS_PERMISSION];
-
-/// Permission required for cross-tenant administration (list/create/delete tenants). Held only by
-/// system-tenant members via the `is:system-tenant` → `manage:tenants` projection.
+/// Permission required for every tenant route, cross-tenant *and* per-tenant.
+///
+/// Reading and editing a tenant record is system-admin territory: a tenant must not be able to
+/// rename itself or rewrite its own custom fields. Its predecessor also accepted `admin:tenant`,
+/// which conflated "read the audit log" with "administer yourself"; the log is now the separate,
+/// narrower `view:audit`. What a member legitimately needs about their own tenant arrives with
+/// `GET /auth/me`, which carries the tenant alongside the user.
 const REQUIRE_MANAGE_TENANTS: &[&str] = &[MANAGE_TENANTS_PERMISSION];
 
 /// The first (owner) user created alongside a new tenant.
@@ -164,7 +163,7 @@ pub fn delete_tenant_route(
         .boxed()
 }
 
-/// `GET /tenants/{id}` — read the caller's own tenant (requires `admin:tenant`).
+/// `GET /tenants/{id}` — read a tenant (requires `manage:tenants`).
 pub fn get_tenant_route(
     tenants: Arc<dyn TenantRepository>,
     authenticator: Arc<Authenticator>,
@@ -174,14 +173,13 @@ pub fn get_tenant_route(
         .and(with_cloneable(tenants))
         .and(with_user_with_any_permission(
             authenticator,
-            REQUIRE_ADMIN_TENANT,
+            REQUIRE_MANAGE_TENANTS,
         ))
         .and_then(handle_get_tenant_route)
         .boxed()
 }
 
-/// `PATCH /tenants/{id}` — update the caller's own tenant's name + custom fields (requires
-/// `admin:tenant`).
+/// `PATCH /tenants/{id}` — update a tenant's name + custom fields (requires `manage:tenants`).
 pub fn patch_tenant_route(
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
@@ -194,7 +192,7 @@ pub fn patch_tenant_route(
         .and(with_cloneable(config))
         .and(with_user_with_any_permission(
             authenticator,
-            REQUIRE_ADMIN_TENANT,
+            REQUIRE_MANAGE_TENANTS,
         ))
         .and_then(handle_patch_tenant_route)
         .boxed()
@@ -416,10 +414,8 @@ async fn delete_tenant(
 async fn get_tenant(
     tenant_id: String,
     tenants: Arc<dyn TenantRepository>,
-    caller: AuthUser,
+    _caller: AuthUser,
 ) -> anyhow::Result<Tenant> {
-    enforce_own_tenant(&tenant_id, &caller)?;
-
     match tenants.get_tenant(&tenant_id).await? {
         Some(tenant) => Ok(tenant),
         None => client_bail!("No such tenant"),
@@ -433,8 +429,6 @@ async fn patch_tenant(
     config: Arc<dyn ConfigRepository>,
     caller: AuthUser,
 ) -> anyhow::Result<Tenant> {
-    enforce_own_tenant(&tenant_id, &caller)?;
-
     let mut tenant = match tenants.get_tenant(&tenant_id).await? {
         Some(tenant) => tenant,
         None => client_bail!("No such tenant"),
@@ -453,19 +447,4 @@ async fn patch_tenant(
     tenant.last_changed_by = Some(caller.user_id()?.to_owned());
 
     tenants.put_tenant(tenant).await
-}
-
-/// Ensures the caller may act on `tenant_id`. Cross-tenant admins (`manage:tenants`) may act on any
-/// tenant; everyone else (`admin:tenant` self-service) is confined to their own tenant.
-fn enforce_own_tenant(tenant_id: &str, caller: &AuthUser) -> anyhow::Result<()> {
-    if caller.has_any_permission(REQUIRE_MANAGE_TENANTS) {
-        return Ok(());
-    }
-    if caller.tenant_id()? != tenant_id {
-        status_bail!(
-            StatusCode::FORBIDDEN,
-            "You may only administer your own tenant"
-        );
-    }
-    Ok(())
 }

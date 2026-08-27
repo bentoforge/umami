@@ -52,7 +52,7 @@ export function AdminLayout() {
   // Personal/account items — the user menu (desktop) and part of the mobile menu.
   const menuItems: NavItem[] = [
     { to: "/profile", label: t("nav.profile"), show: true },
-    { to: "/audit", label: t("nav.audit"), show: can("admin:tenant") },
+    { to: "/audit", label: t("nav.audit"), show: can("view:audit") },
     { to: "/config", label: t("nav.config"), show: can("manage:config") },
   ].filter((item) => item.show);
 
