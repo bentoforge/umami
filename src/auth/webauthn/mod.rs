@@ -12,6 +12,7 @@ use crate::auth::AuthContext;
 use crate::auth::login::{AuthStrength, issue_session};
 use crate::auth::ratelimit::{Decision, Policy, too_many_requests};
 use crate::auth::webauthn::repository::WebauthnRepository;
+use crate::bail_i18n;
 use crate::constants::{MANAGE_PASSWORDS_PERMISSION, MAX_TEXT_BODY_SIZE};
 use crate::users::repository::UserRepository;
 use anyhow::{Context, anyhow};
@@ -30,7 +31,6 @@ use warp::http::StatusCode;
 use warp::http::header::SET_COOKIE;
 use warp::reply::Response;
 use wasabi::aws::dynamodb::generate_id;
-use wasabi::status_bail;
 use wasabi::web::auth::authenticator::Authenticator;
 use wasabi::web::auth::user::User as AuthUser;
 use wasabi::web::auth::with_user_with_any_permission;
@@ -419,7 +419,7 @@ async fn register_start(
     let user_id = caller.user_id()?;
     let user = match users.get_user(user_id).await? {
         Some(user) => user,
-        None => status_bail!(StatusCode::UNAUTHORIZED, "User no longer exists"),
+        None => bail_i18n!(StatusCode::UNAUTHORIZED, caller.locale(), "auth.user_gone"),
     };
 
     let exclude: Vec<CredentialID> = parse_passkeys(webauthn.list_passkeys(&user.user_id).await?)?
@@ -457,16 +457,28 @@ async fn register_finish(
 ) -> anyhow::Result<RegisterFinishResponse> {
     let ceremony = match webauthn.take_ceremony(&request.ceremony_id).await? {
         Some(ceremony) => ceremony,
-        None => status_bail!(StatusCode::BAD_REQUEST, "Unknown or expired ceremony"),
+        None => bail_i18n!(
+            StatusCode::BAD_REQUEST,
+            caller.locale(),
+            "auth.ceremony_expired"
+        ),
     };
     // Registration is authenticated, so its ceremony always carries the enroling user. A
     // discoverable (user-less) ceremony must never be redeemable as a registration.
     let ceremony_user = match ceremony.user_id.as_deref() {
         Some(user_id) => user_id,
-        None => status_bail!(StatusCode::BAD_REQUEST, "Not a registration ceremony"),
+        None => bail_i18n!(
+            StatusCode::BAD_REQUEST,
+            caller.locale(),
+            "auth.ceremony_wrong_kind"
+        ),
     };
     if ceremony_user != caller.user_id()? {
-        status_bail!(StatusCode::FORBIDDEN, "Ceremony does not belong to you");
+        bail_i18n!(
+            StatusCode::FORBIDDEN,
+            caller.locale(),
+            "auth.ceremony_foreign"
+        );
     }
 
     let state: PasskeyRegistration =
@@ -510,6 +522,9 @@ async fn login_start(
     service: Arc<WebauthnService>,
     webauthn: Arc<dyn WebauthnRepository>,
 ) -> anyhow::Result<LoginStartResponse> {
+    // Passkey login carries no token, and the ceremony deliberately reveals nothing about who the
+    // user is — so the deployment default is the only honest source here.
+    let passkey_locale = context.config.current().await?.default_locale.clone();
     // No username: discoverable flow. The challenge carries no allow-list, so the response
     // leaks nothing about who exists — which is also why it is safe to answer unconditionally.
     let Some(username) = request
@@ -536,12 +551,20 @@ async fn login_start(
 
     let user = match context.users.find_by_username(username).await? {
         Some(user) if !user.locked => user,
-        _ => status_bail!(StatusCode::UNAUTHORIZED, "No passkey login available"),
+        _ => bail_i18n!(
+            StatusCode::UNAUTHORIZED,
+            &passkey_locale,
+            "auth.passkey_unavailable"
+        ),
     };
 
     let passkeys = parse_passkeys(webauthn.list_passkeys(&user.user_id).await?)?;
     if passkeys.is_empty() {
-        status_bail!(StatusCode::UNAUTHORIZED, "No passkey login available");
+        bail_i18n!(
+            StatusCode::UNAUTHORIZED,
+            &passkey_locale,
+            "auth.passkey_unavailable"
+        );
     }
 
     let (options, state) = service.start_authentication(&passkeys)?;
@@ -570,9 +593,16 @@ async fn login_finish(
     user_agent: Option<String>,
     ip: Option<String>,
 ) -> anyhow::Result<(String, String)> {
+    // Passkey login carries no token, and the ceremony deliberately reveals nothing about who the
+    // user is — so the deployment default is the only honest source here.
+    let passkey_locale = context.config.current().await?.default_locale.clone();
     let ceremony = match webauthn.take_ceremony(&request.ceremony_id).await? {
         Some(ceremony) => ceremony,
-        None => status_bail!(StatusCode::UNAUTHORIZED, "Unknown or expired ceremony"),
+        None => bail_i18n!(
+            StatusCode::UNAUTHORIZED,
+            &passkey_locale,
+            "auth.ceremony_expired"
+        ),
     };
 
     // Which flavour of ceremony this is decides how the user is found: the classic flow knows
@@ -599,7 +629,11 @@ async fn login_finish(
                         "Discoverable login: no user owns this credential (index not yet \
                          populated, or the credential was removed)"
                     );
-                    status_bail!(StatusCode::UNAUTHORIZED, "No passkey login available")
+                    bail_i18n!(
+                        StatusCode::UNAUTHORIZED,
+                        &passkey_locale,
+                        "auth.passkey_unavailable"
+                    )
                 }
             };
             // The credential id and the user handle are two independent statements about who
@@ -611,7 +645,11 @@ async fn login_finish(
                     "Discoverable login: user handle does not match the user the credential \
                      resolves to"
                 );
-                status_bail!(StatusCode::UNAUTHORIZED, "No passkey login available");
+                bail_i18n!(
+                    StatusCode::UNAUTHORIZED,
+                    &passkey_locale,
+                    "auth.passkey_unavailable"
+                );
             }
             let keys: Vec<DiscoverableKey> =
                 parse_passkeys(webauthn.list_passkeys(&user_id).await?)?
@@ -642,7 +680,11 @@ async fn login_finish(
 
     let user = match context.users.get_user(&user_id).await? {
         Some(user) if !user.locked => user,
-        _ => status_bail!(StatusCode::UNAUTHORIZED, "Account not active"),
+        _ => bail_i18n!(
+            StatusCode::UNAUTHORIZED,
+            &passkey_locale,
+            "auth.account_inactive"
+        ),
     };
 
     // Mint for the requested API (default: umami admin API); the session records it for refresh.

@@ -10,6 +10,7 @@
 //! grant/revoke endpoints mutate `tenant.features`. Synthetic markers (`is:*`) are computed at mint
 //! time and are never grantable or revocable.
 
+use crate::bail_i18n;
 use crate::config::repository::ConfigRepository;
 use crate::config::{eval_expression, is_synthetic};
 use crate::constants::{
@@ -24,11 +25,11 @@ use std::sync::Arc;
 use warp::Filter;
 use warp::filters::BoxedFilter;
 use warp::http::StatusCode;
+use wasabi::client_bail;
 use wasabi::web::auth::authenticator::Authenticator;
 use wasabi::web::auth::user::User as AuthUser;
 use wasabi::web::auth::with_user_with_any_permission;
 use wasabi::web::warp::{DecodedSegment, into_response, with_cloneable};
-use wasabi::{client_bail, status_bail};
 
 /// Permission required to read a user's assignable roles.
 const REQUIRE_MANAGE_USERS: &[&str] = &[MANAGE_USERS_PERMISSION];
@@ -223,7 +224,7 @@ async fn handle_revoke_feature_route(
 /// Ensures the caller may only act within their own tenant.
 fn enforce_own(tenant_id: &str, caller: &AuthUser) -> anyhow::Result<()> {
     if caller.tenant_id()? != tenant_id {
-        status_bail!(StatusCode::FORBIDDEN, "You may only manage your own tenant");
+        bail_i18n!(StatusCode::FORBIDDEN, caller.locale(), "tenant.foreign");
     }
     Ok(())
 }

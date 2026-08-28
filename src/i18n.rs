@@ -119,3 +119,69 @@ pub fn resolve(
     let refs: Vec<&str> = supported.iter().map(String::as_str).collect();
     wasabi::web::locale::negotiate_language(accept_language, &refs, &config.default_locale)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every key the code throws, so a missing translation fails here rather than reaching a user
+    /// as a raw `auth.something` string. rust-i18n answers a miss with the key itself, which looks
+    /// enough like a message to survive review.
+    const KEYS: &[&str] = &[
+        "salutation.SIR",
+        "salutation.MADAM",
+        "auth.invalid_credentials",
+        "auth.account_inactive",
+        "auth.user_gone",
+        "auth.password_wrong",
+        "auth.mfa_invalid",
+        "auth.session_none",
+        "auth.session_expired",
+        "auth.session_revoked",
+        "auth.refresh_missing",
+        "auth.refresh_rejected",
+        "auth.passkey_unavailable",
+        "auth.ceremony_expired",
+        "auth.ceremony_wrong_kind",
+        "auth.ceremony_foreign",
+        "apikey.invalid",
+        "apikey.expired",
+        "apikey.origin_denied",
+        "tenant.foreign",
+        "tenant.system_undeletable",
+        "user.self_undeletable",
+    ];
+
+    #[test]
+    fn every_key_is_translated_in_every_language() {
+        for locale in rust_i18n::available_locales!() {
+            for key in KEYS {
+                let text = message(&locale, key);
+                assert_ne!(
+                    &text.as_str(),
+                    key,
+                    "'{key}' has no {locale} translation — rust-i18n returned the key"
+                );
+                assert!(!text.trim().is_empty(), "'{key}' is empty in {locale}");
+            }
+        }
+    }
+
+    /// A guard against a copy-paste catalogue where one language was never actually written.
+    #[test]
+    fn german_and_english_actually_differ() {
+        let same: Vec<&str> = KEYS
+            .iter()
+            .filter(|key| message("de", key) == message("en", key))
+            .copied()
+            .collect();
+        assert!(same.is_empty(), "identical in de and en: {same:?}");
+    }
+
+    #[test]
+    fn unknown_tags_reach_the_language_they_name() {
+        assert_eq!(message("de-AT", "salutation.SIR"), "Herr");
+        assert_eq!(message("DE", "salutation.SIR"), "Herr");
+        assert_eq!(message("fr", "salutation.SIR"), "Mr", "unknown → fallback");
+    }
+}

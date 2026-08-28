@@ -9,6 +9,7 @@ use crate::audit::{AuditSeverity, NewAuditEntry};
 use crate::auth::cookies::parse_refresh_cookie;
 use crate::auth::password;
 use crate::auth::session::repository::SessionRepository;
+use crate::bail_i18n;
 use crate::config::Config;
 use crate::config::repository::ConfigRepository;
 use crate::constants::{
@@ -225,7 +226,7 @@ async fn me(
 
     let user = match users.get_user(user_id).await? {
         Some(user) => user,
-        None => status_bail!(StatusCode::UNAUTHORIZED, "User no longer exists"),
+        None => bail_i18n!(StatusCode::UNAUTHORIZED, caller.locale(), "auth.user_gone"),
     };
 
     let default_locale = config.current().await?.default_locale.clone();
@@ -258,7 +259,7 @@ async fn patch_me(
     let user_id = caller.user_id()?;
     let mut user = match users.get_user(user_id).await? {
         Some(user) => user,
-        None => status_bail!(StatusCode::UNAUTHORIZED, "User no longer exists"),
+        None => bail_i18n!(StatusCode::UNAUTHORIZED, caller.locale(), "auth.user_gone"),
     };
 
     let config = config.current().await?;
@@ -343,7 +344,7 @@ async fn change_password(
 ) -> anyhow::Result<serde_json::Value> {
     let mut user = match users.get_user(caller.user_id()?).await? {
         Some(user) => user,
-        None => status_bail!(StatusCode::UNAUTHORIZED, "User no longer exists"),
+        None => bail_i18n!(StatusCode::UNAUTHORIZED, caller.locale(), "auth.user_gone"),
     };
 
     let current_hash = match user.password_hash.as_deref() {
@@ -366,7 +367,11 @@ async fn change_password(
             .with_ip(ip.clone()),
         )
         .await;
-        status_bail!(StatusCode::UNAUTHORIZED, "Current password is incorrect");
+        bail_i18n!(
+            StatusCode::UNAUTHORIZED,
+            caller.locale(),
+            "auth.password_wrong"
+        );
     }
 
     config

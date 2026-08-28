@@ -10,24 +10,77 @@ salutation.MADAM:
   de: Frau
   en: Ms
 
+# ── Anmeldung ──────────────────────────────────────────────────────────────────
+# Bewusst ununterscheidbar: ob der Benutzername existiert, das Passwort falsch ist oder das Konto
+# gesperrt wurde, darf die Meldung nicht verraten.
 auth.invalid_credentials:
   de: Benutzername oder Passwort ist falsch.
   en: Invalid username or password.
-auth.account_locked:
-  de: Dieses Konto ist gesperrt.
-  en: This account is locked.
-auth.mfa_required:
-  de: Bitte gib deinen Einmalcode ein.
-  en: Please enter your one-time code.
+auth.account_inactive:
+  de: Dieses Konto ist nicht aktiv.
+  en: This account is not active.
+auth.user_gone:
+  de: Dieses Konto gibt es nicht mehr.
+  en: This account no longer exists.
+auth.password_wrong:
+  de: Das aktuelle Passwort stimmt nicht.
+  en: Your current password is not correct.
+
+# ── Zweiter Faktor ─────────────────────────────────────────────────────────────
 auth.mfa_invalid:
   de: Der Einmalcode stimmt nicht.
   en: That one-time code is not correct.
-auth.no_passkey:
-  de: Für dieses Konto ist kein Passkey-Login möglich.
-  en: No passkey login available for this account.
-auth.ceremony_unknown:
-  de: Der Anmeldevorgang ist abgelaufen. Bitte versuche es erneut.
-  en: The sign-in attempt expired. Please try again.
+
+# ── Sitzung ────────────────────────────────────────────────────────────────────
+auth.session_none:
+  de: Du bist nicht angemeldet.
+  en: You are not signed in.
 auth.session_expired:
   de: Deine Sitzung ist abgelaufen. Bitte melde dich erneut an.
   en: Your session has expired. Please sign in again.
+auth.session_revoked:
+  de: Diese Sitzung wurde beendet. Bitte melde dich erneut an.
+  en: This session was ended. Please sign in again.
+auth.refresh_missing:
+  de: Du bist nicht angemeldet.
+  en: You are not signed in.
+auth.refresh_rejected:
+  de: Deine Sitzung ist nicht mehr gueltig. Bitte melde dich erneut an.
+  en: Your session is no longer valid. Please sign in again.
+
+# ── Passkey ────────────────────────────────────────────────────────────────────
+# Auch hier ununterscheidbar: welche Credentials existieren, geht niemanden etwas an.
+auth.passkey_unavailable:
+  de: Anmeldung mit Passkey ist hier nicht moeglich.
+  en: No passkey login available.
+auth.ceremony_expired:
+  de: Der Vorgang ist abgelaufen. Bitte versuche es erneut.
+  en: That attempt expired. Please try again.
+auth.ceremony_wrong_kind:
+  de: Dieser Vorgang gehoert nicht zur Registrierung.
+  en: That is not a registration attempt.
+auth.ceremony_foreign:
+  de: Dieser Vorgang gehoert nicht zu dir.
+  en: That attempt does not belong to you.
+
+# ── API-Schluessel ─────────────────────────────────────────────────────────────
+apikey.invalid:
+  de: Der API-Schluessel ist ungueltig.
+  en: Invalid API key.
+apikey.expired:
+  de: Der API-Schluessel ist abgelaufen.
+  en: This API key has expired.
+apikey.origin_denied:
+  de: Dieser Schluessel darf von dieser Herkunft nicht verwendet werden.
+  en: This key may not be used from this origin.
+
+# ── Verwaltung ─────────────────────────────────────────────────────────────────
+tenant.foreign:
+  de: Du kannst nur deinen eigenen Mandanten verwalten.
+  en: You may only manage your own tenant.
+tenant.system_undeletable:
+  de: Der System-Mandant kann nicht geloescht werden.
+  en: The system tenant cannot be deleted.
+user.self_undeletable:
+  de: Du kannst dein eigenes Konto nicht loeschen.
+  en: You cannot delete your own account.

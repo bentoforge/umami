@@ -7,6 +7,7 @@
 //! need it too — a tenant does not administer itself.
 
 use crate::auth::apikeys::repository::ApiKeyRepository;
+use crate::bail_i18n;
 use crate::config::Config;
 use crate::config::repository::ConfigRepository;
 use crate::constants::{
@@ -376,7 +377,11 @@ async fn delete_tenant(
 ) -> anyhow::Result<Value> {
     // The system tenant is the root of cross-tenant administration — never deletable.
     if system_tenant_id.as_deref() == Some(tenant_id.as_str()) {
-        status_bail!(StatusCode::FORBIDDEN, "The system tenant cannot be deleted");
+        bail_i18n!(
+            StatusCode::FORBIDDEN,
+            caller.locale(),
+            "tenant.system_undeletable"
+        );
     }
     // Don't delete the tenant the caller is currently acting in (would strand their own session).
     if caller.tenant_id()? == tenant_id {

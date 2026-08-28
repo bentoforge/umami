@@ -24,6 +24,7 @@ use crate::audit::{AuditSeverity, NewAuditEntry};
 use crate::auth::AuthContext;
 use crate::auth::broker::{MintParams, mint_for_api};
 use crate::auth::cookies::parse_refresh_cookie;
+use crate::bail_i18n;
 use crate::constants::{MAX_TEXT_BODY_SIZE, SWITCH_TENANT_PERMISSION, UMAMI_API_CODE};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -96,7 +97,11 @@ async fn switch_tenant(
     // The acting admin, loaded fresh (deactivation/lock stops switching).
     let user = match context.users.get_user(caller.user_id()?).await? {
         Some(user) if !user.locked => user,
-        _ => status_bail!(StatusCode::UNAUTHORIZED, "Account not active"),
+        _ => bail_i18n!(
+            StatusCode::UNAUTHORIZED,
+            caller.locale(),
+            "auth.account_inactive"
+        ),
     };
 
     let target = match context.tenants.get_tenant(&request.tenant_id).await? {
@@ -117,10 +122,18 @@ async fn switch_tenant(
         // Belongs to somebody else? Then the bearer and the cookie come from different logins;
         // re-scoping a foreign session would be a hand-over of someone else's device.
         Some(session) if session.user_id == user.user_id => session,
-        _ => status_bail!(StatusCode::UNAUTHORIZED, "No active session"),
+        _ => bail_i18n!(
+            StatusCode::UNAUTHORIZED,
+            caller.locale(),
+            "auth.session_none"
+        ),
     };
     if session.is_expired(chrono::Utc::now()) {
-        status_bail!(StatusCode::UNAUTHORIZED, "Session expired");
+        bail_i18n!(
+            StatusCode::UNAUTHORIZED,
+            caller.locale(),
+            "auth.session_expired"
+        );
     }
     context
         .sessions

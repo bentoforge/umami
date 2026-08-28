@@ -8,6 +8,7 @@ use crate::audit::AuditEntry;
 use crate::audit::repository::{AuditRepository, record_best_effort};
 use crate::audit::{AuditSeverity, NewAuditEntry};
 use crate::auth::session::repository::SessionRepository;
+use crate::bail_i18n;
 use crate::config::Config;
 use crate::config::repository::ConfigRepository;
 use crate::constants::{
@@ -25,11 +26,11 @@ use warp::Filter;
 use warp::filters::BoxedFilter;
 use warp::http::StatusCode;
 use wasabi::aws::dynamodb::generate_id;
+use wasabi::client_bail;
 use wasabi::web::auth::authenticator::Authenticator;
 use wasabi::web::auth::user::User as AuthUser;
 use wasabi::web::auth::with_user_with_any_permission;
 use wasabi::web::warp::{client_ip, into_response, with_body_as_json, with_cloneable};
-use wasabi::{client_bail, status_bail};
 
 /// Permission required to administer a tenant's users.
 const REQUIRE_MANAGE_USERS: &[&str] = &[MANAGE_USERS_PERMISSION];
@@ -683,7 +684,11 @@ async fn delete_user(
     // An admin must not delete their own account (would strand their session and risk locking the
     // tenant out of member administration).
     if user.user_id == caller.user_id()? {
-        status_bail!(StatusCode::FORBIDDEN, "You cannot delete your own account");
+        bail_i18n!(
+            StatusCode::FORBIDDEN,
+            caller.locale(),
+            "user.self_undeletable"
+        );
     }
 
     users.delete_user(&user.user_id, &user.username).await?;

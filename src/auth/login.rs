@@ -29,7 +29,6 @@ use warp::filters::BoxedFilter;
 use warp::http::StatusCode;
 use warp::http::header::{CONTENT_TYPE, HeaderValue, SET_COOKIE};
 use warp::reply::Response;
-use wasabi::status_bail;
 use wasabi::web::locale::accept_language as accept_language_filter;
 use wasabi::web::warp::{client_ip, into_rejection, with_body_as_json, with_cloneable};
 
@@ -599,14 +598,28 @@ async fn refresh(
     accept_language: Option<&str>,
     ip: Option<String>,
 ) -> anyhow::Result<(TokenResponse, Option<String>)> {
+    // No token yet on this path — the cookie is what we are about to validate. Header first,
+    // deployment default behind it; the user's own preference re-enters once we know who they are.
+    let refresh_locale = {
+        let config = context.config.current().await?;
+        crate::i18n::resolve(&config, None, accept_language)
+    };
     let (session_id, secret) = match parse_refresh_cookie(cookie_header) {
         Some(parsed) => parsed,
-        None => status_bail!(StatusCode::UNAUTHORIZED, "No refresh cookie present"),
+        None => bail_i18n!(
+            StatusCode::UNAUTHORIZED,
+            &refresh_locale,
+            "auth.refresh_missing"
+        ),
     };
 
     let session = match context.sessions.get_session(&session_id).await? {
         Some(session) => session,
-        None => status_bail!(StatusCode::UNAUTHORIZED, "No active session"),
+        None => bail_i18n!(
+            StatusCode::UNAUTHORIZED,
+            &refresh_locale,
+            "auth.session_none"
+        ),
     };
 
     let matches_current = verify_refresh_secret(&secret, &session.refresh_hash);
@@ -636,26 +649,42 @@ async fn refresh(
             .with_ip(ip),
         )
         .await;
-        status_bail!(StatusCode::UNAUTHORIZED, "Refresh token rejected");
+        bail_i18n!(
+            StatusCode::UNAUTHORIZED,
+            &refresh_locale,
+            "auth.refresh_rejected"
+        );
     }
 
     if session.is_expired(Utc::now()) {
         context.sessions.delete_session(&session_id).await?;
-        status_bail!(StatusCode::UNAUTHORIZED, "Session expired");
+        bail_i18n!(
+            StatusCode::UNAUTHORIZED,
+            &refresh_locale,
+            "auth.session_expired"
+        );
     }
 
     let user = match context.users.get_user(&session.user_id).await? {
         Some(user) if !user.locked => user,
         _ => {
             context.sessions.delete_session(&session_id).await?;
-            status_bail!(StatusCode::UNAUTHORIZED, "Account not active");
+            bail_i18n!(
+                StatusCode::UNAUTHORIZED,
+                &refresh_locale,
+                "auth.account_inactive"
+            );
         }
     };
 
     // Global revocation lever: a bumped tokenVersion invalidates every prior session.
     if session.token_version_at_issue != user.token_version {
         context.sessions.delete_session(&session_id).await?;
-        status_bail!(StatusCode::UNAUTHORIZED, "Session revoked");
+        bail_i18n!(
+            StatusCode::UNAUTHORIZED,
+            &refresh_locale,
+            "auth.session_revoked"
+        );
     }
 
     let config = context.config.current().await?;

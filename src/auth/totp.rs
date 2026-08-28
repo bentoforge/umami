@@ -8,6 +8,7 @@
 use crate::audit::repository::{AuditRepository, record_best_effort};
 use crate::audit::{AuditSeverity, NewAuditEntry};
 use crate::auth::secretbox::SecretBox;
+use crate::bail_i18n;
 use crate::constants::{MANAGE_PASSWORDS_PERMISSION, MAX_TEXT_BODY_SIZE};
 use crate::users::User;
 use crate::users::repository::UserRepository;
@@ -24,8 +25,8 @@ use wasabi::web::auth::with_user_with_any_permission;
 
 /// Permission required to manage one's own security settings (password, TOTP, passkeys).
 const REQUIRE_PASSWORDS: &[&str] = &[MANAGE_PASSWORDS_PERMISSION];
+use wasabi::client_bail;
 use wasabi::web::warp::{client_ip, into_response, with_body_as_json, with_cloneable};
-use wasabi::{client_bail, status_bail};
 
 /// Issuer label shown in authenticator apps.
 const TOTP_ISSUER: &str = "umami";
@@ -192,7 +193,7 @@ async fn handle_totp_disable_route(
 async fn load_caller(users: &Arc<dyn UserRepository>, caller: &AuthUser) -> anyhow::Result<User> {
     match users.get_user(caller.user_id()?).await? {
         Some(user) => Ok(user),
-        None => status_bail!(StatusCode::UNAUTHORIZED, "User no longer exists"),
+        None => bail_i18n!(StatusCode::UNAUTHORIZED, caller.locale(), "auth.user_gone"),
     }
 }
 
@@ -242,7 +243,11 @@ async fn totp_verify(
         .check_current(&request.code)
         .map_err(|err| anyhow!("Failed to check TOTP code: {err}"))?
     {
-        status_bail!(StatusCode::UNAUTHORIZED, "Invalid TOTP code");
+        bail_i18n!(
+            StatusCode::UNAUTHORIZED,
+            caller.locale(),
+            "auth.mfa_invalid"
+        );
     }
 
     user.totp_secret = user.totp_pending.take();
@@ -286,7 +291,11 @@ async fn totp_disable(
         .check_current(&request.code)
         .map_err(|err| anyhow!("Failed to check TOTP code: {err}"))?
     {
-        status_bail!(StatusCode::UNAUTHORIZED, "Invalid TOTP code");
+        bail_i18n!(
+            StatusCode::UNAUTHORIZED,
+            caller.locale(),
+            "auth.mfa_invalid"
+        );
     }
 
     user.totp_secret = None;

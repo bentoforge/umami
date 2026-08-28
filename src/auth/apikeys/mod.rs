@@ -21,6 +21,7 @@ use crate::auth::broker::{MintParams, mint_for_api};
 use crate::auth::ratelimit::{Decision, Policy, RateLimiter, too_many_requests};
 use crate::auth::session::{generate_refresh_secret, hash_refresh_secret, verify_refresh_secret};
 use crate::auth::tokens::TokenIssuer;
+use crate::bail_i18n;
 use crate::config::VolumeRateLimit;
 use crate::config::repository::ConfigRepository;
 use crate::constants::{
@@ -572,6 +573,10 @@ async fn exchange(
     let now = Utc::now();
     let config = config.current().await?;
     let limits = &config.security.rate_limits;
+    // A key exchange has no token to read a preference from, and the caller states the end user's
+    // language in the request body — but only on success. A rejected exchange therefore answers in
+    // whatever the caller asked for, falling back to the deployment default.
+    let exchange_locale = crate::i18n::resolve(&config, request.locale.as_deref(), None);
 
     // Per-IP volume cap (the blunt instrument): count *every* hit on this endpoint, blocking a
     // flooding IP regardless of whether its keys are valid. Skipped when the IP is unknown.
@@ -594,7 +599,7 @@ async fn exchange(
     let key_id: String = if let Some(api_key) = request.api_key.as_deref() {
         match parse_api_key(api_key) {
             Some((key_id, _)) => key_id.to_owned(),
-            None => status_bail!(StatusCode::UNAUTHORIZED, "Invalid API key"),
+            None => bail_i18n!(StatusCode::UNAUTHORIZED, &exchange_locale, "apikey.invalid"),
         }
     } else if let Some(key_id) = request.key_id.as_deref() {
         key_id.to_owned()
@@ -604,13 +609,13 @@ async fn exchange(
 
     let key = match keys.get(&key_id).await? {
         Some(key) if key.status == ApiKeyStatus::Active => key,
-        _ => status_bail!(StatusCode::UNAUTHORIZED, "Invalid API key"),
+        _ => bail_i18n!(StatusCode::UNAUTHORIZED, &exchange_locale, "apikey.invalid"),
     };
 
     if let Some(expires_at) = key.expires_at
         && Utc::now() >= expires_at
     {
-        status_bail!(StatusCode::UNAUTHORIZED, "API key expired");
+        bail_i18n!(StatusCode::UNAUTHORIZED, &exchange_locale, "apikey.expired");
     }
 
     // Verify possession by the method used: Mode 1 compares the presented secret against the stored
@@ -619,7 +624,7 @@ async fn exchange(
         let ok = parse_api_key(api_key)
             .is_some_and(|(_, secret)| verify_refresh_secret(secret, &key.secret_hash));
         if !ok {
-            status_bail!(StatusCode::UNAUTHORIZED, "Invalid API key");
+            bail_i18n!(StatusCode::UNAUTHORIZED, &exchange_locale, "apikey.invalid");
         }
         // Mode 1 must be explicitly enabled on the key. Checked after verifying possession, so this
         // only ever tells the legitimate holder to switch to the signed (HMAC) exchange.
@@ -631,7 +636,7 @@ async fn exchange(
         }
     } else if let Some(mac) = request.mac.as_deref() {
         if !verify_key_hmac(&key.secret_hash, &key.key_id, mac) {
-            status_bail!(StatusCode::UNAUTHORIZED, "Invalid API key");
+            bail_i18n!(StatusCode::UNAUTHORIZED, &exchange_locale, "apikey.invalid");
         }
     } else {
         client_bail!("Provide either 'apiKey' (Mode 1) or 'keyId' + 'mac' (Mode 2)");
@@ -643,7 +648,11 @@ async fn exchange(
             .as_deref()
             .is_some_and(|origin| key.allowed_origins.iter().any(|value| value == origin));
         if !allowed {
-            status_bail!(StatusCode::FORBIDDEN, "Origin not allowed for this key");
+            bail_i18n!(
+                StatusCode::FORBIDDEN,
+                &exchange_locale,
+                "apikey.origin_denied"
+            );
         }
     }
 
@@ -673,7 +682,7 @@ async fn exchange(
             // Personal access token — load the user fresh so deactivation/lock stops new tokens.
             let user = match users.get_user(user_id).await? {
                 Some(user) if !user.locked => user,
-                _ => status_bail!(StatusCode::UNAUTHORIZED, "Invalid API key"),
+                _ => bail_i18n!(StatusCode::UNAUTHORIZED, &exchange_locale, "apikey.invalid"),
             };
             // Effective roles = user roles ∩ the key's restriction (empty restriction = all roles).
             let subjects: Vec<String> = if key.roles.is_empty() {
