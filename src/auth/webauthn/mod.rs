@@ -34,6 +34,7 @@ use wasabi::aws::dynamodb::generate_id;
 use wasabi::web::auth::authenticator::Authenticator;
 use wasabi::web::auth::user::User as AuthUser;
 use wasabi::web::auth::with_user_with_any_permission;
+use wasabi::web::locale::accept_language as accept_language_filter;
 
 /// Passkey registration is a security-settings change, so it requires `manage:passwords` (the
 /// passwordless *login* routes below stay unauthenticated).
@@ -248,6 +249,7 @@ pub fn webauthn_login_start_route(
         .and(with_cloneable(Arc::new(context)))
         .and(with_cloneable(service))
         .and(with_cloneable(webauthn))
+        .and(accept_language_filter())
         .and_then(handle_login_start)
         .boxed()
 }
@@ -264,6 +266,7 @@ pub fn webauthn_login_finish_route(
         .and(with_cloneable(Arc::new(context)))
         .and(with_cloneable(service))
         .and(with_cloneable(webauthn))
+        .and(accept_language_filter())
         .and(warp::header::optional::<String>("user-agent"))
         .and(client_ip())
         .and_then(handle_login_finish)
@@ -358,8 +361,18 @@ async fn handle_login_start(
     context: Arc<AuthContext>,
     service: Arc<WebauthnService>,
     webauthn: Arc<dyn WebauthnRepository>,
+    accept_language: Option<String>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(login_start(request, &context, service, webauthn).await)
+    into_response(
+        login_start(
+            request,
+            &context,
+            service,
+            webauthn,
+            accept_language.as_deref(),
+        )
+        .await,
+    )
 }
 
 #[tracing::instrument(level = "debug", name = "POST /auth/webauthn/login/finish", skip_all)]
@@ -368,6 +381,7 @@ async fn handle_login_finish(
     context: Arc<AuthContext>,
     service: Arc<WebauthnService>,
     webauthn: Arc<dyn WebauthnRepository>,
+    accept_language: Option<String>,
     user_agent: Option<String>,
     ip: Option<String>,
 ) -> Result<Response, warp::Rejection> {
@@ -390,7 +404,17 @@ async fn handle_login_finish(
         }
     }
 
-    match login_finish(request, &context, service, webauthn, user_agent, ip).await {
+    match login_finish(
+        request,
+        &context,
+        service,
+        webauthn,
+        accept_language.as_deref(),
+        user_agent,
+        ip,
+    )
+    .await
+    {
         Ok((access_token, set_cookie)) => {
             let body = json!({ "accessToken": access_token, "tenants": [] });
             let reply = warp::reply::json(&body);
@@ -521,10 +545,15 @@ async fn login_start(
     context: &AuthContext,
     service: Arc<WebauthnService>,
     webauthn: Arc<dyn WebauthnRepository>,
+    accept_language: Option<&str>,
 ) -> anyhow::Result<LoginStartResponse> {
-    // Passkey login carries no token, and the ceremony deliberately reveals nothing about who the
-    // user is — so the deployment default is the only honest source here.
-    let passkey_locale = context.config.current().await?.default_locale.clone();
+    // No token on this path, and the ceremony deliberately says nothing about who is knocking — so
+    // there is no stated preference to honour. `Accept-Language` is what the request does say, and
+    // it is the right signal precisely because we are still before the identification.
+    let passkey_locale = {
+        let config = context.config.current().await?;
+        crate::i18n::resolve(&config, None, accept_language)
+    };
     // No username: discoverable flow. The challenge carries no allow-list, so the response
     // leaks nothing about who exists — which is also why it is safe to answer unconditionally.
     let Some(username) = request
@@ -590,12 +619,17 @@ async fn login_finish(
     context: &AuthContext,
     service: Arc<WebauthnService>,
     webauthn: Arc<dyn WebauthnRepository>,
+    accept_language: Option<&str>,
     user_agent: Option<String>,
     ip: Option<String>,
 ) -> anyhow::Result<(String, String)> {
-    // Passkey login carries no token, and the ceremony deliberately reveals nothing about who the
-    // user is — so the deployment default is the only honest source here.
-    let passkey_locale = context.config.current().await?.default_locale.clone();
+    // No token on this path, and the ceremony deliberately says nothing about who is knocking — so
+    // there is no stated preference to honour. `Accept-Language` is what the request does say, and
+    // it is the right signal precisely because we are still before the identification.
+    let passkey_locale = {
+        let config = context.config.current().await?;
+        crate::i18n::resolve(&config, None, accept_language)
+    };
     let ceremony = match webauthn.take_ceremony(&request.ceremony_id).await? {
         Some(ceremony) => ceremony,
         None => bail_i18n!(

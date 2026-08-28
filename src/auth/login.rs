@@ -328,10 +328,10 @@ async fn login(
     // per-IP cap. Everything is fail-open (a rate-limit-store outage never blocks login).
     let now = Utc::now();
     let config = context.config.current().await?;
-    // Pre-login there is no token and so no stated preference; the deployment default is the only
-    // signal. `Accept-Language` would be the better one here — and only here — but it has to reach
-    // the handler first; see `i18n.rs`.
-    let locale = config.default_locale.clone();
+    // No token yet, so no stated preference to honour — but the request still says something.
+    // `Accept-Language` is exactly right *here*, before we know who is knocking; once we do, their
+    // profile takes over.
+    let locale = crate::i18n::resolve(&config, None, accept_language);
     let limits = &config.security.rate_limits;
     let per_ip = Policy::new(
         limits.per_ip.max_per_window,
