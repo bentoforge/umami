@@ -41,6 +41,7 @@ export function EditUserPage() {
 
   const [user, setUser] = useState<UserView | null>(null);
   const [defs, setDefs] = useState<CustomFieldDef[]>([]);
+  const [locales, setLocales] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [resetPw, setResetPw] = useState<string | null>(null);
@@ -63,7 +64,10 @@ export function EditUserPage() {
   useEffect(() => {
     client
       .getCustomFields()
-      .then((r) => setDefs(r.user))
+      .then((r) => {
+        setDefs(r.user);
+        setLocales(r.locales);
+      })
       .catch(() => setDefs([]));
   }, [client]);
 
@@ -176,6 +180,7 @@ export function EditUserPage() {
           <DetailsCard
             user={user}
             defs={defs}
+            locales={locales}
             onSaved={async () => {
               setNotice(t("users.saved"));
               await reload();
@@ -203,11 +208,13 @@ export function EditUserPage() {
 function DetailsCard({
   user,
   defs,
+  locales,
   onSaved,
   onError,
 }: {
   user: UserView;
   defs: CustomFieldDef[];
+  locales: string[];
   onSaved: () => Promise<void>;
   onError: (msg: string) => void;
 }) {
@@ -220,6 +227,7 @@ function DetailsCard({
   const [salutation, setSalutation] = useState<Salutation>(user.salutation);
   const [firstname, setFirstname] = useState(user.firstname ?? "");
   const [lastname, setLastname] = useState(user.lastname ?? "");
+  const [locale, setLocale] = useState(user.locale ?? "");
   const [fields, setFields] = useState<Record<string, unknown>>({ ...user.customFields });
   const [saving, setSaving] = useState(false);
 
@@ -230,6 +238,7 @@ function DetailsCard({
     setSalutation(user.salutation);
     setFirstname(user.firstname ?? "");
     setLastname(user.lastname ?? "");
+    setLocale(user.locale ?? "");
     setFields({ ...user.customFields });
   }, [user]);
 
@@ -251,6 +260,7 @@ function DetailsCard({
         salutation,
         firstname,
         lastname,
+        locale,
         customFields: fields,
       });
       setEditing(false);
@@ -320,6 +330,16 @@ function DetailsCard({
                 value={lastname}
                 onChange={(e) => setLastname(e.target.value)}
               />
+            </Field>
+            <Field label={t("users.locale")}>
+              <select className={input} value={locale} onChange={(e) => setLocale(e.target.value)}>
+                <option value="">{t("users.localeAuto")}</option>
+                {locales.map((code) => (
+                  <option key={code} value={code}>
+                    {t(`locale.${code}`, { defaultValue: code })}
+                  </option>
+                ))}
+              </select>
             </Field>
             <CustomFieldsForm defs={defs} values={fields} onChange={setFields} />
           </div>
