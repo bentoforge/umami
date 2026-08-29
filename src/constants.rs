@@ -16,12 +16,11 @@ pub const MAX_LIST_RESULTS: usize = 250;
 // features/markers to permissions lives entirely in the config `apis` block (see `docs/CONFIG.md`).
 // Product-service permission strings (e.g. dbx-core's `write:blocks`) are defined by those services.
 
-/// Read a tenant's audit trail.
+/// Read a tenant's audit trail — and nothing else.
 ///
-/// Deliberately *only* the audit trail. Its predecessor `admin:tenant` also carried reading and
-/// **editing** the tenant record, which made "let support read the log" and "let a tenant
-/// administer itself" the same grant. Tenant records are now `manage:tenants` territory, so a
-/// tenant cannot rename itself or touch its custom fields; the log is a separate, narrower right.
+/// Narrow on purpose: reading the log and administering the tenant are different jobs, and a
+/// support role needs the first without the second. Editing a tenant record is `manage:tenants`,
+/// so granting this does not let a tenant rename itself or touch its custom fields.
 pub const VIEW_AUDIT_PERMISSION: &str = "view:audit";
 
 /// Manage a tenant's users (create/list/patch/delete, roles, status, password reset).

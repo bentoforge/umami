@@ -450,9 +450,9 @@ pub struct Config {
     /// Language used wherever umami renders text itself and no user preference applies — BCP-47
     /// (e.g. `de`, `en`). A user's own `locale` takes precedence.
     ///
-    /// Salutation *words* are no longer configured here: they are per-locale constants in code, so
-    /// that a reader gets their own language rather than the deployment's. See
-    /// [`crate::users::compose_display_names`].
+    /// Salutation words are not configured here — they live in the message catalogue
+    /// (`locales/`), keyed by locale, so a reader is addressed in their own language rather than
+    /// the deployment's. See [`crate::users::compose_display_names`].
     #[serde(default = "default_locale")]
     pub default_locale: String,
     /// Languages this deployment offers, narrowing what umami ships. Empty = all of them.
@@ -1059,13 +1059,11 @@ mod tests {
         assert!(!config.can_grant_feature("is:system-tenant", &base));
     }
 
-    /// Roles the catalogue no longer defines must stay removable.
+    /// A code the catalogue does not define is never assignable.
     ///
-    /// The admin UI resubmits the whole role list on every toggle. When validation covered the
-    /// whole list, a single stale code refused every patch — and with two of them there was no
-    /// order that got rid of either. `can_assign_role` is the predicate that made them stale;
-    /// what fixes it is validating only the additions, which is why this test pins the predicate
-    /// itself as "undefined ⇒ not assignable".
+    /// `validate_roles` leans on this to decide what a caller may grant, and pairs it with
+    /// checking only newly added roles — otherwise a role dropped from the catalogue could never
+    /// be taken off a user who still holds it.
     #[test]
     fn undefined_roles_are_never_assignable() {
         let config = Config::default();

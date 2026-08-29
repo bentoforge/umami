@@ -1,8 +1,8 @@
 _version: 2
 
-# Anreden. Frueher eine Tabelle im Code, davor eine einsprachige Map im Config-Dokument — beides
-# nur, weil es keinen Katalog gab. Jetzt sind es Eintraege wie alle anderen, und eine Sprache
-# ergaenzt man, indem man uebersetzt.
+# Salutations. The word belongs to the language, not to the deployment: it is composed against
+# the reader's locale, so a German reader is addressed in German even where the deployment
+# default is English.
 salutation.SIR:
   de: Herr
   en: Mr
@@ -10,9 +10,9 @@ salutation.MADAM:
   de: Frau
   en: Ms
 
-# ── Anmeldung ──────────────────────────────────────────────────────────────────
-# Bewusst ununterscheidbar: ob der Benutzername existiert, das Passwort falsch ist oder das Konto
-# gesperrt wurde, darf die Meldung nicht verraten.
+# ── Sign-in ────────────────────────────────────────────────────────────────────
+# Deliberately indistinguishable: the message must not reveal whether the username exists, the
+# password was wrong, or the account is locked. Keep them identical when adding a language.
 auth.invalid_credentials:
   de: Benutzername oder Passwort ist falsch.
   en: Invalid username or password.
@@ -26,12 +26,12 @@ auth.password_wrong:
   de: Das aktuelle Passwort stimmt nicht.
   en: Your current password is not correct.
 
-# ── Zweiter Faktor ─────────────────────────────────────────────────────────────
+# ── Second factor ──────────────────────────────────────────────────────────────
 auth.mfa_invalid:
   de: Der Einmalcode stimmt nicht.
   en: That one-time code is not correct.
 
-# ── Sitzung ────────────────────────────────────────────────────────────────────
+# ── Session ────────────────────────────────────────────────────────────────────
 auth.session_none:
   de: Du bist nicht angemeldet.
   en: You are not signed in.
@@ -49,7 +49,7 @@ auth.refresh_rejected:
   en: Your session is no longer valid. Please sign in again.
 
 # ── Passkey ────────────────────────────────────────────────────────────────────
-# Auch hier ununterscheidbar: welche Credentials existieren, geht niemanden etwas an.
+# Indistinguishable for the same reason: which credentials exist is nobody's business.
 auth.passkey_unavailable:
   de: Anmeldung mit Passkey ist hier nicht moeglich.
   en: No passkey login available.
@@ -63,7 +63,7 @@ auth.ceremony_foreign:
   de: Dieser Vorgang gehoert nicht zu dir.
   en: That attempt does not belong to you.
 
-# ── API-Schluessel ─────────────────────────────────────────────────────────────
+# ── API keys ───────────────────────────────────────────────────────────────────
 apikey.invalid:
   de: Der API-Schluessel ist ungueltig.
   en: Invalid API key.
@@ -74,7 +74,7 @@ apikey.origin_denied:
   de: Dieser Schluessel darf von dieser Herkunft nicht verwendet werden.
   en: This key may not be used from this origin.
 
-# ── Verwaltung ─────────────────────────────────────────────────────────────────
+# ── Administration ─────────────────────────────────────────────────────────────
 tenant.foreign:
   de: Du kannst nur deinen eigenen Mandanten verwalten.
   en: You may only manage your own tenant.

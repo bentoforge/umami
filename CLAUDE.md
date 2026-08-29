@@ -1,7 +1,28 @@
 # CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this
-repository. The project language (code, commits, docs) is **English**.
+repository.
+
+**Everything in this repository is English — without exception.** Code, comments, doc
+comments, identifiers, log and error messages, commit messages, PR titles, README, the
+`docs/` directory. umami is open source and read by people who do not speak German; a
+single German comment is a wall for them, and mixed-language repos never converge back.
+
+The exception that is not one: `locales/*.yml` holds translations. German text there is
+the product, not the project language.
+
+Conversation with the maintainer may be in any language. This rule is about what gets
+written to disk.
+
+## Comments
+
+Comments explain **why**, not what — the code already says what it does. A comment earns
+its place when it records a constraint that is not visible locally, a trap someone would
+otherwise fall into, or the reason a surprising decision is the right one.
+
+Keep out: notes from conversations, references to earlier states ("this used to be…"),
+changelog entries, narration. Whoever opens the file in six months to chase a bug was not
+part of the discussion — write for them.
 
 umami is a micro-IAM service built on the in-house **wasabi** framework. It is the JWT issuer and
 tenant/membership authority for a fleet of wasabi-based B2B services. See [README.md](README.md) for

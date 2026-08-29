@@ -82,10 +82,9 @@ export function LoginPage() {
    * Passkey autofill (conditional mediation).
    *
    * Started once on mount and then left pending: it resolves only if the user actually picks a
-   * passkey out of the username field's autofill list, which is the one place a passkey can
-   * appear next to — and above — a saved password. How a password manager orders its own
-   * suggestions is not something this page can influence, so offering the passkey through that
-   * channel is the whole mechanism.
+   * passkey out of the username field's autofill list. That list is the only place a passkey can
+   * appear next to — and above — a saved password: how a password manager ranks its own
+   * suggestions is not something a page can influence.
    *
    * `refreshMe` is deliberately not a dependency, for the same reason the provider's bootstrap
    * omits it: it is recreated on every render and would restart the ceremony each time. The
@@ -134,8 +133,8 @@ export function LoginPage() {
     setBusy(true);
     setError(null);
     try {
-      // No username typed? Then this is a discoverable login and the authenticator picks the
-      // user itself — which is why the button no longer waits for the field to be filled.
+      // No username typed means a discoverable login: the authenticator picks the credential,
+      // and with it the user. Hence no guard on the field being filled.
       await client.loginWithPasskey(username.trim() || undefined);
       await afterLogin();
     } catch (err) {

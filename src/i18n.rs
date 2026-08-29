@@ -28,10 +28,10 @@ use crate::config::Config;
 // `t!` resolves against `crate::`, so it only works from there.
 /// Renders `key` in `locale`, falling back to English when the catalogue has no entry.
 ///
-/// The tag is normalized first — lowercased, and reduced to its primary subtag when the full one
-/// is unknown, so `de-AT`, `DE` and `de_CH` all reach the German entry. Without that they land on
-/// the English fallback *silently*, which is the worst kind of wrong: a German user sees English
-/// and nothing anywhere says why.
+/// Tags arrive as typed, so they are normalized first: lowercased, and reduced to the primary
+/// subtag when the full one is unknown. `de-AT`, `DE` and `de_CH` all reach the German entry.
+/// A miss is silent — the catalogue returns the English fallback and logs nothing — so anything
+/// that skips this normalization produces the wrong language with no trace of why.
 pub fn message(locale: &str, key: &str) -> String {
     let tag = locale.trim().to_ascii_lowercase();
     let effective = if rust_i18n::available_locales!().iter().any(|l| l == &tag) {

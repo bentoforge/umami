@@ -504,11 +504,12 @@ async fn validate_roles(
     current: &[String],
     roles: &[String],
 ) -> anyhow::Result<()> {
-    // Only what is *newly added* is checked. Keeping or dropping a role the user already holds is
-    // never an escalation — and validating the whole list made a role the catalogue no longer
-    // defines impossible to get rid of: the UI resubmits the full set on every toggle, so each
-    // patch still carried the stale code and each patch was refused. With two such codes there was
-    // no order that worked.
+    // Only newly added roles are checked: granting one is an escalation, keeping or dropping one
+    // is not.
+    //
+    // Checking the whole list would strand roles the catalogue no longer defines. Callers send the
+    // complete set on every change — the admin UI does — so a stale code rides along in each
+    // request and would make every one of them fail, including the request that removes it.
     let added: Vec<&String> = roles
         .iter()
         .filter(|role| !current.contains(role))
