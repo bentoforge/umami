@@ -1,11 +1,10 @@
-import type { CustomFieldDef, Salutation, UserView } from "@bentoforge/umami-iam";
+import type { CustomFieldDef, RoleDef, Salutation, UserView } from "@bentoforge/umami-iam";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { useUmami } from "../auth/UmamiProvider";
 import {
   Banner,
-  CheckboxTags,
   CustomFieldsForm,
   DropdownMenu,
   errMsg,
@@ -13,6 +12,8 @@ import {
   formatDateTime,
   formatFieldValue,
   Loader,
+  RoleToggleList,
+  roleCatalog,
 } from "../components";
 import { card, input, primaryButton, td, th } from "../ui";
 
@@ -131,7 +132,7 @@ export function UsersPage() {
 
       {creating && (
         <CreateUser
-          defs={defs}
+          fieldDefs={defs}
           onDone={async (res) => {
             setCreating(false);
             setNotice("User created.");
@@ -259,11 +260,11 @@ function Tag({
 }
 
 function CreateUser({
-  defs,
+  fieldDefs,
   onDone,
   onError,
 }: {
-  defs: CustomFieldDef[];
+  fieldDefs: CustomFieldDef[];
   onDone: (res: UserView & { temporaryPassword?: string | null }) => Promise<void>;
   onError: (msg: string) => void;
 }) {
@@ -271,7 +272,8 @@ function CreateUser({
   const { t } = useTranslation();
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
-  const [roles, setRoles] = useState<string[]>(["role:member"]);
+  const [roles, setRoles] = useState<string[]>([]);
+  const [roleDefs, setRoleDefs] = useState<RoleDef[]>([]);
   const [assignable, setAssignable] = useState<string[]>([]);
   const [fields, setFields] = useState<Record<string, unknown>>({});
   const [title, setTitle] = useState("");
@@ -279,6 +281,13 @@ function CreateUser({
   const [firstname, setFirstname] = useState("");
   const [lastname, setLastname] = useState("");
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    client
+      .getConfig()
+      .then((c) => setRoleDefs(c.roles))
+      .catch(() => setRoleDefs([]));
+  }, [client]);
 
   // Assignable roles are per-tenant; resolve via the caller's own id (same tenant as new users).
   useEffect(() => {
@@ -288,6 +297,11 @@ function CreateUser({
       .then((r) => setAssignable(r.codes))
       .catch(() => setAssignable([]));
   }, [client, me]);
+
+  const toggleRole = (code: string, assigned: boolean) =>
+    setRoles((prev) => (assigned ? prev.filter((r) => r !== code) : [...prev, code]));
+
+  const catalog = roleCatalog(roleDefs, assignable, roles, t("users.roleUnknown"));
 
   const submit = async () => {
     setBusy(true);
@@ -305,7 +319,7 @@ function CreateUser({
       });
       setUsername("");
       setEmail("");
-      setRoles(["role:member"]);
+      setRoles([]);
       setTitle("");
       setSalutation("");
       setFirstname("");
@@ -358,15 +372,20 @@ function CreateUser({
         <Field label={t("users.lastname")}>
           <input className={input} value={lastname} onChange={(e) => setLastname(e.target.value)} />
         </Field>
-        <CustomFieldsForm defs={defs} values={fields} onChange={setFields} />
-        <Field label={t("users.rolesTitle")}>
-          <CheckboxTags
-            options={assignable}
-            selected={roles}
-            onChange={setRoles}
-            empty={t("users.rolesEmpty")}
-          />
-        </Field>
+        <CustomFieldsForm defs={fieldDefs} values={fields} onChange={setFields} />
+      </div>
+      <div>
+        <div className="text-sm font-medium text-slate-800 dark:text-slate-200">
+          {t("users.rolesTitle")}
+        </div>
+        <RoleToggleList
+          roles={catalog}
+          selected={roles}
+          onToggle={toggleRole}
+          disabled={busy}
+          canToggle={(code) => roles.includes(code) || assignable.includes(code)}
+          empty={t("users.rolesEmpty")}
+        />
       </div>
       <button className={primaryButton} disabled={busy} onClick={() => void submit()}>
         {t("users.create")}

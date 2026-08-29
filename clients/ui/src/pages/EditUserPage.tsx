@@ -24,7 +24,8 @@ import {
   Loader,
   MessagingLinkList,
   PatList,
-  Toggle,
+  RoleToggleList,
+  roleCatalog,
 } from "../components";
 import { card, ghostButton, input, primaryButton } from "../ui";
 
@@ -382,9 +383,7 @@ function DetailRow({ label, children }: { label: string; children: ReactNode }) 
   );
 }
 
-/** Assign/unassign the user's roles as a toggle list: a switch on the left, the role name in bold,
- * its description (or code) muted below. A role that is neither assigned nor currently assignable
- * (unmet feature gate) shows disabled. Each toggle persists immediately. */
+/** The user's roles. Each toggle persists immediately. */
 function RolesCard({
   user,
   onChanged,
@@ -428,53 +427,19 @@ function RolesCard({
     }
   };
 
-  // Only what this tenant can actually hold: the server's assignable list, plus whatever is
-  // already granted. A role the tenant cannot get is absent, not greyed out — a disabled row
-  // reads as "you lack a right" when the truth is usually "this does not apply here".
-  //
-  // Already-granted codes stay visible even when unassignable, including ones the catalogue no
-  // longer defines: hiding a grant would make it unremovable and invisible at the same time.
-  const catalog: RoleDef[] = [
-    ...defs.filter((d) => assignable.includes(d.code) || user.roles.includes(d.code)),
-    ...user.roles
-      .filter((code) => !defs.some((d) => d.code === code))
-      .map((code) => ({ code, name: code, description: t("users.roleUnknown") })),
-  ];
+  const catalog = roleCatalog(defs, assignable, user.roles, t("users.roleUnknown"));
 
   return (
     <section className={`${card} space-y-3`}>
       <h2 className="font-medium text-slate-800 dark:text-slate-200">{t("users.rolesTitle")}</h2>
-      {catalog.length === 0 ? (
-        <span className="text-xs text-slate-400">{t("users.rolesEmpty")}</span>
-      ) : (
-        <ul className="divide-y divide-slate-100 dark:divide-slate-700/50">
-          {catalog.map((def) => {
-            const assigned = user.roles.includes(def.code);
-            const canToggle = assigned || assignable.includes(def.code);
-            const subtitle = def.description || def.code;
-            return (
-              <li key={def.code} className="flex items-start gap-3 py-3">
-                <div className="pt-0.5">
-                  <Toggle
-                    checked={assigned}
-                    disabled={busy || !canToggle}
-                    label={def.name}
-                    onChange={() => void toggle(def.code, assigned)}
-                  />
-                </div>
-                <div className="min-w-0">
-                  <div className="text-sm font-semibold text-slate-900 dark:text-white">
-                    {def.name}
-                  </div>
-                  {subtitle && (
-                    <div className="text-xs text-slate-400 dark:text-slate-500">{subtitle}</div>
-                  )}
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      )}
+      <RoleToggleList
+        roles={catalog}
+        selected={user.roles}
+        onToggle={(code, assigned) => void toggle(code, assigned)}
+        disabled={busy}
+        canToggle={(code) => user.roles.includes(code) || assignable.includes(code)}
+        empty={t("users.rolesEmpty")}
+      />
     </section>
   );
 }

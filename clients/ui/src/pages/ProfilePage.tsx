@@ -9,7 +9,7 @@ import type {
   SessionView,
   TotpSetup,
 } from "@bentoforge/umami-iam";
-import { type ReactNode, useCallback, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useUmami } from "../auth/UmamiProvider";
 import {
@@ -23,7 +23,7 @@ import {
   Loader,
   MessagingLinkList,
   PatList,
-  Toggle,
+  RoleToggleList,
 } from "../components";
 import { card, dangerButton, ghostButton, input, primaryButton } from "../ui";
 
@@ -715,6 +715,14 @@ function TotpSection({
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
 
+  // Every fetch mints a fresh secret server-side, so the enrolment must fire once — not again
+  // whenever a caller hands us a new `onError` identity. The ref keeps the callback current
+  // without pulling it into the dependencies.
+  const errorRef = useRef(onError);
+  useEffect(() => {
+    errorRef.current = onError;
+  }, [onError]);
+
   useEffect(() => {
     if (enabled) {
       return;
@@ -722,9 +730,7 @@ function TotpSection({
     client
       .totpSetup()
       .then(setSetup)
-      .catch((err) => onError(errMsg(err)));
-    // onError is stable enough for this one-shot setup fetch.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+      .catch((err) => errorRef.current(errMsg(err)));
   }, [enabled, client]);
 
   const run = async (fn: () => Promise<unknown>) => {
@@ -919,35 +925,15 @@ function PatsPanel() {
               {t("pats.rolesLabel")}
             </div>
             <p className="text-xs text-slate-500">{t("pats.rolesHint")}</p>
-            {roleCatalog.length > 0 && (
-              <ul className="mt-2 divide-y divide-slate-100 dark:divide-slate-700/50">
-                {roleCatalog.map((def) => {
-                  const checked = selectedRoles.includes(def.code);
-                  return (
-                    <li key={def.code} className="flex items-start gap-3 py-2">
-                      <div className="pt-0.5">
-                        <Toggle
-                          checked={checked}
-                          disabled={busy}
-                          label={def.name}
-                          onChange={() => toggleRole(def.code)}
-                        />
-                      </div>
-                      <div className="min-w-0">
-                        <div className="text-sm font-semibold text-slate-900 dark:text-white">
-                          {def.name}
-                        </div>
-                        {def.description && (
-                          <div className="text-xs text-slate-400 dark:text-slate-500">
-                            {def.description}
-                          </div>
-                        )}
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
+            <div className="mt-2">
+              <RoleToggleList
+                roles={roleCatalog}
+                selected={selectedRoles}
+                onToggle={(code) => toggleRole(code)}
+                disabled={busy}
+                empty={t("users.rolesEmpty")}
+              />
+            </div>
           </div>
 
           <div className="flex gap-2">

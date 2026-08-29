@@ -1,4 +1,10 @@
-import type { ApiKeyView, AuditEntry, CustomFieldDef, MessagingLink } from "@bentoforge/umami-iam";
+import type {
+  ApiKeyView,
+  AuditEntry,
+  CustomFieldDef,
+  MessagingLink,
+  RoleDef,
+} from "@bentoforge/umami-iam";
 import { EllipsisVerticalIcon } from "@heroicons/react/24/outline";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -191,50 +197,73 @@ export function Field({ label, children }: { label: string; children: ReactNode 
   );
 }
 
-/** A multi-select of code chips (checkboxes). `options` is the assignable set; any already-`selected`
- * code not in `options` is still shown (and checked) so a legacy selection is never silently dropped. */
-export function CheckboxTags({
-  options,
+/** Assign/unassign roles as a toggle list: a switch on the left, the role name in bold, its
+ * description (or code) muted below. Rows `canToggle` rejects render disabled instead of vanishing,
+ * so a grant the caller may not change stays visible. */
+export function RoleToggleList({
+  roles,
   selected,
-  onChange,
-  empty = "none available",
+  onToggle,
+  disabled = false,
+  canToggle,
+  empty,
 }: {
-  options: string[];
+  roles: RoleDef[];
   selected: string[];
-  onChange: (next: string[]) => void;
+  onToggle: (code: string, assigned: boolean) => void;
+  disabled?: boolean;
+  canToggle?: (code: string) => boolean;
   empty?: string;
 }) {
-  const all = Array.from(new Set([...options, ...selected]));
-  if (all.length === 0) {
+  if (roles.length === 0) {
     return <span className="text-xs text-slate-400">{empty}</span>;
   }
-  const toggle = (code: string, on: boolean) =>
-    onChange(on ? [...selected, code] : selected.filter((c) => c !== code));
   return (
-    <div className="flex flex-wrap gap-1.5">
-      {all.map((code) => {
-        const on = selected.includes(code);
+    <ul className="divide-y divide-slate-100 dark:divide-slate-700/50">
+      {roles.map((def) => {
+        const assigned = selected.includes(def.code);
+        const subtitle = def.description || def.code;
         return (
-          <label
-            key={code}
-            className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs cursor-pointer select-none ${
-              on
-                ? "border-primary bg-primary/10 text-primary"
-                : "border-slate-300 dark:border-slate-600 text-slate-500"
-            }`}
-          >
-            <input
-              type="checkbox"
-              className="sr-only"
-              checked={on}
-              onChange={(e) => toggle(code, e.target.checked)}
-            />
-            {code}
-          </label>
+          <li key={def.code} className="flex items-start gap-3 py-3">
+            <div className="pt-0.5">
+              <Toggle
+                checked={assigned}
+                disabled={disabled || (canToggle ? !canToggle(def.code) : false)}
+                label={def.name}
+                onChange={() => onToggle(def.code, assigned)}
+              />
+            </div>
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-slate-900 dark:text-white">{def.name}</div>
+              {subtitle && (
+                <div className="text-xs text-slate-400 dark:text-slate-500">{subtitle}</div>
+              )}
+            </div>
+          </li>
         );
       })}
-    </div>
+    </ul>
   );
+}
+
+/** The role rows to offer for a grant: the catalogue entries the tenant can actually hold
+ * (`assignable`) plus everything already `selected`. A role the tenant cannot get is absent rather
+ * than greyed out — a disabled row reads as "you lack a right" when the truth is usually "this does
+ * not apply here". Already-granted codes stay visible even when the catalogue no longer defines
+ * them, `unknownLabel` as their description: hiding a grant would make it unremovable and invisible
+ * at the same time. */
+export function roleCatalog(
+  defs: RoleDef[],
+  assignable: string[],
+  selected: string[],
+  unknownLabel: string,
+): RoleDef[] {
+  return [
+    ...defs.filter((d) => assignable.includes(d.code) || selected.includes(d.code)),
+    ...selected
+      .filter((code) => !defs.some((d) => d.code === code))
+      .map((code) => ({ code, name: code, description: unknownLabel })),
+  ];
 }
 
 /** One entry in a {@link DropdownMenu}. */
