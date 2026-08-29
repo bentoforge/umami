@@ -60,7 +60,7 @@ export function App() {
         />
         <Route
           path="audit"
-          element={can("admin:tenant") ? <AuditPage /> : <Navigate to="/" replace />}
+          element={can("view:audit") ? <AuditPage /> : <Navigate to="/" replace />}
         />
         <Route
           path="config"

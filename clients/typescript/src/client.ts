@@ -475,7 +475,7 @@ export class UmamiClient {
   myAudit(limit?: number, cursor?: string): Promise<AuditPage> {
     return this.request<AuditPage>(`/auth/me/audit${auditQs(limit, cursor)}`);
   }
-  /** One page of a tenant's audit trail (requires `admin:tenant`; own tenant). */
+  /** One page of a tenant's audit trail (requires `view:audit`; own tenant). */
   tenantAudit(tenantId: string, limit?: number, cursor?: string): Promise<AuditPage> {
     return this.request<AuditPage>(`/tenants/${enc(tenantId)}/audit${auditQs(limit, cursor)}`);
   }
