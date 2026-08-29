@@ -119,7 +119,7 @@ use wasabi::tools::system::install_termination_listener;
 use wasabi::web::auth::authenticator::Authenticator;
 use wasabi::web::info_service::get_info_route;
 use wasabi::web::user_info_service::get_user_info_route;
-use wasabi::web::warp::run_webserver;
+use wasabi::web::warp::{recover_api_errors, run_webserver};
 use wasabi::{APP_NAME, APP_VERSION, CLUSTER_ID, TASK_ID, routes};
 
 #[tokio::main]
@@ -512,7 +512,12 @@ where
     F::Extract: warp::Reply,
 {
     match cors {
-        Some(cors) => run_webserver(public.or(routes.with(cors))).await,
+        // Recover *before* wrapping in CORS. A rejection turned into a response
+        // outside the CORS layer carries no `Access-Control-Allow-Origin`, so the
+        // browser blocks it — and the caller sees a network error instead of the
+        // 401 that told it there is no session yet. `run_webserver` recovers again
+        // on the outside, which finds nothing left to do.
+        Some(cors) => run_webserver(public.or(recover_api_errors(routes).with(cors))).await,
         None => run_webserver(public.or(routes)).await,
     }
 }
@@ -872,6 +877,38 @@ mod tests {
         assert_eq!(
             response.headers().get("access-control-allow-origin"),
             Some(&HeaderValue::from_static("*"))
+        );
+    }
+
+    /// An error response has to carry the CORS headers too.
+    ///
+    /// A browser that cannot read a 401 reports a network error, not a 401 — so an app asking
+    /// "do I have a session?" cannot tell "no" from "unreachable". The recover layer therefore has
+    /// to sit *inside* the CORS wrapper, which is what `serve` composes.
+    #[tokio::test]
+    async fn rejections_carry_the_allow_origin_header() {
+        // A route that always rejects, standing in for "no session".
+        let failing = warp::path!("auth" / "refresh")
+            .and(warp::post())
+            .and_then(|| async {
+                Err::<&str, warp::Rejection>(warp::reject::custom(
+                    wasabi::web::error::ApiError::new(StatusCode::UNAUTHORIZED, "no session"),
+                ))
+            });
+        let route = recover_api_errors(failing).with(credentialed_cors());
+
+        let response = warp::test::request()
+            .method("POST")
+            .path("/auth/refresh")
+            .header("origin", "https://app.example.com")
+            .reply(&route)
+            .await;
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            response.headers().get("access-control-allow-origin"),
+            Some(&HeaderValue::from_static("https://app.example.com")),
+            "a 401 the browser cannot read is indistinguishable from an outage"
         );
     }
 
