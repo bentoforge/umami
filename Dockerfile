@@ -16,6 +16,9 @@ COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 # Brand SVGs embedded into the binary via include_str! (src/web_ui.rs).
 COPY ci ./ci
+# The message catalogue is compiled in by `rust_i18n::i18n!` (src/main.rs). A missing directory is
+# not a build error — it yields an empty catalogue, and every lookup then returns its own key.
+COPY locales ./locales
 RUN cargo build --release --features open_telemetry
 
 # ── Stage 3: runtime ───────────────────────────────────────────────────────────
