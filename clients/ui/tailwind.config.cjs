@@ -21,14 +21,16 @@ module.exports = {
         },
         // Header chrome, so the top bar can be rebranded on its own.
         //
-        // `muted` is its own colour rather than `fg` at reduced opacity: 70% of a
-        // dark grey on white reads as restrained, 70% of white on a dark bar reads
-        // as washed out. Opacity does not carry across backgrounds, so whoever
-        // recolours the bar needs to set this too.
+        // `muted` and `hover` are their own colours rather than `fg` at reduced
+        // opacity: 70% of a dark grey on white reads as restrained, 70% of white on
+        // a dark bar reads as washed out, and the same goes for a 10% hover wash.
+        // Opacity does not carry across backgrounds, so whoever recolours the bar
+        // needs to set these too.
         header: {
           bg: "rgb(var(--header-bg) / <alpha-value>)",
           fg: "rgb(var(--header-fg) / <alpha-value>)",
           muted: "rgb(var(--header-fg-muted) / <alpha-value>)",
+          hover: "rgb(var(--header-hover) / <alpha-value>)",
           accent: "rgb(var(--header-accent) / <alpha-value>)",
           border: "rgb(var(--header-border) / <alpha-value>)",
         },

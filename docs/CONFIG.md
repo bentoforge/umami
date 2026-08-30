@@ -97,15 +97,17 @@ Relevant environment variables:
   "favicon":   "data:image/png;base64,…" }
 //   served at /app/logo/light, /app/logo/dark, /app/favicon; the UI picks the logo by theme.
 //
-//   The top bar has five tokens of its own, for a logo that needs its own background:
+//   The top bar has six tokens of its own, for a logo that needs its own background:
 //     --header-bg        the bar
 //     --header-fg        nav text and icons, hovered
 //     --header-fg-muted  inactive nav items
+//     --header-hover     background of a hovered item
 //     --header-accent    the active nav item; follows --brand unless set
 //     --header-border    the rule below the bar
-//   Set `muted` whenever you set `fg`: it is a colour, not an opacity, because 70%
-//   of a dark grey on white reads as restrained while 70% of white on a dark bar
-//   reads as washed out.
+//   `fg-muted` and `hover` are colours, not opacities, and they are the two to get
+//   wrong: 70% of a dark grey on white reads as restrained, 70% of white on a dark
+//   bar reads as washed out, and the same goes for the hover wash. Recolour the
+//   bar, set all four foreground tokens.
 //   Set them in :root and they apply in BOTH light and dark mode — usually what you
 //   want when the bar carries a logo. Set them under .dark as well to differ.
 //
@@ -115,7 +117,7 @@ Relevant environment variables:
 //   `header { border-bottom-width: 4px }` works, because nothing else sets it.
 //
 //   Example, a dark blue bar with a cyan rule and cyan highlights:
-{ "customCss": ":root{--header-bg: 30 58 113; --header-fg: 255 255 255; --header-fg-muted: 203 213 225; --header-accent: 45 203 166; --header-border: 45 203 166} header{border-bottom-width:4px}" }
+{ "customCss": ":root{--header-bg: 30 58 113; --header-fg: 255 255 255; --header-fg-muted: 203 213 225; --header-hover: 42 74 139; --header-accent: 45 203 166; --header-border: 45 203 166} header{border-bottom-width:4px}" }
 
 // ApiDef — a target audience + its permission projection:
 { "code": "dbx-core", "audience": "dbx-core",

@@ -23,7 +23,7 @@ export const iconButton =
  * Following `--header-fg` is the only way they move with a rebranded bar.
  */
 export const headerIconButton =
-  "inline-flex items-center justify-center rounded-lg p-2 text-header-muted hover:text-header-fg hover:bg-header-fg/10";
+  "inline-flex items-center justify-center rounded-lg p-2 text-header-muted hover:text-header-fg hover:bg-header-hover";
 
 export const card =
   "rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-6";

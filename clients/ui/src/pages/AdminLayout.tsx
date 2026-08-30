@@ -26,7 +26,7 @@ const popoverSurface = card.replace(" p-6", "");
 
 const navLinkClass = ({ isActive }: { isActive: boolean }) =>
   `px-3 py-1.5 rounded-lg text-sm font-medium ${
-    isActive ? "text-header-accent" : "text-header-muted hover:text-header-fg hover:bg-header-fg/10"
+    isActive ? "text-header-accent" : "text-header-muted hover:text-header-fg hover:bg-header-hover"
   }`;
 
 /** Authenticated shell: logo + nav, theme/tenant switchers, user menu (desktop) or hamburger
@@ -235,7 +235,7 @@ function UserMenu({
     <div className="relative" ref={boxRef}>
       <button
         type="button"
-        className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-header-fg/10"
+        className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-header-hover"
         onClick={() => setOpen((v) => !v)}
       >
         <UserCircleIcon className="h-7 w-7 text-header-muted shrink-0" />
