@@ -125,19 +125,23 @@ export function AdminLayout() {
  * Amber and boxed, not a thin strip: everything below it belongs to someone
  * else, and that is worth a block of its own rather than a line of chrome.
  */
+// Dark values are literal rather than Tailwind's amber scale: `amber-950`
+// composited over slate-900 lands on rgb(37 24 26) — red dominant, green and blue
+// level — which reads as a dark red rather than as a warning. These are the same
+// amber the noonu app uses, where blue stays clearly lowest.
 function ImpersonationNotice() {
   const { me, activeTenantId, activeTenantName, switchTenant } = useUmami();
   const home = me?.user.tenantId;
 
   return (
-    <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 dark:border-amber-900 dark:bg-amber-950/40">
-      <span className="text-sm text-amber-800 dark:text-amber-200">
+    <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 dark:border-[#d9a445]/40 dark:bg-[#2a2314]">
+      <span className="text-sm text-amber-800 dark:text-[#e5b963]">
         Übernahme aktiv: <strong>{activeTenantName ?? activeTenantId}</strong>
       </span>
       {home && (
         <button
           type="button"
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg p-2 text-sm font-medium text-amber-800 hover:bg-amber-100 dark:text-amber-200 dark:hover:bg-amber-900/40"
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg p-2 text-sm font-medium text-amber-800 hover:bg-amber-100 dark:text-[#e5b963] dark:hover:bg-[#d9a445]/15"
           onClick={() => void switchTenant(home, me?.tenant?.name)}
         >
           <XMarkIcon className="h-4 w-4" aria-hidden="true" />
