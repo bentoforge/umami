@@ -19,6 +19,15 @@ module.exports = {
           DEFAULT: "rgb(var(--brand) / <alpha-value>)",
           dark: "rgb(var(--brand-dark) / <alpha-value>)",
         },
+        // Header chrome, so the top bar can be rebranded on its own. Inactive nav
+        // items are `header-fg` at reduced opacity rather than a fifth token —
+        // which is exactly what the space-separated RGB form is for.
+        header: {
+          bg: "rgb(var(--header-bg) / <alpha-value>)",
+          fg: "rgb(var(--header-fg) / <alpha-value>)",
+          accent: "rgb(var(--header-accent) / <alpha-value>)",
+          border: "rgb(var(--header-border) / <alpha-value>)",
+        },
       },
     },
   },

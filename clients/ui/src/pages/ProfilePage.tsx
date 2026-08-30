@@ -124,7 +124,7 @@ function SessionsPanel() {
                 <div className="text-sm font-medium text-slate-900 dark:text-white truncate">
                   {session.userAgent || t("sessions.unknownDevice")}
                   {session.current && (
-                    <span className="ml-2 rounded bg-brand/10 text-brand px-1.5 py-0.5 text-[10px] align-middle">
+                    <span className="ml-2 rounded bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 px-1.5 py-0.5 text-[10px] align-middle">
                       {t("sessions.current")}
                     </span>
                   )}
@@ -610,7 +610,9 @@ function SecurityAction({
       >
         {label}
         {badge && (
-          <span className="rounded bg-brand/10 text-brand px-1.5 py-0.5 text-[10px]">{badge}</span>
+          <span className="rounded bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 px-1.5 py-0.5 text-[10px]">
+            {badge}
+          </span>
         )}
       </button>
       <p className="text-xs text-slate-500">{desc}</p>

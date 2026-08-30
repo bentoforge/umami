@@ -134,7 +134,7 @@ export function TenantsPage() {
                       {tenant.name}
                     </Link>
                     {tenant.tenantId === me?.user.tenantId && (
-                      <span className="ml-2 rounded bg-brand/10 text-brand px-1.5 py-0.5 text-[10px] align-middle">
+                      <span className="ml-2 rounded bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 px-1.5 py-0.5 text-[10px] align-middle">
                         {t("tenants.system")}
                       </span>
                     )}

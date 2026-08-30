@@ -14,6 +14,24 @@
         /* Brand = identity accent, used sparingly (CI #AD1E6B, see /ci/CI.md). */
         --brand: 173 30 107;
         --brand-dark: 138 24 86;
+
+        /* Header chrome. Four knobs so a deployment can put its own bar up top
+           without fighting the cascade: the nav items carry their own colours, so
+           a `color` on <header> is never inherited and never applies.
+           Defaults reproduce the stock look. */
+        --header-bg: 255 255 255;       /* white */
+        --header-fg: 71 85 105;         /* slate-600 — nav text and icons */
+        --header-accent: 173 30 107;    /* the active item; brand by default */
+        --header-border: 226 232 240;   /* slate-200 — the rule below the bar */
+      }
+
+      /* Dark-mode defaults only. A deployment that overrides the tokens in :root
+         and stops there gets one bar in both modes — which is usually the point of
+         putting a logo up there. */
+      .dark {
+        --header-bg: 30 41 59;          /* slate-800 */
+        --header-fg: 203 213 225;       /* slate-300 */
+        --header-border: 51 65 85;      /* slate-700 */
       }
       /* Both are overridable at runtime via config branding.customCss (loaded last). */
     </style>

@@ -96,6 +96,22 @@ Relevant environment variables:
   "logoDark":  "data:image/svg+xml;base64,…",  // shown in dark mode; each falls back to the other
   "favicon":   "data:image/png;base64,…" }
 //   served at /app/logo/light, /app/logo/dark, /app/favicon; the UI picks the logo by theme.
+//
+//   The top bar has four tokens of its own, for a logo that needs its own background:
+//     --header-bg      the bar
+//     --header-fg      nav text and icons; inactive items are this at 70% opacity
+//     --header-accent  the active nav item
+//     --header-border  the rule below the bar
+//   Set them in :root and they apply in BOTH light and dark mode — usually what you
+//   want when the bar carries a logo. Set them under .dark as well to differ.
+//
+//   Why tokens and not plain CSS: every element in the bar declares its own colour,
+//   so `header { color: … }` is never inherited and never applies, however important
+//   you make it. Width and other non-colour properties are still plain CSS —
+//   `header { border-bottom-width: 4px }` works, because nothing else sets it.
+//
+//   Example, a dark blue bar with a cyan rule and cyan highlights:
+{ "customCss": ":root{--header-bg: 30 58 113; --header-fg: 255 255 255; --header-accent: 45 203 166; --header-border: 45 203 166} header{border-bottom-width:4px}" }
 
 // ApiDef — a target audience + its permission projection:
 { "code": "dbx-core", "audience": "dbx-core",

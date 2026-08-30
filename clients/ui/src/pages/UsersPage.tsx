@@ -194,7 +194,7 @@ export function UsersPage() {
                     <td className={td}>{user.lastSeen ? formatDateTime(user.lastSeen) : "—"}</td>
                     <td className={td}>
                       <div className="flex flex-wrap gap-1">
-                        {isSelf && <Tag tone="brand">{t("users.you")}</Tag>}
+                        {isSelf && <Tag tone="info">{t("users.you")}</Tag>}
                         {user.locked && <Tag tone="danger">{t("users.locked")}</Tag>}
                         {user.passwordGenerated && <Tag>{t("users.generatedPassword")}</Tag>}
                         {user.mfaEnabled && <Tag>{t("users.twoFactor")}</Tag>}
@@ -241,12 +241,16 @@ function Tag({
   tone = "neutral",
   children,
 }: {
-  tone?: "neutral" | "brand" | "danger";
+  tone?: "neutral" | "info" | "danger";
   children: string;
 }) {
+  // Fixed blue, not the brand token. These tags state a fact about the row — this
+  // is you, this is the system tenant — and are not a place for the deployment's
+  // identity: rebranding must not repaint them, and it must not put the accent on
+  // something that is merely informational.
   const cls =
-    tone === "brand"
-      ? "bg-brand/10 text-brand"
+    tone === "info"
+      ? "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300"
       : tone === "danger"
         ? "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300"
         : "bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300";

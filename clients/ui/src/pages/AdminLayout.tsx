@@ -15,7 +15,7 @@ import { NavLink, Outlet } from "react-router-dom";
 import { useUmami } from "../auth/UmamiProvider";
 import { errMsg, Logo } from "../components";
 import { getTheme, setTheme, type Theme } from "../theme";
-import { card, iconButton, input } from "../ui";
+import { card, headerIconButton, input } from "../ui";
 
 type NavItem = { to: string; label: string; show: boolean; end?: boolean };
 
@@ -26,9 +26,7 @@ const popoverSurface = card.replace(" p-6", "");
 
 const navLinkClass = ({ isActive }: { isActive: boolean }) =>
   `px-3 py-1.5 rounded-lg text-sm font-medium ${
-    isActive
-      ? "text-brand"
-      : "text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-700"
+    isActive ? "text-header-accent" : "text-header-fg/70 hover:text-header-fg hover:bg-header-fg/10"
   }`;
 
 /** Authenticated shell: logo + nav, theme/tenant switchers, user menu (desktop) or hamburger
@@ -61,7 +59,7 @@ export function AdminLayout() {
 
   return (
     <div className="min-h-screen bg-slate-100 dark:bg-slate-900">
-      <header className="bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700">
+      <header className="bg-header-bg border-b border-header-border text-header-fg">
         <div className="mx-auto max-w-6xl px-6 py-3 flex items-center gap-4">
           {/* Logo → Start. Theme-aware (config `branding.logoLight`/`logoDark`, else built-in). */}
           <NavLink to="/" className="shrink-0" onClick={() => setMobileOpen(false)}>
@@ -88,7 +86,7 @@ export function AdminLayout() {
             </div>
             <button
               type="button"
-              className={`${iconButton} md:hidden`}
+              className={`${headerIconButton} md:hidden`}
               aria-label="Menu"
               onClick={() => setMobileOpen((open) => !open)}
             >
@@ -177,7 +175,7 @@ function ThemeSwitcher() {
     <div className="relative" ref={boxRef}>
       <button
         type="button"
-        className={iconButton}
+        className={headerIconButton}
         onClick={() => setOpen((v) => !v)}
         title="Darstellung"
         aria-label="Darstellung"
@@ -237,15 +235,15 @@ function UserMenu({
     <div className="relative" ref={boxRef}>
       <button
         type="button"
-        className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-700"
+        className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-header-fg/10"
         onClick={() => setOpen((v) => !v)}
       >
-        <UserCircleIcon className="h-7 w-7 text-slate-500 shrink-0" />
+        <UserCircleIcon className="h-7 w-7 text-header-fg/70 shrink-0" />
         <span className="hidden lg:flex flex-col text-left leading-tight">
-          <span className="text-sm font-medium text-slate-900 dark:text-white">{fullName}</span>
-          <span className="text-xs text-slate-500">{tenantName}</span>
+          <span className="text-sm font-medium text-header-fg">{fullName}</span>
+          <span className="text-xs text-header-fg/70">{tenantName}</span>
         </span>
-        <ChevronDownIcon className="h-4 w-4 text-slate-400" />
+        <ChevronDownIcon className="h-4 w-4 text-header-fg/60" />
       </button>
       {open && (
         <div className={`${popoverSurface} absolute right-0 mt-2 w-56 z-20 p-2 shadow-lg`}>
@@ -418,7 +416,7 @@ function TenantSwitcher() {
     <div className="relative" ref={boxRef}>
       <button
         type="button"
-        className={iconButton}
+        className={headerIconButton}
         onClick={() => setOpen((v) => !v)}
         title="Mandant wechseln"
         aria-label="Mandant wechseln"
