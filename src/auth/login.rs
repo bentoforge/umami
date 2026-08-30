@@ -16,8 +16,8 @@ use crate::auth::session::{generate_refresh_secret, hash_refresh_secret, verify_
 use crate::bail_i18n;
 use crate::config::Config;
 use crate::constants::{
-    MAX_TEXT_BODY_SIZE, SWITCH_TENANT_PERMISSION, SYSTEM_TENANT_MARKER,
-    SYSTEM_TENANT_MEMBER_MARKER, UMAMI_API_CODE,
+    MAX_TEXT_BODY_SIZE, PASSKEY_MARKER, SWITCH_TENANT_PERMISSION, SYSTEM_TENANT_MARKER,
+    SYSTEM_TENANT_MEMBER_MARKER, TOTP_MARKER, TWO_FACTOR_MARKER, UMAMI_API_CODE,
 };
 use crate::users::User;
 use anyhow::Context;
@@ -239,20 +239,121 @@ fn json_with_optional_cookie<S: Serialize>(
 /// which subjects get `switch:tenant` is a decision of the `umami` API's permission mapping, and
 /// hardcoding "only system-tenant members" here would silently diverge from it the first time
 /// somebody maps the permission differently.
-fn may_switch_tenant(context: &AuthContext, config: &Config, user: &User) -> bool {
+fn may_switch_tenant(
+    context: &AuthContext,
+    config: &Config,
+    user: &User,
+    strength: AuthStrength,
+) -> bool {
     let Some(api) = config.find_api(UMAMI_API_CODE) else {
         return false;
     };
+    let subjects = switch_subjects(
+        &user.roles,
+        context.system_tenant_id.as_deref() == Some(user.tenant_id.as_str()),
+        strength,
+    );
+    api.resolve(&subjects)
+        .is_some_and(|permissions| permissions.iter().any(|p| p == SWITCH_TENANT_PERMISSION))
+}
+
+/// The subject set a tenant-switch entitlement is decided on.
+///
+/// Pulled out of [`may_switch_tenant`] so the part that got this wrong can be tested without an
+/// `AuthContext`: it has to produce **the same subjects the broker puts on a token**, or the
+/// re-check answers a different question than the config rule asks.
+///
+/// That is exactly how it broke. The natural way to gate tenant switching is
+/// `role:switch-tenant + is:system-tenant-member + is:2fa`, and `is:2fa` was missing here — so the
+/// rule could never match, every refresh concluded the user may not switch, and the session fell
+/// back to its home tenant. The switch survived precisely as long as the access token it was made
+/// with: reload the page or open a second tab and it was gone.
+fn switch_subjects(
+    roles: &[String],
+    system_tenant_member: bool,
+    strength: AuthStrength,
+) -> Vec<String> {
+    let mut subjects: Vec<String> = roles.to_vec();
     // Evaluated against the user's **home** tenant, which is where the entitlement lives — and
     // at home both markers hold: the user is a member of that tenant *and* acting in it. Pushing
     // only one would silently answer a different question than the config rule asks.
-    let mut subjects: Vec<String> = user.roles.clone();
-    if context.system_tenant_id.as_deref() == Some(user.tenant_id.as_str()) {
+    if system_tenant_member {
         subjects.push(SYSTEM_TENANT_MARKER.to_owned());
         subjects.push(SYSTEM_TENANT_MEMBER_MARKER.to_owned());
     }
-    api.resolve(&subjects)
-        .is_some_and(|permissions| permissions.iter().any(|p| p == SWITCH_TENANT_PERMISSION))
+    if strength.passkey {
+        subjects.push(PASSKEY_MARKER.to_owned());
+    }
+    if strength.totp {
+        subjects.push(TOTP_MARKER.to_owned());
+    }
+    if strength.passkey || strength.totp {
+        subjects.push(TWO_FACTOR_MARKER.to_owned());
+    }
+    subjects
+}
+
+#[cfg(test)]
+mod switch_entitlement_tests {
+    use super::*;
+    use crate::config::{ApiDef, PermissionRule};
+
+    /// The rule as a deployment actually writes it — second factor required.
+    fn api() -> ApiDef {
+        ApiDef {
+            code: UMAMI_API_CODE.to_owned(),
+            audience: UMAMI_API_CODE.to_owned(),
+            eligibility: None,
+            permissions: vec![PermissionRule {
+                when: "role:switch-tenant + is:system-tenant-member + is:2fa".to_owned(),
+                grant: vec![SWITCH_TENANT_PERMISSION.to_owned()],
+            }],
+            claims: Default::default(),
+        }
+    }
+
+    fn may(strength: AuthStrength) -> bool {
+        let subjects = switch_subjects(&["role:switch-tenant".to_owned()], true, strength);
+        api()
+            .resolve(&subjects)
+            .is_some_and(|p| p.iter().any(|p| p == SWITCH_TENANT_PERMISSION))
+    }
+
+    #[test]
+    fn a_second_factor_keeps_the_switch_across_a_refresh() {
+        assert!(may(AuthStrength {
+            passkey: false,
+            totp: true
+        }));
+        assert!(may(AuthStrength {
+            passkey: true,
+            totp: false
+        }));
+    }
+
+    #[test]
+    fn without_a_second_factor_the_session_falls_back() {
+        assert!(!may(AuthStrength {
+            passkey: false,
+            totp: false
+        }));
+    }
+
+    #[test]
+    fn the_entitlement_lives_in_the_home_tenant() {
+        let subjects = switch_subjects(
+            &["role:switch-tenant".to_owned()],
+            false,
+            AuthStrength {
+                passkey: false,
+                totp: true,
+            },
+        );
+        assert!(
+            api().resolve(&subjects).is_some_and(|p| p.is_empty()),
+            "a user whose home tenant is not the system tenant may not switch",
+        );
+    }
 }
 
 /// Mints an access token for the given target API, resolving the user's roles/features through the
@@ -721,7 +822,15 @@ async fn refresh(
     // permission projection over data in hand.
     let tenant_id = match session.active_tenant_id.as_deref() {
         Some(active) if active != user.tenant_id => {
-            if may_switch_tenant(context, &config, &user) {
+            if may_switch_tenant(
+                context,
+                &config,
+                &user,
+                AuthStrength {
+                    passkey: session.mfa_passkey,
+                    totp: session.mfa_totp,
+                },
+            ) {
                 active
             } else {
                 record_best_effort(
