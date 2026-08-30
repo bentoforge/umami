@@ -26,7 +26,9 @@ const popoverSurface = card.replace(" p-6", "");
 
 const navLinkClass = ({ isActive }: { isActive: boolean }) =>
   `px-3 py-1.5 rounded-lg text-sm font-medium ${
-    isActive ? "text-header-accent" : "text-header-muted hover:text-header-fg hover:bg-header-hover"
+    isActive
+      ? "text-header-accent"
+      : "text-header-muted hover:text-header-text hover:bg-header-hover"
   }`;
 
 /** Authenticated shell: logo + nav, theme/tenant switchers, user menu (desktop) or hamburger
@@ -59,7 +61,7 @@ export function AdminLayout() {
 
   return (
     <div className="min-h-screen bg-slate-100 dark:bg-slate-900">
-      <header className="bg-header-bg border-b border-header-border text-header-fg">
+      <header className="bg-header-bg border-b border-header-border text-header-text">
         <div className="mx-auto max-w-6xl px-6 py-3 flex items-center gap-4">
           {/* Logo → Start. Theme-aware (config `branding.logoLight`/`logoDark`, else built-in). */}
           <NavLink to="/" className="shrink-0" onClick={() => setMobileOpen(false)}>
@@ -240,7 +242,7 @@ function UserMenu({
       >
         <UserCircleIcon className="h-7 w-7 text-header-muted shrink-0" />
         <span className="hidden lg:flex flex-col text-left leading-tight">
-          <span className="text-sm font-medium text-header-fg">{fullName}</span>
+          <span className="text-sm font-medium text-header-text">{fullName}</span>
           <span className="text-xs text-header-muted">{tenantName}</span>
         </span>
         <ChevronDownIcon className="h-4 w-4 text-header-muted" />

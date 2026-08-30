@@ -28,8 +28,8 @@ module.exports = {
         // needs to set these too.
         header: {
           bg: "rgb(var(--header-bg) / <alpha-value>)",
-          fg: "rgb(var(--header-fg) / <alpha-value>)",
-          muted: "rgb(var(--header-fg-muted) / <alpha-value>)",
+          text: "rgb(var(--header-text) / <alpha-value>)",
+          muted: "rgb(var(--header-text-muted) / <alpha-value>)",
           hover: "rgb(var(--header-hover) / <alpha-value>)",
           accent: "rgb(var(--header-accent) / <alpha-value>)",
           border: "rgb(var(--header-border) / <alpha-value>)",
@@ -38,12 +38,12 @@ module.exports = {
         // tokens: unlike a colour wash, that behaves the same whatever is behind.
         login: {
           bg: "rgb(var(--login-bg) / <alpha-value>)",
-          surface: "rgb(var(--login-surface) / <alpha-value>)",
-          fg: "rgb(var(--login-fg) / <alpha-value>)",
+          card: "rgb(var(--login-card) / <alpha-value>)",
+          text: "rgb(var(--login-text) / <alpha-value>)",
           primary: "rgb(var(--login-primary) / <alpha-value>)",
-          "primary-fg": "rgb(var(--login-primary-fg) / <alpha-value>)",
+          "primary-text": "rgb(var(--login-primary-text) / <alpha-value>)",
           secondary: "rgb(var(--login-secondary) / <alpha-value>)",
-          "secondary-fg": "rgb(var(--login-secondary-fg) / <alpha-value>)",
+          "secondary-text": "rgb(var(--login-secondary-text) / <alpha-value>)",
         },
       },
     },

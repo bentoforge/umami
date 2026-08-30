@@ -98,12 +98,12 @@ Relevant environment variables:
 //   served at /app/logo/light, /app/logo/dark, /app/favicon; the UI picks the logo by theme.
 //
 //   The top bar has six tokens of its own, for a logo that needs its own background:
-//     --header-bg        the bar
-//     --header-fg        nav text and icons, hovered
-//     --header-fg-muted  inactive nav items
-//     --header-hover     background of a hovered item
-//     --header-accent    the active nav item; follows --brand unless set
-//     --header-border    the rule below the bar
+//     --header-bg          the bar
+//     --header-text        nav text and icons, hovered
+//     --header-text-muted  inactive nav items
+//     --header-hover       background of a hovered item
+//     --header-accent      the active nav item; follows --brand unless set
+//     --header-border      the rule below the bar
 //   `fg-muted` and `hover` are colours, not opacities, and they are the two to get
 //   wrong: 70% of a dark grey on white reads as restrained, 70% of white on a dark
 //   bar reads as washed out, and the same goes for the hover wash. Recolour the
@@ -118,17 +118,17 @@ Relevant environment variables:
 //
 //   The sign-in screen has seven of its own — it is the first thing anyone sees,
 //   and for a customer's users often the only umami page they ever look at:
-//     --login-bg            behind the card
-//     --login-surface       the card
-//     --login-fg            heading and labels
-//     --login-primary       the submit button, with --login-primary-fg its label
-//     --login-secondary     the outline button's border, --login-secondary-fg its label
+//     --login-bg            the page behind the box
+//     --login-card          the box itself
+//     --login-text          heading and labels
+//     --login-primary       the submit button, with --login-primary-text its label
+//     --login-secondary     the outline button's border, --login-secondary-text its label
 //   Button hovers are element-level opacity, not tokens: unlike a colour wash that
 //   lands the same way whatever is behind. The input boxes stay neutral on purpose —
 //   a form field reads as a light box even on a coloured card.
 //
 //   Example, a dark blue bar with a cyan rule and cyan highlights:
-{ "customCss": ":root{--header-bg: 30 58 113; --header-fg: 255 255 255; --header-fg-muted: 203 213 225; --header-hover: 42 74 139; --header-accent: 45 203 166; --header-border: 45 203 166} header{border-bottom-width:4px}" }
+{ "customCss": ":root{--header-bg: 30 58 113; --header-text: 255 255 255; --header-text-muted: 203 213 225; --header-hover: 42 74 139; --header-accent: 45 203 166; --header-border: 45 203 166} header{border-bottom-width:4px}" }
 
 // ApiDef — a target audience + its permission projection:
 { "code": "dbx-core", "audience": "dbx-core",

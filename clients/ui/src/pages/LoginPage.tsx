@@ -150,7 +150,7 @@ export function LoginPage() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-login-bg px-4">
-      <div className="w-full max-w-sm rounded-2xl bg-login-surface text-login-fg shadow-xl p-8">
+      <div className="w-full max-w-sm rounded-2xl bg-login-card text-login-text shadow-xl p-8">
         {/* Theme-aware branding logo (config `branding.logoLight`/`logoDark`, else built-in). */}
         <div className="flex justify-center mb-6">
           <Logo className="h-16 w-auto max-w-full" alt={t("app.title")} />
@@ -205,7 +205,7 @@ export function LoginPage() {
                 onChange={(e) => setTotpCode(e.target.value)}
                 className={inputClass}
               />
-              <p className="mt-1 text-xs text-login-fg opacity-70">{t("login.mfaHint")}</p>
+              <p className="mt-1 text-xs text-login-text opacity-70">{t("login.mfaHint")}</p>
             </Field>
           )}
           {error && <p className={errorBox}>{error}</p>}
@@ -231,7 +231,7 @@ export function LoginPage() {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="block text-sm font-medium text-login-fg opacity-80 mb-1">{label}</span>
+      <span className="block text-sm font-medium text-login-text opacity-80 mb-1">{label}</span>
       {children}
     </label>
   );
@@ -246,6 +246,6 @@ const readOnlyInputClass =
 // Hover is element-level opacity rather than a second colour token: unlike a wash,
 // it lands the same way whatever the button sits on.
 const primaryButtonClass =
-  "w-full rounded-lg bg-login-primary text-login-primary-fg hover:opacity-90 font-medium py-2 transition disabled:opacity-50";
+  "w-full rounded-lg bg-login-primary text-login-primary-text hover:opacity-90 font-medium py-2 transition disabled:opacity-50";
 const secondaryButtonClass =
-  "mt-3 w-full rounded-lg border border-login-secondary text-login-secondary-fg hover:opacity-80 font-medium py-2 transition disabled:opacity-50";
+  "mt-3 w-full rounded-lg border border-login-secondary text-login-secondary-text hover:opacity-80 font-medium py-2 transition disabled:opacity-50";

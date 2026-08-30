@@ -20,8 +20,8 @@
            a `color` on <header> is never inherited and never applies.
            Defaults reproduce the stock look. */
         --header-bg: 255 255 255;       /* white */
-        --header-fg: 71 85 105;         /* slate-600 — nav text and icons, hovered */
-        --header-fg-muted: 100 116 139; /* slate-500 — inactive nav items */
+        --header-text: 71 85 105;         /* slate-600 — nav text and icons, hovered */
+        --header-text-muted: 100 116 139; /* slate-500 — inactive nav items */
         --header-hover: 241 245 249;    /* slate-100 — hovered item background */
         --header-accent: var(--brand);  /* the active item — follows the brand unless set */
         --header-border: 226 232 240;   /* slate-200 — the rule below the bar */
@@ -29,12 +29,12 @@
         /* Sign-in screen. The first thing anyone sees, and for a customer's users
            often the only umami page they ever look at. */
         --login-bg: 241 245 249;           /* slate-100 — behind the card */
-        --login-surface: 255 255 255;      /* the card itself */
-        --login-fg: 15 23 42;              /* slate-900 — heading and labels */
+        --login-card: 255 255 255;      /* the card itself */
+        --login-text: 15 23 42;              /* slate-900 — heading and labels */
         --login-primary: var(--primary);   /* the submit button */
-        --login-primary-fg: 255 255 255;   /* its label */
+        --login-primary-text: 255 255 255;   /* its label */
         --login-secondary: 203 213 225;    /* slate-300 — the outline button's border */
-        --login-secondary-fg: 51 65 85;    /* slate-700 — its label */
+        --login-secondary-text: 51 65 85;    /* slate-700 — its label */
       }
 
       /* Dark-mode defaults only. A deployment that overrides the tokens in :root
@@ -42,16 +42,16 @@
          putting a logo up there. */
       .dark {
         --header-bg: 30 41 59;          /* slate-800 */
-        --header-fg: 203 213 225;       /* slate-300 */
-        --header-fg-muted: 148 163 184; /* slate-400 */
+        --header-text: 203 213 225;       /* slate-300 */
+        --header-text-muted: 148 163 184; /* slate-400 */
         --header-hover: 51 65 85;       /* slate-700 */
         --header-border: 51 65 85;      /* slate-700 */
 
         --login-bg: 15 23 42;              /* slate-900 */
-        --login-surface: 30 41 59;         /* slate-800 */
-        --login-fg: 255 255 255;
+        --login-card: 30 41 59;         /* slate-800 */
+        --login-text: 255 255 255;
         --login-secondary: 71 85 105;      /* slate-600 */
-        --login-secondary-fg: 226 232 240; /* slate-200 */
+        --login-secondary-text: 226 232 240; /* slate-200 */
       }
       /* Both are overridable at runtime via config branding.customCss (loaded last). */
     </style>

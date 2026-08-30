@@ -20,10 +20,10 @@ export const iconButton =
  *
  * Separate rather than scoped CSS: everything in the header declares its own
  * colour, so a rule on `<header>` is never inherited and never reaches these.
- * Following `--header-fg` is the only way they move with a rebranded bar.
+ * Following `--header-text` is the only way they move with a rebranded bar.
  */
 export const headerIconButton =
-  "inline-flex items-center justify-center rounded-lg p-2 text-header-muted hover:text-header-fg hover:bg-header-hover";
+  "inline-flex items-center justify-center rounded-lg p-2 text-header-muted hover:text-header-text hover:bg-header-hover";
 
 /**
  * An error, in a box that brings its own background.
