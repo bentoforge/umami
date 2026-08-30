@@ -97,14 +97,6 @@ export function AdminLayout() {
           </div>
         </div>
 
-        {switched && (
-          <div className="bg-amber-50 dark:bg-amber-950/40 border-t border-amber-200 dark:border-amber-900">
-            <div className="mx-auto max-w-6xl px-6 py-1.5 text-xs text-amber-700 dark:text-amber-300">
-              Übernahme aktiv: <strong>{activeTenantName ?? activeTenantId}</strong>
-            </div>
-          </div>
-        )}
-
         {mobileOpen && (
           <MobileMenu
             navItems={navItems}
@@ -117,8 +109,41 @@ export function AdminLayout() {
       {/* Keyed on the active tenant so a switch remounts the pages → they refetch against the new
           token without a full reload (a reload would silently refresh back to the home tenant). */}
       <main key={activeTenantId ?? "none"} className="mx-auto max-w-6xl px-6 py-8">
+        {/* Below the bar rather than inside it, and spaced like any other block:
+            stuck to the header it read as part of the chrome, which is the one
+            thing this must not be — it is a state you have to be able to leave. */}
+        {switched && <ImpersonationNotice />}
         <Outlet />
       </main>
+    </div>
+  );
+}
+
+/**
+ * Acting as another tenant, and the way out of it.
+ *
+ * Amber and boxed, not a thin strip: everything below it belongs to someone
+ * else, and that is worth a block of its own rather than a line of chrome.
+ */
+function ImpersonationNotice() {
+  const { me, activeTenantId, activeTenantName, switchTenant } = useUmami();
+  const home = me?.user.tenantId;
+
+  return (
+    <div className="mb-8 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 dark:border-amber-900 dark:bg-amber-950/40">
+      <span className="text-sm text-amber-800 dark:text-amber-200">
+        Übernahme aktiv: <strong>{activeTenantName ?? activeTenantId}</strong>
+      </span>
+      {home && (
+        <button
+          type="button"
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-amber-300 px-3 py-1.5 text-sm font-medium text-amber-800 hover:bg-amber-100 dark:border-amber-800 dark:text-amber-200 dark:hover:bg-amber-900/40"
+          onClick={() => void switchTenant(home, me?.tenant?.name)}
+        >
+          <XMarkIcon className="h-4 w-4" aria-hidden="true" />
+          Übernahme beenden
+        </button>
+      )}
     </div>
   );
 }
