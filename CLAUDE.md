@@ -80,6 +80,21 @@ cargo run --features pretty_logs
 Requires the env vars in `.env.example`. umami creates its DynamoDB tables on startup via each
 repository's `with_client`. Tables are prefixed with `DYNAMO_TABLE_PREFIX`.
 
+### The management UI
+
+```bash
+cd clients/ui
+npm run dev                                        # API on :8093
+VITE_UMAMI_PROXY=http://localhost:8080 npm run dev # API elsewhere
+```
+
+Then open `http://localhost:5173/app/` — the trailing path matters, Vite's `base` is `/app/`.
+
+Vite proxies the API paths so the SPA stays **same-origin**, which is what makes the HttpOnly
+refresh cookie work at all. `VITE_UMAMI_PROXY` moves the proxy target; `VITE_UMAMI_URL` is a
+different thing entirely — it makes the client call absolute URLs, which means cross-origin and
+CORS with credentials. Reach for the first one.
+
 ## Key conventions (non-negotiable — from wasabi/dbx-core)
 
 - **Curly braces on every `if`**, even single-line bodies (global user preference).

@@ -10,8 +10,11 @@ import { initTheme } from "./theme";
 // Apply the stored theme (light/dark/auto) before the app renders, and keep "auto" in sync with OS.
 initTheme();
 
-// Same-origin by default (dev uses the vite proxy; prod hosts the UI on umami's origin). Override
-// with VITE_UMAMI_URL when the API lives elsewhere (then CORS with credentials must be configured).
+// Same-origin by default: dev goes through the vite proxy, prod hosts the UI on umami's origin.
+//
+// `VITE_UMAMI_URL` is for the case where the API genuinely lives elsewhere, and it costs CORS with
+// credentials. To aim the dev proxy at another port, set `VITE_UMAMI_PROXY` instead and stay
+// same-origin.
 const baseUrl = import.meta.env.VITE_UMAMI_URL ?? "";
 
 // Router basename = the Vite `base` without its trailing slash, so client routes live under the
