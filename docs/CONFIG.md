@@ -100,7 +100,7 @@ Relevant environment variables:
 //   The top bar has four tokens of its own, for a logo that needs its own background:
 //     --header-bg      the bar
 //     --header-fg      nav text and icons; inactive items are this at 70% opacity
-//     --header-accent  the active nav item
+//     --header-accent  the active nav item; follows --brand unless set
 //     --header-border  the rule below the bar
 //   Set them in :root and they apply in BOTH light and dark mode — usually what you
 //   want when the bar carries a logo. Set them under .dark as well to differ.

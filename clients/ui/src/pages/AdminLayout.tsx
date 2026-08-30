@@ -446,7 +446,7 @@ function TenantSwitcher() {
                     onClick={() => void pick(tenant.tenantId, tenant.name)}
                     className={`w-full text-left rounded-lg px-3 py-1.5 text-sm hover:bg-slate-50 dark:hover:bg-slate-700 ${
                       tenant.tenantId === activeTenantId
-                        ? "text-brand"
+                        ? "text-primary"
                         : "text-slate-700 dark:text-slate-200"
                     }`}
                   >
