@@ -12,6 +12,7 @@ use crate::config::Config;
 use crate::config::repository::ConfigRepository;
 use crate::constants::{
     MANAGE_TENANTS_PERMISSION, MAX_LIST_RESULTS, MAX_TEXT_BODY_SIZE, ROLE_OWNER,
+    SWITCH_TENANT_PERMISSION,
 };
 use crate::tenants::repository::TenantRepository;
 use crate::tenants::{Tenant, slugify};
@@ -37,6 +38,18 @@ use wasabi::{client_bail, status_bail};
 /// narrower `view:audit`. What a member legitimately needs about their own tenant arrives with
 /// `GET /auth/me`, which carries the tenant alongside the user.
 const REQUIRE_MANAGE_TENANTS: &[&str] = &[MANAGE_TENANTS_PERMISSION];
+
+/// Listing is also part of *switching*, which is a different entitlement.
+///
+/// `manage:tenants` is naturally gated on `is:system-tenant`, and that marker follows the tenant a
+/// token is minted **for** — so an admin who switches into a customer tenant loses it, and with it
+/// the list they would pick the next tenant from. They may still switch (that rule keys off
+/// `is:system-tenant-member`, the home tenant), leaving them able to move but unable to see where:
+/// switching a second time meant going home first.
+///
+/// Read-only, and no real widening: whoever holds `switch:tenant` can already reach any tenant by
+/// id. Every mutating route below keeps requiring `manage:tenants`.
+const REQUIRE_LIST_TENANTS: &[&str] = &[MANAGE_TENANTS_PERMISSION, SWITCH_TENANT_PERMISSION];
 
 /// The first (owner) user created alongside a new tenant.
 #[derive(Deserialize, Debug)]
@@ -135,7 +148,7 @@ pub fn list_tenants_route(
         .and(with_cloneable(tenants))
         .and(with_user_with_any_permission(
             authenticator,
-            REQUIRE_MANAGE_TENANTS,
+            REQUIRE_LIST_TENANTS,
         ))
         .and_then(handle_list_tenants_route)
         .boxed()
