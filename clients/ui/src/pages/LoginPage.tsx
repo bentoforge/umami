@@ -153,7 +153,7 @@ export function LoginPage() {
       <div className="w-full max-w-sm rounded-2xl bg-login-card text-login-text shadow-xl p-8">
         {/* Theme-aware branding logo (config `branding.logoLight`/`logoDark`, else built-in). */}
         <div className="flex justify-center mb-6">
-          <Logo className="h-16 w-auto max-w-full" alt={t("app.title")} />
+          <Logo className="h-16 w-auto max-w-full" />
         </div>
         <h1 className="text-2xl font-semibold mb-6">{t("login.heading")}</h1>
         <form onSubmit={onSubmit} className="space-y-4">

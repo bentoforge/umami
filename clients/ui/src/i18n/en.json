@@ -1,7 +1,4 @@
 {
-  "app": {
-    "title": "umami"
-  },
   "common": {
     "loading": "Loading data…",
     "search": "Search…",

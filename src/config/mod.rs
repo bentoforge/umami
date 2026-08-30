@@ -302,8 +302,9 @@ pub struct BrandingConfig {
     /// Favicon — a `data:` URI or an `http(s)` URL. Empty → the built-in default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub favicon: Option<String>,
-    /// Browser tab title (the document `<title>`), served at `/app/branding.json` and applied by the
-    /// SPA at runtime. Empty → `"umami"`.
+    /// What this deployment calls itself: the browser tab title, and the alt text of the logo —
+    /// what a screen reader announces and what stands in when the image fails to load. Served at
+    /// `/app/branding.json` and applied by the SPA at runtime. Empty → `"umami"`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
 }

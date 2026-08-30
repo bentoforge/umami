@@ -8,6 +8,7 @@ import type {
 import { EllipsisVerticalIcon } from "@heroicons/react/24/outline";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useBrandingTitle } from "./branding";
 import i18n from "./i18n/i18n";
 import { resolvedDark, subscribeTheme } from "./theme";
 import { ghostButton, iconButton, input } from "./ui";
@@ -110,9 +111,23 @@ export function useResolvedDark(): boolean {
 
 /** Branding logo that follows the *effective* theme (config `branding.logoLight`/`logoDark`, else
  * built-in) — the resolved theme, not the OS media query, so a manual override wins. */
-export function Logo({ className, alt = "Start" }: { className?: string; alt?: string }) {
+/**
+ * The deployment's logo.
+ *
+ * The alt text defaults to the configured `branding.title`, because that is what
+ * the image depicts. Hanging your own logo here and still being announced as
+ * "umami" would brand the page only for people who can see it.
+ */
+export function Logo({ className, alt }: { className?: string; alt?: string }) {
+  const brandName = useBrandingTitle();
   const dark = useResolvedDark();
-  return <img src={dark ? "/app/logo/dark" : "/app/logo/light"} alt={alt} className={className} />;
+  return (
+    <img
+      src={dark ? "/app/logo/dark" : "/app/logo/light"}
+      alt={alt ?? brandName ?? "umami"}
+      className={className}
+    />
+  );
 }
 
 /** Renders a custom-field value for a read-only table cell. */

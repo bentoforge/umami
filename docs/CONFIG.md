@@ -94,7 +94,8 @@ Relevant environment variables:
 { "customCss": ":root{--brand: 225 29 72; --brand-dark: 190 18 60}",  // space-separated RGB
   "logoLight": "data:image/svg+xml;base64,…",  // or "https://cdn.example.com/logo-light.svg"
   "logoDark":  "data:image/svg+xml;base64,…",  // shown in dark mode; each falls back to the other
-  "favicon":   "data:image/png;base64,…" }
+  "favicon":   "data:image/png;base64,…",
+  "title":     "noonu" }                       // browser tab AND the logo's alt text
 //   served at /app/logo/light, /app/logo/dark, /app/favicon; the UI picks the logo by theme.
 //
 //   The top bar has six tokens of its own, for a logo that needs its own background:

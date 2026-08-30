@@ -5,6 +5,7 @@ import "./index.css";
 import "./i18n/i18n";
 import { App } from "./App";
 import { UmamiProvider } from "./auth/UmamiProvider";
+import { brandingTitle } from "./branding";
 import { initTheme } from "./theme";
 
 // Apply the stored theme (light/dark/auto) before the app renders, and keep "auto" in sync with OS.
@@ -38,17 +39,13 @@ for (const [rel, file, type] of [
   document.head.appendChild(link);
 }
 
-// Document title from umami's public branding (`branding.title`), applied at runtime.
-fetch(`${import.meta.env.BASE_URL}branding.json`)
-  .then((response) => (response.ok ? response.json() : null))
-  .then((branding: { title?: string } | null) => {
-    if (branding?.title) {
-      document.title = branding.title;
-    }
-  })
-  .catch(() => {
-    // Keep the static <title> on any failure.
-  });
+// Document title from umami's public branding (`branding.title`). Shares the one
+// fetch with everything else that needs the deployment's name.
+void brandingTitle().then((title) => {
+  if (title) {
+    document.title = title;
+  }
+});
 
 const root = document.getElementById("root");
 if (!root) throw new Error("missing #root");
