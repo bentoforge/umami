@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router-dom";
 import { useUmami } from "../auth/UmamiProvider";
 import { Logo } from "../components";
+import { errorBox } from "../ui";
 
 /**
  * Where to go after a successful login, from `?next=`.
@@ -207,7 +208,7 @@ export function LoginPage() {
               <p className="mt-1 text-xs text-login-fg opacity-70">{t("login.mfaHint")}</p>
             </Field>
           )}
-          {error && <p className="text-sm text-red-600">{error}</p>}
+          {error && <p className={errorBox}>{error}</p>}
           <button type="submit" disabled={busy} className={primaryButtonClass}>
             {t("login.submit")}
           </button>

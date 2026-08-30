@@ -25,6 +25,18 @@ export const iconButton =
 export const headerIconButton =
   "inline-flex items-center justify-center rounded-lg p-2 text-header-muted hover:text-header-fg hover:bg-header-hover";
 
+/**
+ * An error, in a box that brings its own background.
+ *
+ * Deliberately not theme-aware and deliberately not brandable. The surface behind
+ * it is the operator's to colour — the sign-in card can be any shade in either
+ * mode — so bare red text has no reliable contrast to rely on. Carrying its own
+ * light ground makes the box readable on anything, and an error is not a place to
+ * express identity anyway.
+ */
+export const errorBox =
+  "rounded-lg border border-red-700 bg-red-100 text-red-800 text-sm px-3 py-2";
+
 export const card =
   "rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-6";
 
