@@ -116,6 +116,17 @@ Relevant environment variables:
 //   you make it. Width and other non-colour properties are still plain CSS —
 //   `header { border-bottom-width: 4px }` works, because nothing else sets it.
 //
+//   The sign-in screen has seven of its own — it is the first thing anyone sees,
+//   and for a customer's users often the only umami page they ever look at:
+//     --login-bg            behind the card
+//     --login-surface       the card
+//     --login-fg            heading and labels
+//     --login-primary       the submit button, with --login-primary-fg its label
+//     --login-secondary     the outline button's border, --login-secondary-fg its label
+//   Button hovers are element-level opacity, not tokens: unlike a colour wash that
+//   lands the same way whatever is behind. The input boxes stay neutral on purpose —
+//   a form field reads as a light box even on a coloured card.
+//
 //   Example, a dark blue bar with a cyan rule and cyan highlights:
 { "customCss": ":root{--header-bg: 30 58 113; --header-fg: 255 255 255; --header-fg-muted: 203 213 225; --header-hover: 42 74 139; --header-accent: 45 203 166; --header-border: 45 203 166} header{border-bottom-width:4px}" }
 

@@ -34,6 +34,17 @@ module.exports = {
           accent: "rgb(var(--header-accent) / <alpha-value>)",
           border: "rgb(var(--header-border) / <alpha-value>)",
         },
+        // Sign-in screen. Button hovers are element-level opacity rather than more
+        // tokens: unlike a colour wash, that behaves the same whatever is behind.
+        login: {
+          bg: "rgb(var(--login-bg) / <alpha-value>)",
+          surface: "rgb(var(--login-surface) / <alpha-value>)",
+          fg: "rgb(var(--login-fg) / <alpha-value>)",
+          primary: "rgb(var(--login-primary) / <alpha-value>)",
+          "primary-fg": "rgb(var(--login-primary-fg) / <alpha-value>)",
+          secondary: "rgb(var(--login-secondary) / <alpha-value>)",
+          "secondary-fg": "rgb(var(--login-secondary-fg) / <alpha-value>)",
+        },
       },
     },
   },

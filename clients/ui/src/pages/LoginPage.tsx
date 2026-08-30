@@ -148,15 +148,13 @@ export function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-100 dark:bg-slate-900 px-4">
-      <div className="w-full max-w-sm rounded-2xl bg-white dark:bg-slate-800 shadow-xl p-8">
+    <div className="min-h-screen flex items-center justify-center bg-login-bg px-4">
+      <div className="w-full max-w-sm rounded-2xl bg-login-surface text-login-fg shadow-xl p-8">
         {/* Theme-aware branding logo (config `branding.logoLight`/`logoDark`, else built-in). */}
         <div className="flex justify-center mb-6">
           <Logo className="h-16 w-auto max-w-full" alt={t("app.title")} />
         </div>
-        <h1 className="text-2xl font-semibold text-slate-900 dark:text-white mb-6">
-          {t("login.heading")}
-        </h1>
+        <h1 className="text-2xl font-semibold mb-6">{t("login.heading")}</h1>
         <form onSubmit={onSubmit} className="space-y-4">
           {/*
             Two-step form: step one asks for username + password, step two for the
@@ -206,7 +204,7 @@ export function LoginPage() {
                 onChange={(e) => setTotpCode(e.target.value)}
                 className={inputClass}
               />
-              <p className="mt-1 text-xs text-slate-500">{t("login.mfaHint")}</p>
+              <p className="mt-1 text-xs text-login-fg opacity-70">{t("login.mfaHint")}</p>
             </Field>
           )}
           {error && <p className="text-sm text-red-600">{error}</p>}
@@ -232,9 +230,7 @@ export function LoginPage() {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-        {label}
-      </span>
+      <span className="block text-sm font-medium text-login-fg opacity-80 mb-1">{label}</span>
       {children}
     </label>
   );
@@ -246,7 +242,9 @@ const inputClass =
 /** Same box, visibly inert: the username in the MFA step is context, not an input. */
 const readOnlyInputClass =
   "w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-slate-500 dark:text-slate-400 focus:outline-none";
+// Hover is element-level opacity rather than a second colour token: unlike a wash,
+// it lands the same way whatever the button sits on.
 const primaryButtonClass =
-  "w-full rounded-lg bg-primary hover:bg-primary-dark text-white font-medium py-2 transition disabled:opacity-50";
+  "w-full rounded-lg bg-login-primary text-login-primary-fg hover:opacity-90 font-medium py-2 transition disabled:opacity-50";
 const secondaryButtonClass =
-  "mt-3 w-full rounded-lg border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 font-medium py-2 transition hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50";
+  "mt-3 w-full rounded-lg border border-login-secondary text-login-secondary-fg hover:opacity-80 font-medium py-2 transition disabled:opacity-50";
