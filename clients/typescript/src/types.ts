@@ -169,7 +169,14 @@ export interface MeUser extends NameParts {
 
 export interface MeResponse {
   user: MeUser;
+  /** The user's **home** tenant — where their roles and entitlements live. */
   tenant: Tenant | null;
+  /**
+   * The tenant this session is currently acting for, present only while it
+   * differs from home. Without it a client can tell *that* it is impersonating
+   * but not *whom*, and falls back to announcing the user's own tenant.
+   */
+  activeTenant?: Tenant | null;
 }
 
 /** One of the caller's active login sessions (device). Never exposes the refresh secret. */

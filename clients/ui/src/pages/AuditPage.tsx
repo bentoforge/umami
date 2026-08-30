@@ -21,14 +21,18 @@ const tdTop = td.replace("align-middle", "align-top");
 
 /** Tenant audit trail (view:audit), newest first, paged with a "load more" button. */
 export function AuditPage() {
-  const { client, me } = useUmami();
+  const { client, me, activeTenantId } = useUmami();
   const { t } = useTranslation();
   const [entries, setEntries] = useState<AuditEntry[] | null>(null);
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const tenantId = me?.user.tenantId;
+  // The tenant this session acts for, not the user's own. The server checks the
+  // request against the token, so asking for the home tenant while impersonating
+  // is refused — "You may only read your own tenant's audit log" — and rightly:
+  // while acting for a customer, their log is the one you mean.
+  const tenantId = activeTenantId ?? me?.user.tenantId;
 
   const load = useCallback(async () => {
     if (!tenantId) return;

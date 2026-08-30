@@ -82,9 +82,20 @@ impl MeUser {
 
 /// `GET /auth/me` response: the fresh user record plus their tenant.
 #[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
 struct MeResponse {
     user: MeUser,
+    /// The user's **home** tenant — where their roles and entitlements live.
     tenant: Option<Tenant>,
+    /// The tenant this session is currently acting for, present only while that
+    /// differs from home.
+    ///
+    /// Without it a client can tell *that* it is impersonating (the token's
+    /// `tenant` claim disagrees with `user.tenantId`) but not *whom*: it would
+    /// fall back to the home tenant's name and cheerfully announce "acting as
+    /// <yourself>" while showing someone else's data.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    active_tenant: Option<Tenant>,
 }
 
 /// `GET /auth/me` — profile (user + tenant) resolved fresh from the store.
@@ -232,9 +243,19 @@ async fn me(
     let default_locale = config.current().await?.default_locale.clone();
     let tenant = tenants.get_tenant(&user.tenant_id).await?;
 
+    // Resolved from the token, which is the only thing that knows what this
+    // session is acting as — the user record always names home.
+    let active = caller.tenant_id()?;
+    let active_tenant = if active == user.tenant_id {
+        None
+    } else {
+        tenants.get_tenant(active).await?
+    };
+
     Ok(MeResponse {
         user: MeUser::build(user, &default_locale),
         tenant,
+        active_tenant,
     })
 }
 
@@ -308,9 +329,17 @@ async fn patch_me(
 
     let updated = users.put_user(user).await?;
     let tenant = tenants.get_tenant(&updated.tenant_id).await?;
+    // Same shape as GET, so a client can use either answer interchangeably.
+    let active = caller.tenant_id()?;
+    let active_tenant = if active == updated.tenant_id {
+        None
+    } else {
+        tenants.get_tenant(active).await?
+    };
     Ok(MeResponse {
         user: MeUser::build(updated, &config.default_locale),
         tenant,
+        active_tenant,
     })
 }
 

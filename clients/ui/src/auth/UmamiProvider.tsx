@@ -40,9 +40,12 @@ export function UmamiProvider({ baseUrl, children }: { baseUrl: string; children
     try {
       const profile = await client.getMe();
       setMe(profile);
-      // A fresh login/refresh returns to the home tenant; sync the active-tenant view.
+      // Both come from the session, not from an assumption about it: a switch is
+      // durable, so a reload can land straight inside another tenant. The id is
+      // the token's, and the name has to follow it — reading it off `tenant`
+      // would name the user's own tenant while showing someone else's data.
       setActiveTenantId(client.getClaims()?.tenant ?? profile.user.tenantId);
-      setActiveTenantName(profile.tenant?.name ?? null);
+      setActiveTenantName(profile.activeTenant?.name ?? profile.tenant?.name ?? null);
     } catch {
       setMe(null);
       setActiveTenantId(null);
