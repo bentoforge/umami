@@ -26,7 +26,7 @@ const popoverSurface = card.replace(" p-6", "");
 
 const navLinkClass = ({ isActive }: { isActive: boolean }) =>
   `px-3 py-1.5 rounded-lg text-sm font-medium ${
-    isActive ? "text-header-accent" : "text-header-fg/70 hover:text-header-fg hover:bg-header-fg/10"
+    isActive ? "text-header-accent" : "text-header-muted hover:text-header-fg hover:bg-header-fg/10"
   }`;
 
 /** Authenticated shell: logo + nav, theme/tenant switchers, user menu (desktop) or hamburger
@@ -238,12 +238,12 @@ function UserMenu({
         className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-header-fg/10"
         onClick={() => setOpen((v) => !v)}
       >
-        <UserCircleIcon className="h-7 w-7 text-header-fg/70 shrink-0" />
+        <UserCircleIcon className="h-7 w-7 text-header-muted shrink-0" />
         <span className="hidden lg:flex flex-col text-left leading-tight">
           <span className="text-sm font-medium text-header-fg">{fullName}</span>
-          <span className="text-xs text-header-fg/70">{tenantName}</span>
+          <span className="text-xs text-header-muted">{tenantName}</span>
         </span>
-        <ChevronDownIcon className="h-4 w-4 text-header-fg/60" />
+        <ChevronDownIcon className="h-4 w-4 text-header-muted" />
       </button>
       {open && (
         <div className={`${popoverSurface} absolute right-0 mt-2 w-56 z-20 p-2 shadow-lg`}>

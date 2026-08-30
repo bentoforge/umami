@@ -19,12 +19,16 @@ module.exports = {
           DEFAULT: "rgb(var(--brand) / <alpha-value>)",
           dark: "rgb(var(--brand-dark) / <alpha-value>)",
         },
-        // Header chrome, so the top bar can be rebranded on its own. Inactive nav
-        // items are `header-fg` at reduced opacity rather than a fifth token —
-        // which is exactly what the space-separated RGB form is for.
+        // Header chrome, so the top bar can be rebranded on its own.
+        //
+        // `muted` is its own colour rather than `fg` at reduced opacity: 70% of a
+        // dark grey on white reads as restrained, 70% of white on a dark bar reads
+        // as washed out. Opacity does not carry across backgrounds, so whoever
+        // recolours the bar needs to set this too.
         header: {
           bg: "rgb(var(--header-bg) / <alpha-value>)",
           fg: "rgb(var(--header-fg) / <alpha-value>)",
+          muted: "rgb(var(--header-fg-muted) / <alpha-value>)",
           accent: "rgb(var(--header-accent) / <alpha-value>)",
           border: "rgb(var(--header-border) / <alpha-value>)",
         },
