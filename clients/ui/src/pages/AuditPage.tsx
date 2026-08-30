@@ -88,7 +88,7 @@ export function AuditPage() {
                 <th className={`${th} align-bottom`}>
                   <div>{t("audit.when")}</div>
                   <div className="text-[10px] font-normal text-slate-400">
-                    {t("audit.ip")} · {t("audit.userId")}
+                    {t("audit.userId")} · {t("audit.ip")}
                   </div>
                 </th>
                 <th className={`${th} align-bottom`}>{t("audit.event")}</th>
@@ -96,7 +96,9 @@ export function AuditPage() {
             </thead>
             <tbody>
               {entries.map((e) => {
-                const meta = [e.ip, e.user ? e.user.slice(0, 10) : null]
+                // User id first: the IP is best-effort and absent on plenty of events, so
+                // leading with it makes the id start at a different column from row to row.
+                const meta = [e.user ? e.user.slice(0, 10) : null, e.ip]
                   .filter(Boolean)
                   .join(" · ");
                 return (
