@@ -13,7 +13,8 @@
     "profile": "Profil",
     "audit": "Audit-Log",
     "sessions": "Sitzungen",
-    "config": "Systemkonfiguration"
+    "config": "Systemkonfiguration",
+    "rateLimits": "Rate-Limits"
   },
   "users": {
     "title": "Benutzer",
@@ -207,5 +208,45 @@
   "locale": {
     "de": "Deutsch",
     "en": "Englisch"
+  },
+  "rateLimits": {
+    "title": "Rate-Limit",
+    "pageTitle": "Rate-Limits",
+    "reload": "Neu laden",
+    "show": "Rate-Limit anzeigen",
+    "hide": "Rate-Limit ausblenden",
+    "none": "Keine Rate-Limit-Daten vorhanden.",
+    "disabled": "Deaktiviert",
+    "disabledHint": "Für dieses Subjekt wird nichts gezählt.",
+    "override": "Eigenes Limit",
+    "window": "Fenster: {{window}}",
+    "resets": "Reset um {{at}}",
+    "blockFor": "Sperre: {{duration}}",
+    "blockedUntil": "Gesperrt bis {{at}}",
+    "meHint": "Fehlgeschlagene Anmeldungen deines Kontos. Nach einer erfolgreichen Anmeldung wird der Zähler zurückgesetzt.",
+    "userHint": "Fehlgeschlagene Anmeldungen dieses Kontos. Nach einer erfolgreichen Anmeldung wird der Zähler zurückgesetzt.",
+    "overviewHint": "Zeigt Subjekte, die tatsächlich gesperrt wurden — Zähler, die nie ausgelöst haben, werden nicht protokolliert.",
+    "sinceHint": "Zeitraum ab {{at}}.",
+    "lastN": "Letzte {{duration}}",
+    "allPolicies": "Alle Regeln",
+    "filterPolicy": "Regel",
+    "filterWindow": "Zeitraum",
+    "noBlocks": "Keine Sperren im gewählten Zeitraum.",
+    "summary": "{{total}} Sperren, davon {{active}} aktiv.",
+    "status": "Status",
+    "active": "Aktiv",
+    "expired": "Abgelaufen",
+    "remaining": "noch {{duration}}",
+    "when": "Gesperrt am",
+    "policyColumn": "Regel",
+    "subject": "Subjekt",
+    "until": "Gesperrt bis",
+    "policy": {
+      "login": "Fehlanmeldungen (Konto)",
+      "tokenExchange": "Token-Tausch (Schlüssel)",
+      "perIpLogin": "Anmeldungen (IP)",
+      "perIpToken": "Token-Tausch (IP)",
+      "unknown": "Unbekannte Regel"
+    }
   }
 }

@@ -17,7 +17,7 @@ use crate::constants::{
     MANAGE_SESSIONS_PERMISSION, MANAGE_TENANTS_PERMISSION, MANAGE_USERS_PERMISSION,
     MESSAGING_CONFIGURED_MARKER, MESSAGING_LINK_PERMISSION, MESSAGING_RESOLVE_PERMISSION,
     ROLE_MEMBER, ROLE_OWNER, SWITCH_TENANT_PERMISSION, SYSTEM_TENANT_MARKER,
-    SYSTEM_TENANT_MEMBER_MARKER, VIEW_AUDIT_PERMISSION,
+    SYSTEM_TENANT_MEMBER_MARKER, VIEW_AUDIT_PERMISSION, VIEW_RATELIMITS_PERMISSION,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -779,9 +779,16 @@ impl Default for Config {
                     // Cross-tenant admin comes from system-tenant *membership*, not from
                     // currently acting inside it: a support user who switched into a customer
                     // tenant has to keep `switch:tenant`, or they cannot switch back.
+                    // The rate-limit overview rides along here rather than with the tenant roles:
+                    // client IPs belong to no tenant, so only a deployment-wide operator may read
+                    // them.
                     rule(
                         SYSTEM_TENANT_MEMBER_MARKER,
-                        &[MANAGE_TENANTS_PERMISSION, SWITCH_TENANT_PERMISSION],
+                        &[
+                            MANAGE_TENANTS_PERMISSION,
+                            SWITCH_TENANT_PERMISSION,
+                            VIEW_RATELIMITS_PERMISSION,
+                        ],
                     ),
                     // Self-service messaging is available to everyone once the deployment has a bot
                     // and/or number configured.

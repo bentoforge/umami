@@ -27,6 +27,7 @@ import {
   RoleToggleList,
   roleCatalog,
 } from "../components";
+import { RateLimitCard, RateLimitDisclosure } from "../ratelimit";
 import { card, ghostButton, input, primaryButton } from "../ui";
 
 /** Page size for the audit "load more" list. */
@@ -190,6 +191,10 @@ export function EditUserPage() {
           />
           <RolesCard user={user} onChanged={reload} onError={setError} />
           <AuditCard userId={user.userId} />
+          <RateLimitCard
+            target={{ kind: "user", userId: user.userId }}
+            hint={t("rateLimits.userHint")}
+          />
           <SessionsCard user={user} onError={setError} />
           <PatsCard userId={user.userId} />
           <MessagingLinksCard userId={user.userId} />
@@ -612,7 +617,13 @@ function PatsCard({ userId }: { userId: string }) {
   return (
     <section className={card}>
       <h2 className="font-medium text-slate-800 dark:text-slate-200 mb-3">{t("pats.title")}</h2>
-      <PatList pats={pats} roleLabel={roleLabel} />
+      <PatList
+        pats={pats}
+        roleLabel={roleLabel}
+        renderDetails={(pat) => (
+          <RateLimitDisclosure target={{ kind: "userPat", userId, keyId: pat.keyId }} />
+        )}
+      />
     </section>
   );
 }

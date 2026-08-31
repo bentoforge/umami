@@ -20,6 +20,8 @@ import type {
   MfaStatus,
   NameInput,
   PatchUserRequest,
+  RateLimitBlockPage,
+  RateLimitState,
   ResetPasswordResponse,
   ResolvedMessagingUser,
   SessionView,
@@ -600,6 +602,59 @@ export class UmamiClient {
   async listUserPats(userId: string): Promise<ApiKeyView[]> {
     const data = await this.request<{ keys: ApiKeyView[] }>(`/users/${enc(userId)}/pats`);
     return data.keys;
+  }
+
+  // ── Rate limits (read-only) ───────────────────────────────────────────────────
+
+  /** The current user's own login rate-limit state (failed attempts, and any block). */
+  async myRateLimit(): Promise<RateLimitState[]> {
+    const data = await this.request<{ states: RateLimitState[] }>("/auth/me/rate-limit");
+    return data.states;
+  }
+  /** A tenant user's login rate-limit state (requires `manage:users`; own tenant). */
+  async userRateLimit(userId: string): Promise<RateLimitState[]> {
+    const data = await this.request<{ states: RateLimitState[] }>(
+      `/users/${enc(userId)}/rate-limit`,
+    );
+    return data.states;
+  }
+  /** A service key's token-exchange rate-limit state (requires `manage:service-keys`). */
+  async apiKeyRateLimit(tenantId: string, keyId: string): Promise<RateLimitState[]> {
+    const data = await this.request<{ states: RateLimitState[] }>(
+      `/tenants/${enc(tenantId)}/api-keys/${enc(keyId)}/rate-limit`,
+    );
+    return data.states;
+  }
+  /** One of the current user's own PATs' token-exchange rate-limit state (self-service). */
+  async myPatRateLimit(keyId: string): Promise<RateLimitState[]> {
+    const data = await this.request<{ states: RateLimitState[] }>(
+      `/auth/me/api-keys/${enc(keyId)}/rate-limit`,
+    );
+    return data.states;
+  }
+  /** A tenant user's PAT token-exchange rate-limit state (requires `manage:users`; own tenant). */
+  async userPatRateLimit(userId: string, keyId: string): Promise<RateLimitState[]> {
+    const data = await this.request<{ states: RateLimitState[] }>(
+      `/users/${enc(userId)}/pats/${enc(keyId)}/rate-limit`,
+    );
+    return data.states;
+  }
+  /** Recently tripped rate-limit blocks across the deployment, newest first (requires
+   * `view:ratelimits`). Reads one bounded index page per policy — never a table scan. */
+  rateLimitBlocks(options?: {
+    /** How far back to look, in seconds (default 3600, clamped to 60 … 7 days). */
+    sinceSecs?: number;
+    /** How many blocks to return (default 100, capped at 250). */
+    limit?: number;
+    /** Narrow to a single policy; omitted ⇒ all of them. */
+    policy?: string;
+  }): Promise<RateLimitBlockPage> {
+    const qs = new URLSearchParams();
+    if (options?.sinceSecs !== undefined) qs.set("sinceSecs", String(options.sinceSecs));
+    if (options?.limit !== undefined) qs.set("limit", String(options.limit));
+    if (options?.policy) qs.set("policy", options.policy);
+    const query = qs.toString();
+    return this.request<RateLimitBlockPage>(`/rate-limits/blocks${query ? `?${query}` : ""}`);
   }
 }
 

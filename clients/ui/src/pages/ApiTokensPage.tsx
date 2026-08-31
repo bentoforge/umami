@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useUmami } from "../auth/UmamiProvider";
 import { Banner, DropdownMenu, errMsg, Field, formatDateTime, Loader, Toggle } from "../components";
+import { RateLimitDisclosure } from "../ratelimit";
 import { card, ghostButton, input, primaryButton, td, th } from "../ui";
 
 /** Top-aligned cell: `td` bakes in `align-middle`, which a trailing `align-top` won't override. */
@@ -107,6 +108,18 @@ export function ApiTokensPage() {
                   <td className={`${tdTop}`}>
                     <div className="font-medium text-slate-900 dark:text-white">{key.name}</div>
                     <div className="text-xs text-slate-400 font-mono">{key.keyId}</div>
+                    {/* The override is on the key itself, so flagging it costs no extra request —
+                        the meter behind the disclosure then shows the values it resolves to. */}
+                    {key.rateLimit && (
+                      <div className="mt-1 inline-block rounded bg-slate-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-slate-500 dark:bg-slate-700 dark:text-slate-300">
+                        {t("rateLimits.override")}
+                      </div>
+                    )}
+                    <div className="mt-2">
+                      <RateLimitDisclosure
+                        target={{ kind: "apiKey", tenantId, keyId: key.keyId }}
+                      />
+                    </div>
                   </td>
                   <td className={`${tdTop}`}>
                     <div>{key.scopes.join(", ") || "—"}</div>

@@ -23,6 +23,13 @@ pub const MAX_LIST_RESULTS: usize = 250;
 /// so granting this does not let a tenant rename itself or touch its custom fields.
 pub const VIEW_AUDIT_PERMISSION: &str = "view:audit";
 
+/// Read the deployment-wide rate-limit overview (which IPs, accounts and keys tripped a policy).
+///
+/// Separate from [`VIEW_AUDIT_PERMISSION`] because the two have different blast radii: the audit
+/// log is tenant-scoped, whereas client IPs belong to no tenant at all. Granting a tenant admin
+/// `view:audit` shows them their own trail; granting them this would show them everyone's traffic.
+pub const VIEW_RATELIMITS_PERMISSION: &str = "view:ratelimits";
+
 /// Manage a tenant's users (create/list/patch/delete, roles, status, password reset).
 pub const MANAGE_USERS_PERMISSION: &str = "manage:users";
 
@@ -165,3 +172,10 @@ pub const DEFAULT_PER_IP_BLOCK_SECS: u32 = 300;
 /// memory). Bounded so many distinct IPs cannot memory-DoS a node. Override with
 /// `UMAMI_RATELIMIT_CACHE_CAP`.
 pub const DEFAULT_RATELIMIT_CACHE_CAP: usize = 50_000;
+
+/// Default window the rate-limit overview looks back over (1 hour).
+pub const DEFAULT_RATELIMIT_LOOKBACK_SECS: i64 = 3_600;
+/// Default number of blocks the rate-limit overview returns.
+pub const DEFAULT_RATELIMIT_BLOCK_LIMIT: i32 = 100;
+/// Hard cap on that number — the overview reads one bounded index page, never a scan.
+pub const MAX_RATELIMIT_BLOCK_LIMIT: i32 = 250;

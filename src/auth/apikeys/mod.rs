@@ -18,7 +18,9 @@ pub mod repository;
 use crate::audit::repository::{AuditRepository, record_best_effort};
 use crate::audit::{AuditSeverity, NewAuditEntry};
 use crate::auth::broker::{MintParams, mint_for_api};
-use crate::auth::ratelimit::{Decision, Policy, RateLimiter, too_many_requests};
+use crate::auth::ratelimit::{
+    Decision, POLICY_PER_IP_TOKEN, POLICY_TOKEN_EXCHANGE, Policy, RateLimiter, too_many_requests,
+};
 use crate::auth::session::{generate_refresh_secret, hash_refresh_secret, verify_refresh_secret};
 use crate::auth::tokens::TokenIssuer;
 use crate::bail_i18n;
@@ -586,8 +588,9 @@ async fn exchange(
             limits.per_ip.window_secs,
             limits.per_ip.block_secs,
         );
-        if let Decision::Block { retry_after } =
-            rate_limiter.check("perIp:token", &per_ip, ip, now).await
+        if let Decision::Block { retry_after } = rate_limiter
+            .check(POLICY_PER_IP_TOKEN, &per_ip, ip, now)
+            .await
         {
             return Ok(ExchangeOutcome::RateLimited { retry_after });
         }
@@ -661,7 +664,7 @@ async fn exchange(
     // and honors the key's optional override (raise, or disable for a controlled public-token flow).
     let key_policy = effective_token_policy(&limits.token_exchange, key.rate_limit.as_ref());
     if let Decision::Block { retry_after } = rate_limiter
-        .check("tokenExchange", &key_policy, &key.key_id, now)
+        .check(POLICY_TOKEN_EXCHANGE, &key_policy, &key.key_id, now)
         .await
     {
         return Ok(ExchangeOutcome::RateLimited { retry_after });
@@ -791,7 +794,10 @@ async fn exchange(
 
 /// Builds the effective per-key `tokenExchange` policy: the key's optional override raises/replaces
 /// the global values (any unset field falls back to global), or disables the per-key cap entirely.
-fn effective_token_policy(global: &VolumeRateLimit, override_: Option<&KeyRateLimit>) -> Policy {
+pub(crate) fn effective_token_policy(
+    global: &VolumeRateLimit,
+    override_: Option<&KeyRateLimit>,
+) -> Policy {
     match override_ {
         Some(over) if over.disabled => Policy::new(0, global.window_secs, global.block_secs),
         Some(over) => Policy::new(
