@@ -357,9 +357,20 @@ export interface ApiKeyView {
   allowSecretLogin: boolean;
   status: ApiKeyStatus;
   allowedOrigins: string[];
+  /** Per-key override of the global `tokenExchange` policy; absent ⇒ the global one applies. */
+  rateLimit?: KeyRateLimit | null;
   expiresAt?: string | null;
   lastUsedAt?: string | null;
   created: string;
+}
+
+/** Per-key override of the global `tokenExchange` rate-limit policy. Unset fields fall back to the
+ * global values; `disabled` switches the per-key cap off entirely (the per-IP cap still applies). */
+export interface KeyRateLimit {
+  disabled?: boolean;
+  maxPerWindow?: number;
+  windowSecs?: number;
+  blockSecs?: number;
 }
 
 /** Create a tenant **service** key (M2M machine principal; subjects are its `scope:*`). */
@@ -370,6 +381,8 @@ export interface CreateApiKeyRequest {
   /** Allow the raw-secret (Mode 1) exchange; omitted/false ⇒ HMAC-only (Mode 2). */
   allowSecretLogin?: boolean;
   allowedOrigins?: string[];
+  /** Per-key override of the global `tokenExchange` policy. */
+  rateLimit?: KeyRateLimit;
   expiresAt?: string;
 }
 
@@ -462,6 +475,53 @@ export interface AuditEntry {
   /** Best-effort client IP, present on security-relevant events (logins, credential/account
    * changes). Absent on events with no request IP. */
   ip?: string | null;
+}
+
+/** A subject's live state under one rate-limit policy, read without counting the read itself. */
+export interface RateLimitState {
+  /** The policy this state belongs to: `login`, `tokenExchange`, `perIp:login`, `perIp:token`. */
+  policy: string;
+  /** Requests (volume policies) or failures (brute-force) counted in the current window. */
+  count: number;
+  /** The cap in force. `0` ⇒ the policy is switched off and nothing is counted. */
+  max: number;
+  windowSecs: number;
+  blockSecs: number;
+  /** RFC3339 — when the current window resets, if one is running. */
+  windowEndsAt?: string;
+  /** RFC3339 — when an active block lifts; absent when the subject is not blocked. */
+  blockedUntil?: string;
+  /** Seconds until that block lifts. */
+  retryAfter?: number;
+}
+
+/** The policies that apply to one subject. A list so the shape survives new policies. */
+export interface RateLimitStateResponse {
+  states: RateLimitState[];
+}
+
+/** One recently tripped rate-limit block, for the deployment-wide overview. */
+export interface RateLimitBlock {
+  policy: string;
+  /** An IP for the `perIp:*` policies, a user id for `login`, a key id for `tokenExchange`. */
+  subject: string;
+  /** RFC3339 — when the block was set. */
+  blockedAt: string;
+  /** RFC3339 — when it lifts (in the past for an expired-but-recent block). */
+  blockedUntil: string;
+  /** Whether it is still in force. */
+  active: boolean;
+  /** Seconds until it lifts; absent once it has. */
+  retryAfter?: number;
+}
+
+/** The rate-limit overview: recent blocks plus the window they were read over. */
+export interface RateLimitBlockPage {
+  blocks: RateLimitBlock[];
+  /** RFC3339 — start of the window the blocks were read over. */
+  since: string;
+  /** The policies that were queried. */
+  policies: string[];
 }
 
 /** Result of an admin password reset — `temporaryPassword` is set (once) only when generated. */

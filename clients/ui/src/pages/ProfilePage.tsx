@@ -25,6 +25,7 @@ import {
   PatList,
   RoleToggleList,
 } from "../components";
+import { RateLimitCard, RateLimitDisclosure } from "../ratelimit";
 import { card, dangerButton, ghostButton, input, primaryButton } from "../ui";
 
 /** Page size for the audit "load more" list. */
@@ -42,6 +43,7 @@ export function ProfilePage() {
       <h1 className="text-xl font-semibold text-slate-900 dark:text-white">{t("profile.title")}</h1>
       <BaseDataCard />
       <AuditCard />
+      <RateLimitCard target={{ kind: "me" }} hint={t("rateLimits.meHint")} />
       {client.hasPermission("manage:sessions") && <SessionsPanel />}
       {client.hasPermission("manage:passwords") && <SecurityCard />}
       {client.hasPermission("manage:personal-tokens") && <PatsPanel />}
@@ -956,7 +958,14 @@ function PatsPanel() {
       ) : pats.length === 0 ? (
         <p className="text-sm text-slate-500">{t("pats.empty")}</p>
       ) : (
-        <PatList pats={pats} roleLabel={roleLabel} onDelete={revoke} />
+        <PatList
+          pats={pats}
+          roleLabel={roleLabel}
+          onDelete={revoke}
+          renderDetails={(pat) => (
+            <RateLimitDisclosure target={{ kind: "myPat", keyId: pat.keyId }} />
+          )}
+        />
       )}
     </section>
   );

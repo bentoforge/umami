@@ -53,6 +53,7 @@ export function AdminLayout() {
   const menuItems: NavItem[] = [
     { to: "/profile", label: t("nav.profile"), show: true },
     { to: "/audit", label: t("nav.audit"), show: can("view:audit") },
+    { to: "/rate-limits", label: t("nav.rateLimits"), show: can("view:ratelimits") },
     { to: "/config", label: t("nav.config"), show: can("manage:config") },
   ].filter((item) => item.show);
 

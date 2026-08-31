@@ -13,7 +13,8 @@
     "profile": "Profile",
     "audit": "Audit log",
     "sessions": "Sessions",
-    "config": "System configuration"
+    "config": "System configuration",
+    "rateLimits": "Rate limits"
   },
   "users": {
     "title": "Users",
@@ -207,5 +208,45 @@
   "locale": {
     "de": "German",
     "en": "English"
+  },
+  "rateLimits": {
+    "title": "Rate limit",
+    "pageTitle": "Rate limits",
+    "reload": "Reload",
+    "show": "Show rate limit",
+    "hide": "Hide rate limit",
+    "none": "No rate-limit data available.",
+    "disabled": "Disabled",
+    "disabledHint": "Nothing is counted for this subject.",
+    "override": "Custom limit",
+    "window": "Window: {{window}}",
+    "resets": "resets at {{at}}",
+    "blockFor": "Block: {{duration}}",
+    "blockedUntil": "Blocked until {{at}}",
+    "meHint": "Failed sign-ins for your account. A successful sign-in resets the counter.",
+    "userHint": "Failed sign-ins for this account. A successful sign-in resets the counter.",
+    "overviewHint": "Shows subjects that were actually blocked — counters that never tripped are not recorded.",
+    "sinceHint": "Covering everything since {{at}}.",
+    "lastN": "Last {{duration}}",
+    "allPolicies": "All policies",
+    "filterPolicy": "Policy",
+    "filterWindow": "Period",
+    "noBlocks": "No blocks in the selected period.",
+    "summary": "{{total}} blocks, {{active}} of them still active.",
+    "status": "Status",
+    "active": "Active",
+    "expired": "Expired",
+    "remaining": "{{duration}} left",
+    "when": "Blocked at",
+    "policyColumn": "Policy",
+    "subject": "Subject",
+    "until": "Blocked until",
+    "policy": {
+      "login": "Failed sign-ins (account)",
+      "tokenExchange": "Token exchange (key)",
+      "perIpLogin": "Sign-ins (IP)",
+      "perIpToken": "Token exchange (IP)",
+      "unknown": "Unknown policy"
+    }
   }
 }

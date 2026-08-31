@@ -10,6 +10,7 @@ import { EditTenantPage } from "./pages/EditTenantPage";
 import { EditUserPage } from "./pages/EditUserPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ProfilePage } from "./pages/ProfilePage";
+import { RateLimitsPage } from "./pages/RateLimitsPage";
 import { StartPage } from "./pages/StartPage";
 import { TenantsPage } from "./pages/TenantsPage";
 import { UsersPage } from "./pages/UsersPage";
@@ -61,6 +62,10 @@ export function App() {
         <Route
           path="audit"
           element={can("view:audit") ? <AuditPage /> : <Navigate to="/" replace />}
+        />
+        <Route
+          path="rate-limits"
+          element={can("view:ratelimits") ? <RateLimitsPage /> : <Navigate to="/" replace />}
         />
         <Route
           path="config"

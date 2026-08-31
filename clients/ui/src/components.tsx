@@ -387,10 +387,13 @@ export function PatList({
   pats,
   roleLabel = (code) => code,
   onDelete,
+  renderDetails,
 }: {
   pats: ApiKeyView[];
   roleLabel?: (code: string) => string;
   onDelete?: (pat: ApiKeyView) => void;
+  /** Extra content below a row — the rate-limit disclosure on the screens that offer it. */
+  renderDetails?: (pat: ApiKeyView) => ReactNode;
 }) {
   const { t } = useTranslation();
   return (
@@ -407,6 +410,7 @@ export function PatList({
               <div className="text-xs text-slate-400">
                 {roles} · {lastUsed} · {t("pats.created")}: {formatDateTime(pat.created)}
               </div>
+              {renderDetails && <div className="mt-2">{renderDetails(pat)}</div>}
             </div>
             {onDelete && (
               <DropdownMenu
