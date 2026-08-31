@@ -2,7 +2,7 @@
 //! wasabi-based B2B services.
 //!
 //! This binary boots a warp web server (via wasabi's `run_webserver`) and wires the auth, tenant,
-//! user, API-key, config, audit and messaging routes.
+//! user, API-key, config, audit, contact and messaging routes.
 
 // The `routes![…]` macro builds one deeply-nested `Or<…>` filter type; warp 0.4's layout query
 // needs more headroom than the default.
@@ -51,7 +51,9 @@ mod i18n;
 rust_i18n::i18n!("locales", fallback = "en");
 mod config;
 mod constants;
+mod contacts;
 mod messaging;
+mod notify;
 mod search;
 mod tenants;
 mod users;
@@ -65,6 +67,8 @@ use crate::auth::apikeys::{
     exchange_route, list_api_keys_route, list_my_pats_route, list_user_pats_route,
 };
 use crate::auth::authorize::authorize_route;
+use crate::auth::capabilities::capabilities_route;
+use crate::auth::challenge::{ChallengeRepository, DynamoChallengeRepository};
 use crate::auth::login::{login_route, logout_route, refresh_route};
 use crate::auth::me::{
     change_password_route, delete_session_route, logout_all_route, me_route, patch_me_route,
@@ -76,6 +80,7 @@ use crate::auth::ratelimit::service::{
     api_key_rate_limit_route, my_pat_rate_limit_route, my_rate_limit_route,
     rate_limit_blocks_route, user_pat_rate_limit_route, user_rate_limit_route,
 };
+use crate::auth::recovery::{RecoveryDeps, complete_recovery_route, forgot_password_route};
 use crate::auth::secretbox::SecretBox;
 use crate::auth::session::repository::DynamoSessionRepository;
 use crate::auth::switch_tenant::switch_tenant_route;
@@ -95,10 +100,20 @@ use crate::authz::{
 use crate::config::repository::{ConfigRepository, S3ConfigRepository, StaticConfigRepository};
 use crate::config::service::{custom_fields_route, get_config_route, put_config_route};
 use crate::constants::ROLE_OWNER;
+use crate::contacts::repository::{ContactRepository, DynamoContactRepository};
+use crate::contacts::service::{
+    VerifyDeps, add_my_contact_route, delete_my_contact_route, finish_verification_route,
+    my_contacts_route, preferred_contact_route, start_verification_route, user_contacts_route,
+};
 use crate::messaging::repository::{DynamoMessagingRepository, MessagingRepository};
 use crate::messaging::service::{
     ResolveDeps, create_link_route, delete_my_link_route, my_code_route, my_links_route,
     regenerate_code_route, resolve_route, user_links_route,
+};
+use crate::notify::Notifier;
+use crate::notify::service::{
+    NotifyDeps, audience_route, clear_choice_route, my_notifications_route,
+    report_undeliverable_route, send_route, set_choice_route,
 };
 use crate::tenants::repository::{DynamoTenantRepository, TenantRepository};
 use crate::tenants::service::{
@@ -183,6 +198,13 @@ async fn app() -> anyhow::Result<()> {
         Arc::new(DynamoApiKeyRepository::with_client(&dynamo_client).await?);
     let audit_repository: Arc<dyn AuditRepository> =
         Arc::new(DynamoAuditRepository::with_client(&dynamo_client).await?);
+    let contact_repository: Arc<dyn ContactRepository> =
+        Arc::new(DynamoContactRepository::with_client(&dynamo_client).await?);
+    let challenge_repository: Arc<dyn ChallengeRepository> =
+        Arc::new(DynamoChallengeRepository::with_client(&dynamo_client).await?);
+    // The one outbound seam. Without a queue this is a noop that says so, and the routes needing
+    // mail refuse rather than accepting a request that goes nowhere.
+    let notifier: Arc<dyn Notifier> = Arc::from(notify::from_env().await?);
     let messaging_repository: Arc<dyn MessagingRepository> =
         Arc::new(DynamoMessagingRepository::with_client(&dynamo_client).await?);
     let rate_limit_repository: Arc<dyn RateLimitRepository> =
@@ -225,6 +247,7 @@ async fn app() -> anyhow::Result<()> {
     let auth_context = AuthContext::from_env(
         user_repository.clone(),
         tenant_repository.clone(),
+        contact_repository.clone(),
         session_repository.clone(),
         token_issuer.clone(),
         config_repository.clone(),
@@ -258,7 +281,29 @@ async fn app() -> anyhow::Result<()> {
         audit_repository.clone(),
         rate_limiter.clone(),
         system_tenant_id.clone(),
+        contact_repository.clone(),
     ));
+
+    let notify_deps = NotifyDeps {
+        users: user_repository.clone(),
+        tenants: tenant_repository.clone(),
+        contacts: contact_repository.clone(),
+        config: config_repository.clone(),
+        notifier: notifier.clone(),
+        system_tenant_id: system_tenant_id.clone(),
+    };
+
+    // Shared by both recovery endpoints; built once so the public base URL is read at boot rather
+    // than per request.
+    let recovery_deps = RecoveryDeps {
+        users: user_repository.clone(),
+        contacts: contact_repository.clone(),
+        challenges: challenge_repository.clone(),
+        config: config_repository.clone(),
+        notifier: notifier.clone(),
+        rate_limiter: rate_limiter.clone(),
+        public_base_url: notify::public_base_url()?,
+    };
 
     let api = routes![
         get_info_route(),
@@ -345,6 +390,73 @@ async fn app() -> anyhow::Result<()> {
         create_my_pat_route(api_key_repository.clone(), authenticator.clone()),
         list_my_pats_route(api_key_repository.clone(), authenticator.clone()),
         delete_my_pat_route(api_key_repository.clone(), authenticator.clone()),
+        // email contacts (self-service)
+        my_contacts_route(
+            contact_repository.clone(),
+            user_repository.clone(),
+            notifier.clone(),
+            authenticator.clone()
+        ),
+        add_my_contact_route(
+            contact_repository.clone(),
+            audit_repository.clone(),
+            authenticator.clone()
+        ),
+        delete_my_contact_route(
+            contact_repository.clone(),
+            user_repository.clone(),
+            audit_repository.clone(),
+            authenticator.clone()
+        ),
+        preferred_contact_route(
+            contact_repository.clone(),
+            user_repository.clone(),
+            audit_repository.clone(),
+            authenticator.clone()
+        ),
+        // password recovery (both unauthenticated: the link is opened from a mail client)
+        forgot_password_route(recovery_deps.clone(), audit_repository.clone()),
+        complete_recovery_route(recovery_deps, audit_repository.clone()),
+        // what the sign-in screen may offer, before anyone has signed in
+        capabilities_route(notifier.clone()),
+        // notifications (self-service: what I subscribe to)
+        my_notifications_route(notify_deps.clone(), authenticator.clone()),
+        set_choice_route(notify_deps.clone(), authenticator.clone()),
+        clear_choice_route(notify_deps.clone(), authenticator.clone()),
+        // notifications (machine: who hears about a firing, then hand the messages over)
+        audience_route(
+            notify_deps.clone(),
+            audit_repository.clone(),
+            authenticator.clone()
+        ),
+        send_route(notify_deps, audit_repository.clone(), authenticator.clone()),
+        // the mail worker's one endpoint: what it could not deliver
+        report_undeliverable_route(
+            contact_repository.clone(),
+            audit_repository.clone(),
+            authenticator.clone()
+        ),
+        // email contacts (verification: mail a challenge, then take the secret back)
+        start_verification_route(
+            VerifyDeps {
+                contacts: contact_repository.clone(),
+                challenges: challenge_repository.clone(),
+                users: user_repository.clone(),
+                config: config_repository.clone(),
+                notifier,
+                rate_limiter: rate_limiter.clone(),
+                public_base_url: notify::public_base_url()?,
+            },
+            audit_repository.clone(),
+            authenticator.clone()
+        ),
+        finish_verification_route(
+            contact_repository.clone(),
+            challenge_repository,
+            audit_repository.clone()
+        ),
+        // email contacts (admin: read a tenant user's addresses)
+        user_contacts_route(contact_repository.clone(), authenticator.clone()),
         // messaging links (self-service code + own links)
         my_code_route(
             messaging_repository.clone(),
@@ -372,6 +484,7 @@ async fn app() -> anyhow::Result<()> {
         resolve_route(
             ResolveDeps {
                 messaging: messaging_repository,
+                contacts: contact_repository.clone(),
                 users: user_repository.clone(),
                 tenants: tenant_repository.clone(),
                 config: config_repository.clone(),
@@ -723,7 +836,6 @@ async fn maybe_auto_init(
             tenant_id: tenant.tenant_id.clone(),
             roles: vec![ROLE_OWNER.to_owned()],
             username: username.clone(),
-            email: None,
             title: None,
             salutation: users::Salutation::default(),
             firstname: None,

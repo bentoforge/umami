@@ -8,23 +8,22 @@ defined in the config `apis` catalog.
 
 ```jsonc
 apis: [
-  { "code": "umami", "audience": "umami", "passthrough": true,
-    "claims": { "features": "features" } },        // the umami admin API (current behaviour)
+  { "code": "umami", "audience": "umami",
+    "claims": { "features": "$tenant.features" } },  // the umami admin API
 
   {
     "code": "dbx-core",
     "audience": "dbx-core",                          // → the token's `aud`
-    "eligibility": "member,admin",                   // must be true, else 403
-    "permissions": {                                 // rule map: expression → injected permissions
-      "admin:tenant":               ["admin:blocks", "admin:assets", "write:blocks"],
-      "write:members+admin:tenant": ["manage:team"],
-      "write:blocks":               ["write:blocks"],
-      "ai":                         ["use:ai"]       // feature-based
-    },
+    "eligibility": "role:member,role:admin",         // must hold, else 403
+    "permissions": [                                 // ORDERED list; later rules see earlier grants
+      { "when": "admin:tenant", "grant": ["admin:blocks", "admin:assets", "write:blocks"] },
+      { "when": "write:members+admin:tenant", "grant": ["manage:team"] },
+      { "when": "feature:ai", "grant": ["use:ai"] }
+    ],
     "claims": {                                      // claim mapping for this audience
-      "svc":      "dbx-core",                        // static literal
-      "features": "features",                        // effective feature codes (array)
-      "dept":     "customUser:department"            // project a custom user field
+      "svc":      "dbx-core",                        // static literal (no `$`)
+      "features": "$tenant.features",                // effective feature codes (array)
+      "dept":     "$user.custom.department"          // project a custom user field
     }
   }
 ]
@@ -49,14 +48,33 @@ Each `ApiDef`:
 
 ## Claim sources
 
+A source is either a **literal string** or a **`$` reference**. The `$` is what makes the
+difference, and forgetting it used to fail silently — `"tenant.features"` wrote those very words into
+the token instead of the array. `PUT /config` now refuses both that and an unknown `$…` reference.
+
 | Source string | Value written |
 |---|---|
-| `"features"` | array of the tenant's effective feature codes |
-| `"customUser:<key>"` | the user's custom field `<key>` (if present) |
-| `"customTenant:<key>"` | the tenant's custom field `<key>` (if present) |
-| anything else | the literal string |
+| `"$user.id"` / `.username` / `.title` / `.salutation` / `.firstname` / `.lastname` | that field, omitted when absent |
+| `"$user.email"` | the preferred **confirmed** address, omitted when there is none. Costs one read, and only for an API that asks |
+| `"$user.name"` / `.fullName` / `.addressableName` | the server-composed display names |
+| `"$user.locale"` | the resolved language (BCP-47) |
+| `"$user.roles"` | the user's role codes (array) |
+| `"$tenant.id"` / `.name` / `.slug` | that field |
+| `"$tenant.features"` | the tenant's effective feature codes (array) |
+| `"$user.custom.<code>"` / `"$tenant.custom.<code>"` | that custom field, omitted when absent |
+| anything without a leading `$` | the **literal string** |
 
-Machine tokens (API-key exchange) additionally carry `kind: "api_key"`.
+A user record carries no address of its own — `$user.email` resolves through the contacts list (see
+[CONTACTS.md](CONTACTS.md) §6).
+
+### What is always in a token, mapping or not
+
+`iss`, `sub`, `aud`, `tenant`, `permissions`, `iat`, `exp` and `ver` (the `tokenVersion` snapshot) are
+hardcoded. Two more appear conditionally: `kind` (`"api_key"` on a key exchange, `"messaging"` on a
+chat resolve) and `amr` (the second factors a session used — `["passkey"]`, `["totp"]`, or both).
+
+**Everything else comes from the mapping**, so a deployment that maps nothing gets exactly that list.
+In particular umami puts no personal data in a token by default.
 
 ## The minting paths
 

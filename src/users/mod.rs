@@ -11,8 +11,10 @@
 //!   many-to-many-membership model (Auth0/B2C heritage) — a floating global identity makes "who may
 //!   lock this user?" unanswerable.
 //! - **The username is the login identity** — globally unique (case-insensitive), so login is
-//!   `username + password` with no tenant context. `email` is optional contact info and **not**
-//!   unique. Uniqueness is enforced by the `user-usernames` guard table (DynamoDB can't enforce a
+//!   `username + password` with no tenant context. A user record carries **no email at all** — an
+//!   address is a *contact* ([`crate::contacts`]), because reaching someone and identifying them are
+//!   different jobs and an address only earns trust once its owner has proven possession.
+//!   Uniqueness is enforced by the `user-usernames` guard table (DynamoDB can't enforce a
 //!   second unique attribute via a GSI); `userId` stays the `users` PK so id-keyed reads/writes are
 //!   strongly consistent. See `repository` for the guard mechanics (and its atomicity caveat).
 //! - **One user acts in one tenant** for now: no parent-tenant hierarchy, no cross-tenant identity.
@@ -60,8 +62,8 @@ impl Salutation {
 ///
 /// Credentials (`password_hash`) and the revocation counter (`token_version`) live here. The login
 /// identifier is the **`username`** — required and globally unique (case-insensitively), guarded by
-/// the `user-usernames` lookup table (see [`repository`]). The `email` is optional contact info and
-/// is **not** unique.
+/// the `user-usernames` lookup table (see [`repository`]). Contact addresses are **not** here — see
+/// [`crate::contacts`].
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct User {
@@ -76,10 +78,6 @@ pub struct User {
     /// Login identifier — required, globally unique (case-insensitively via the `user-usernames`
     /// guard). Stored as entered (trimmed); uniqueness/lookup use the normalized form.
     pub username: String,
-    /// Optional contact email — **not** unique, may be absent. Normalized (trimmed + lowercased)
-    /// when present.
-    #[serde(default)]
-    pub email: Option<String>,
     /// Optional honorific/title (e.g. "Dr.", "Prof."). A structured name part composed server-side
     /// into the display names.
     #[serde(default)]
@@ -149,6 +147,26 @@ pub struct User {
     /// User id of the last change to this user (audit; not surfaced in the UI yet).
     #[serde(default)]
     pub last_changed_by: Option<String>,
+    /// The user's notification choices, keyed by notification-type code.
+    ///
+    /// An absent key means *unset* — follow the type's configured default. A present value is one
+    /// the type accepts: `"off"`, `"on"` for a type with no rhythm, or a cadence code (see
+    /// [`crate::notify::types`]).
+    ///
+    /// Never normalise an untouched type into this map: storing today's default would freeze it, and
+    /// a later change to that default would then silently fail to reach exactly the people who never
+    /// expressed a preference.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub notification_choices: std::collections::BTreeMap<String, String>,
+    /// The email address the user would rather be reached at (one of their
+    /// [`crate::contacts::Contact`] rows).
+    ///
+    /// A statement of *intent*, deliberately not validated against verification state: a user may
+    /// prefer an address before it is verified. Resolution enforces the rest — a value naming an
+    /// address that no longer exists or is not verified counts as "no preference" and falls back to
+    /// the user's verified addresses. That makes a stale value harmless.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preferred_contact: Option<String>,
 }
 
 /// The Unix epoch — the `last_active_or_created` fallback for user records predating the field.
@@ -160,11 +178,6 @@ fn epoch() -> chrono::DateTime<chrono::Utc> {
 /// so `UMAMI`, `umami`, and ` Umami ` all collide.
 pub fn normalize_username(username: &str) -> String {
     username.trim().to_lowercase()
-}
-
-/// Normalizes an email for storage: trims surrounding whitespace and lowercases.
-pub fn normalize_email(email: &str) -> String {
-    email.trim().to_lowercase()
 }
 
 /// Normalizes an optional name part: trims, and treats an empty result as unset (`None`), so an

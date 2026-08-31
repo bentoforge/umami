@@ -27,7 +27,7 @@ part of the discussion — write for them.
 umami is a micro-IAM service built on the in-house **wasabi** framework. It is the JWT issuer and
 tenant/membership authority for a fleet of wasabi-based B2B services. See [README.md](README.md) for
 the product overview and the `docs/` directory for the reference docs (CONFIG, PERMISSIONS,
-AUDIENCES, API-KEYS, SCHEMA).
+AUDIENCES, API-KEYS, CONTACTS, NOTIFICATIONS, SCHEMA).
 
 ## Reference repositories (read these first — follow their conventions exactly)
 

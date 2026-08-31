@@ -150,6 +150,10 @@ mod tests {
         "tenant.foreign",
         "tenant.system_undeletable",
         "user.self_undeletable",
+        "contact.verify.subject",
+        "contact.verify.body",
+        "auth.reset.subject",
+        "auth.reset.body",
     ];
 
     #[test]

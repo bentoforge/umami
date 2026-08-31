@@ -103,7 +103,7 @@ struct ResolveQuery {
 struct ResolvedUser {
     user_id: String,
     tenant_id: String,
-    email: Option<String>,
+    username: String,
     roles: Vec<String>,
 }
 
@@ -217,6 +217,8 @@ pub struct ResolveDeps {
     pub config: Arc<dyn ConfigRepository>,
     /// Token signer.
     pub tokens: Arc<TokenIssuer>,
+    /// Contact store, read at mint time only when the target API asks for `$user.email`.
+    pub contacts: Arc<dyn crate::contacts::repository::ContactRepository>,
 }
 
 /// `GET /messaging/resolve` — machine: identity → user info or token (`messaging:resolve`).
@@ -490,9 +492,9 @@ async fn resolve(query: ResolveQuery, deps: ResolveDeps) -> anyhow::Result<Value
             &deps.tokens,
             &config,
             MintParams {
+                contacts: deps.contacts.as_ref(),
                 api_code: api,
                 subject: &user.user_id,
-                email: user.email.as_deref().unwrap_or_default(),
                 tenant_id: &user.tenant_id,
                 token_version: user.token_version,
                 subjects: &user.roles,
@@ -531,7 +533,7 @@ async fn resolve(query: ResolveQuery, deps: ResolveDeps) -> anyhow::Result<Value
     Ok(serde_json::to_value(ResolvedUser {
         user_id: user.user_id,
         tenant_id: user.tenant_id,
-        email: user.email,
+        username: user.username,
         roles: user.roles,
     })?)
 }

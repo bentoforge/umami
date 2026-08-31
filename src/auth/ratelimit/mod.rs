@@ -39,17 +39,24 @@ use crate::constants::DEFAULT_RATELIMIT_CACHE_CAP;
 pub const POLICY_PER_IP_LOGIN: &str = "perIp:login";
 /// Policy name: the per-client-IP volume cap on `POST /auth/token`.
 pub const POLICY_PER_IP_TOKEN: &str = "perIp:token";
+/// Policy name: the per-client-IP volume cap on `POST /auth/forgot-password`. Its own counter, so a
+/// flood of recovery attempts cannot consume the login budget or vice versa.
+pub const POLICY_PER_IP_RECOVER: &str = "perIp:recover";
 /// Policy name: the per-account brute-force cap on failed logins.
 pub const POLICY_LOGIN: &str = "login";
 /// Policy name: the per-API-key volume cap on the token exchange.
 pub const POLICY_TOKEN_EXCHANGE: &str = "tokenExchange";
+/// Policy name: the per-**user** cap on transactional mail umami sends on their behalf.
+pub const POLICY_MAIL_SEND: &str = "mailSend";
 
 /// Every policy that can trip a block, in the order the admin overview lists them.
 pub const ALL_POLICIES: &[&str] = &[
     POLICY_PER_IP_LOGIN,
     POLICY_PER_IP_TOKEN,
+    POLICY_PER_IP_RECOVER,
     POLICY_LOGIN,
     POLICY_TOKEN_EXCHANGE,
+    POLICY_MAIL_SEND,
 ];
 
 /// Small grace added to every item's TTL (seconds) so a row always outlives the window/block it

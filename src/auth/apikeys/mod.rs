@@ -256,6 +256,7 @@ pub fn exchange_route(
     audit: Arc<dyn AuditRepository>,
     rate_limiter: Arc<RateLimiter>,
     system_tenant_id: Option<String>,
+    contacts: Arc<dyn crate::contacts::repository::ContactRepository>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("auth" / "token")
         .and(warp::post())
@@ -268,6 +269,7 @@ pub fn exchange_route(
         .and(with_cloneable(audit))
         .and(with_cloneable(rate_limiter))
         .and(with_cloneable(system_tenant_id))
+        .and(with_cloneable(contacts))
         .and(warp::header::optional::<String>("origin"))
         .and(client_ip())
         .and_then(handle_exchange_route)
@@ -409,6 +411,7 @@ async fn handle_exchange_route(
     audit: Arc<dyn AuditRepository>,
     rate_limiter: Arc<RateLimiter>,
     system_tenant_id: Option<String>,
+    contacts: Arc<dyn crate::contacts::repository::ContactRepository>,
     origin: Option<String>,
     ip: Option<String>,
 ) -> Result<Response, warp::Rejection> {
@@ -422,6 +425,7 @@ async fn handle_exchange_route(
         audit,
         rate_limiter,
         system_tenant_id,
+        contacts,
         origin,
         ip,
     )
@@ -569,6 +573,7 @@ async fn exchange(
     audit: Arc<dyn AuditRepository>,
     rate_limiter: Arc<RateLimiter>,
     system_tenant_id: Option<String>,
+    contacts: Arc<dyn crate::contacts::repository::ContactRepository>,
     origin: Option<String>,
     ip: Option<String>,
 ) -> anyhow::Result<ExchangeOutcome> {
@@ -698,14 +703,13 @@ async fn exchange(
                     .collect()
             };
             let features = tenant_features(&tenants, &user.tenant_id).await?;
-            let synthetic = user.email.clone().unwrap_or_default();
             mint_for_api(
                 &tokens,
                 &config,
                 MintParams {
+                    contacts: contacts.as_ref(),
                     api_code: &api_code,
                     subject: &user.user_id,
-                    email: &synthetic,
                     tenant_id: &user.tenant_id,
                     token_version: user.token_version,
                     subjects: &subjects,
@@ -733,14 +737,13 @@ async fn exchange(
         None => {
             // Service key — acts as itself; subjects are the key's `scope:*`.
             let features = tenant_features(&tenants, &key.tenant_id).await?;
-            let synthetic_email = format!("{key_id}@api-key");
             mint_for_api(
                 &tokens,
                 &config,
                 MintParams {
+                    contacts: contacts.as_ref(),
                     api_code: &api_code,
                     subject: &key.key_id,
-                    email: &synthetic_email,
                     tenant_id: &key.tenant_id,
                     token_version: 0,
                     subjects: &key.scopes,

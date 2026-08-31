@@ -31,6 +31,7 @@ Relevant environment variables:
 | `UMAMI_SYSTEM_TENANT_ID` | Tenant whose members get the `is:system-tenant` marker (⇒ `manage:tenants` + `switch:tenant`). |
 | `UMAMI_AUTO_INIT=true` | Bootstrap a first tenant + owner when zero tenants exist. |
 | `UMAMI_UI_DIR` | Directory of the built management SPA to serve under `/app` (default `clients/ui/dist`; absent index.html ⇒ API-only). |
+| `UMAMI_MAIL_QUEUE_URL` | SQS queue umami hands outbound transactional mail to. Unset ⇒ mail disabled, and confirming an address is refused up front. Links in those mails are built from `UMAMI_ISSUER`. |
 
 ---
 
@@ -46,6 +47,7 @@ Relevant environment variables:
   "customUserFields":   [ CustomFieldDef, … ],
   "security":  SecuritySettings,
   "messaging": MessagingConfig,
+  "notificationTypes": [ NotificationTypeDef, … ],  // what users can subscribe to
   "branding":  BrandingConfig,        // white-labeling the management UI
   "apis":      [ ApiDef, … ]          // audiences + permission mapping
 }
@@ -69,6 +71,8 @@ Relevant environment variables:
 
 // SecuritySettings:
 { "minPasswordLength": 8, "accessTtlSecs": 600, "refreshTtlSecs": 2592000,
+  "contactChallengeTtlSecs": 86400,  // address-confirmation link validity (single-use)
+  "passwordResetTtlSecs": 3600,      // recovery link validity — shorter: it IS account takeover
   "messagingCodeTtlSecs": 600,    // link-code validity window (single-use OTP)
   "rateLimits": RateLimitsConfig,  // auth-endpoint rate limits (see §8)
   "redirectUris": [                // exact URLs GET /auth/authorize may return to
@@ -82,11 +86,38 @@ Relevant environment variables:
 //   max (maxFailures / maxPerWindow) of 0 disables it (e.g. run per-IP only):
 { "login":         { "maxFailures": 5,   "windowSecs": 300, "blockSecs": 900 },
   "tokenExchange": { "maxPerWindow": 60,  "windowSecs": 60,  "blockSecs": 300 },
-  "perIp":         { "maxPerWindow": 300, "windowSecs": 60,  "blockSecs": 300 } }
+  "perIp":         { "maxPerWindow": 300, "windowSecs": 60,  "blockSecs": 300 },
+  "mailSend":      { "maxPerWindow": 5,   "windowSecs": 3600, "blockSecs": 3600 } }
+//   mailSend is keyed on the USER, not the IP: the address being mailed sits on somebody's own
+//   contact list, so the account is the party to hold accountable. Without the cap, anyone with an
+//   account can add a stranger's address and have umami mail that stranger on repeat.
 
 // MessagingConfig — either/both optional; when set, /auth/me/messaging-code returns deep links
 //   and every token gets the is:messaging-configured marker:
 { "whatsappNumber": "4915112345678", "telegramBot": "my_link_bot" }
+
+// NotificationTypeDef — one subscribable thing. See NOTIFICATIONS.md for the model.
+//   A cadence code is a plain STRING, not a fixed enum: umami never interprets one (no arithmetic,
+//   no ordering, no scheduling — the rule is equality), so the vocabulary is the deployment's.
+//   `on-publish` and `quarterly` are as valid as `weekly`, and each carries its own label the way a
+//   role or a feature does. PUT /config rejects a duplicate code, a type with no cadences, a
+//   non-lowercase or unlabelled cadence, and a `default` the type is never fired at.
+{ "code": "wsc-new-content",        // stable: keys every user's stored choice
+  "name": "New content",
+  "description": "Pages published since the last message.",
+  "cadences": [                     // what the app actually fires — code plus the words a user reads
+    { "code": "daily",   "name": "Täglich" },
+    { "code": "weekly",  "name": "Wöchentlich" },
+    { "code": "monthly", "name": "Monatlich" }
+  ],
+  "default": "weekly",              // "on", a cadence code, or omitted for off
+  "eligibleIf": "role:wsc-editor" } // DSL over role:*/feature:*/is:system-tenant{,-member}
+//   Omit `cadences` entirely for a type with no rhythm of its own: the choice is then "on"/"off".
+//   `off` and `on` are reserved and cannot be cadence codes. A user can always choose `off`,
+//   whether or not the type has a rhythm.
+//   eligibleIf is the INPUT vocabulary, not permissions. Session markers (is:2fa, is:passkey,
+//   is:totp) describe how a session authenticated and a notification has no session — naming one
+//   would simply never match, with nothing to explain why.
 
 // BrandingConfig — white-label the UI at runtime (all optional; empty → built-in defaults). umami
 //   serves these at /app/branding.css, /app/logo, /app/favicon. logo/favicon may be a data: URI
@@ -135,7 +166,14 @@ Relevant environment variables:
 { "code": "dbx-core", "audience": "dbx-core",
   "eligibility": "role:member,role:admin",      // optional gate; no token minted if it fails
   "permissions": [ { "when": "role:admin", "grant": ["write:blocks"] }, … ],  // ordered
-  "claims": { "svc": "dbx-core", "org": "customTenant:customerNo" } }
+  "claims": { "svc": "dbx-core", "org": "$tenant.custom.customerNo" } }
+//   A claim source is either a LITERAL string or a `$` reference. Without the `$` it is a literal —
+//   `"tenant.features"` puts those words in the token, not the array. PUT /config now refuses a
+//   value that looks like a reference but is missing its `$`, and an unknown `$…` reference too:
+//   both used to fail silently, as a claim that is simply absent or carries the wrong words.
+//   References: $user.{id,username,title,salutation,firstname,lastname,name,fullName,
+//   addressableName,locale,roles}, $tenant.{id,name,slug,features},
+//   $user.custom.<code>, $tenant.custom.<code>
 ```
 
 ---
@@ -187,9 +225,17 @@ define their own.
 | `manage:passwords` | own security settings — `POST /auth/me/password`, TOTP setup/verify/disable, passkey registration |
 | `manage:personal-tokens` | own personal access tokens under `/auth/me/api-keys` |
 | `manage:sessions` | see/revoke own sessions — `GET /auth/sessions`, `DELETE /auth/sessions/{id}`, `POST /auth/logout-all` |
+| `manage:contacts` | own email addresses — `GET`/`POST /auth/me/contacts`, `DELETE /auth/me/contacts/{address}`, `PUT /auth/me/preferred-contact` — and own notification choices under `/auth/me/notifications` |
+| `notifications:audience` | `POST /notifications/audience` (who hears about one firing) |
+| `notifications:send` | `POST /notifications/send` (hand finished messages over) |
+| `notifications:report` | `POST /notifications/undeliverable` (the mail worker reports a hard bounce) |
 | `manage:messaging` | `/auth/me/messaging-code` (+regenerate), `/auth/me/messaging-links` (+unlink) |
 | `messaging:link` | `POST /messaging/links` (bot backend claims a mapping) |
 | `messaging:resolve` | `GET /messaging/resolve` (identity → user info / token) |
+
+`manage:contacts` sits in the **baseline** rule (below) rather than behind a marker: keeping your own
+addresses current is profile data, not a deployment capability. What does depend on infrastructure is
+verification and password recovery, and neither exists yet — see [CONTACTS.md](CONTACTS.md).
 
 The five `manage:profile`/`passwords`/`personal-tokens`/`sessions`/`messaging` permissions are the
 **granular self-service** set. There is no `self:readonly` deny marker: a read-only user is one whose
@@ -198,6 +244,11 @@ doesn't grant that permission, and the corresponding UI hides itself.
 
 **Authenticated but permission-free** (any valid token): `GET /auth/me`, `GET /config/custom-fields`,
 plus login/refresh/logout, JWKS and the passkey-login ceremonies.
+
+**Unauthenticated** (no token at all): `GET /auth/capabilities` — what the sign-in screen may offer,
+currently `{ "passwordRecovery": bool }` — plus the three ceremonies whose proof *is* the mailed
+secret: `POST /auth/contacts/verify`, `POST /auth/forgot-password`, `POST /auth/reset-password`. See
+[CONTACTS.md](CONTACTS.md) for why those cannot require a session.
 
 ---
 
@@ -216,10 +267,13 @@ role matrix; see [§6](#6-proposed-standard-config) for that. The default `apis[
 | `is:messaging-configured` | `manage:messaging` |
 | `scope:messaging-linker + is:system-tenant` | `messaging:link` |
 | `scope:messaging-resolver + is:system-tenant` | `messaging:resolve` |
+| `scope:notifier + is:system-tenant` | `notifications:audience`, `notifications:send` |
+| `scope:mail-worker + is:system-tenant` | `notifications:report` |
 
 Default **roles**: `role:owner`, `role:admin`, `role:member`, `role:viewer`, `role:readonly`
 (all `assignableIf` omitted). Default **scopes**: `scope:messaging-linker`,
-`scope:messaging-resolver` (both `assignableIf: "is:system-tenant"`). No default
+`scope:messaging-resolver`, `scope:notifier`, `scope:mail-worker` (all
+`assignableIf: "is:system-tenant"`). No default
 features/custom fields.
 
 > ⚠ In the minimal default, **only `role:owner` is mapped** — `role:admin` / `role:member` /
@@ -247,6 +301,8 @@ feature/scope and a product-API entry with eligibility + claims. Copy, adjust, `
   "scopes": [
     { "code": "scope:messaging-linker",   "name": "Messaging linker",   "assignableIf": "is:system-tenant" },
     { "code": "scope:messaging-resolver", "name": "Messaging resolver", "assignableIf": "is:system-tenant" },
+    { "code": "scope:notifier",           "name": "Notifier",           "assignableIf": "is:system-tenant" },
+    { "code": "scope:mail-worker",        "name": "Mail worker",        "assignableIf": "is:system-tenant" },
     { "code": "scope:ingest",             "name": "Telemetry ingest" }
   ],
   "features": [
@@ -262,10 +318,13 @@ feature/scope and a product-API entry with eligibility + claims. Copy, adjust, `
     "accessTtlSecs": 600,
     "refreshTtlSecs": 2592000,
     "messagingCodeTtlSecs": 600,
+    "contactChallengeTtlSecs": 86400,
+    "passwordResetTtlSecs": 3600,
     "rateLimits": {
       "login":         { "maxFailures": 5,   "windowSecs": 300, "blockSecs": 900 },
       "tokenExchange": { "maxPerWindow": 60,  "windowSecs": 60,  "blockSecs": 300 },
-      "perIp":         { "maxPerWindow": 300, "windowSecs": 60,  "blockSecs": 300 }
+      "perIp":         { "maxPerWindow": 300, "windowSecs": 60,  "blockSecs": 300 },
+      "mailSend":      { "maxPerWindow": 5,   "windowSecs": 3600, "blockSecs": 3600 }
     }
   },
   "messaging": { "telegramBot": "my_link_bot", "whatsappNumber": "4915112345678" },
@@ -279,9 +338,12 @@ feature/scope and a product-API entry with eligibility + claims. Copy, adjust, `
         // Granular self-service for every non-read-only user (a read-only role is simply excluded —
         // there is no separate deny marker).
         { "when": "!role:readonly", "grant": ["manage:profile","manage:passwords","manage:personal-tokens","manage:sessions"] },
+        { "when": "!role:readonly", "grant": ["manage:contacts"] },
         { "when": "is:messaging-configured + !role:readonly", "grant": ["manage:messaging"] },
         { "when": "scope:messaging-linker + is:system-tenant",   "grant": ["messaging:link"] },
-        { "when": "scope:messaging-resolver + is:system-tenant", "grant": ["messaging:resolve"] }
+        { "when": "scope:messaging-resolver + is:system-tenant", "grant": ["messaging:resolve"] },
+        { "when": "scope:notifier + is:system-tenant", "grant": ["notifications:audience","notifications:send"] },
+        { "when": "scope:mail-worker + is:system-tenant", "grant": ["notifications:report"] }
       ]
     },
     {
@@ -293,7 +355,7 @@ feature/scope and a product-API entry with eligibility + claims. Copy, adjust, `
         { "when": "feature:ai + role:member", "grant": ["use:ai"] },
         { "when": "scope:ingest",          "grant": ["write:telemetry"] }
       ],
-      "claims": { "org": "customTenant:customerNo" }
+      "claims": { "org": "$tenant.custom.customerNo" }
     }
   ]
 }
@@ -330,6 +392,8 @@ policies configurable; set a policy's `max` to `0` to disable it and run, say, p
 | Policy | Subject | Endpoint(s) | Counts | Reset on success | Purpose |
 |--------|---------|-------------|--------|------------------|---------|
 | `perIp` | client IP, **per endpoint** | `/auth/login`, `/auth/token` (+ webauthn login-finish) | all requests | no | the primary blunt instrument — caps a dumb loop / flood from one IP |
+| `mailSend` | **user id** | address confirmation **and** password recovery | every queued mail | no | stops an account from using umami to mail a stranger on repeat |
+| `perIp:recover` | client IP | `POST /auth/forgot-password` | all requests | no | its own counter, so a recovery flood cannot consume the login budget |
 | `tokenExchange` | API key id | `/auth/token` | all exchanges (incl. successful) | no | a **volume/quota** cap catching one key hammering across many IPs |
 | `login` | resolved **user id** | `/auth/login` | **failed** attempts only | **yes** | brute-force protection |
 
@@ -343,7 +407,7 @@ cap; the per-IP cap (checked before the lookup) is what bounds the cost of that 
 attacker cannot turn the lookup into a DoS. Attempts against unknown/inactive usernames get no
 per-account counter (there is nothing to key on) and are covered by the per-IP cap alone.
 
-Fields: `login` uses `maxFailures`; `tokenExchange`/`perIp` use `maxPerWindow`. All take
+Fields: `login` uses `maxFailures`; `tokenExchange`/`perIp`/`mailSend` use `maxPerWindow`. All take
 `windowSecs` (the counting window) and `blockSecs` (how long a tripped subject is blocked — may
 exceed the window). Defaults are tuned so a well-behaved client that **caches** the short-lived
 access token (~`accessTtlSecs`) sits far below the limits, while a client that re-exchanges on every

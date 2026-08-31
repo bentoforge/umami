@@ -39,6 +39,12 @@ tracing = "0.1"
 # crate version, so this MUST match wasabi-core's setting.
 aws-sdk-dynamodb = { version = "1.98", default-features = false, features = ["default-https-client", "rt-tokio"] }
 
+# Outbound transactional mail leaves umami as a single SQS write — a worker owns the actual sending.
+# Same feature flags as the DynamoDB client so cargo unions to one crypto/TLS stack (see CLAUDE.md).
+aws-sdk-sqs = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio"] }
+# Same version/feature set wasabi-core uses, so the AWS config layer resolves once.
+aws-config = { version = "1.8", features = ["behavior-version-latest"] }
+
 # ── auth core ─────────────────────────────────────────────────────────────────
 argon2 = "0.5"                 # password hashing (argon2id)
 # ES256 signing — features = ["aws_lc_rs"] to match wasabi-core's crypto backend.

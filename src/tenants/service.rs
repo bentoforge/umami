@@ -54,10 +54,9 @@ const REQUIRE_LIST_TENANTS: &[&str] = &[MANAGE_TENANTS_PERMISSION, SWITCH_TENANT
 /// The first (owner) user created alongside a new tenant.
 #[derive(Deserialize, Debug)]
 struct OwnerSpec {
-    /// Login username (required, unique). Falls back to `email` when omitted.
+    /// Login username — required and globally unique.
     username: Option<String>,
-    /// Optional contact email (not unique).
-    email: Option<String>,
+
     password: String,
     #[serde(default)]
     title: Option<String>,
@@ -296,21 +295,15 @@ async fn create_tenant(
     // Resolve the owner up-front (fail before creating the tenant) when one was requested.
     let owner = match request.owner {
         Some(owner) => {
-            // Owner login identifier: explicit username, else the email; at least one is required.
-            let email = owner
-                .email
-                .map(|email| email.trim().to_owned())
-                .filter(|email| !email.is_empty());
+            // The owner's login identifier. An address is a contact, not an identity, so there is
+            // nothing to fall back to.
             let username = owner
                 .username
                 .map(|username| username.trim().to_owned())
-                .filter(|username| !username.is_empty())
-                .or_else(|| email.clone());
+                .filter(|username| !username.is_empty());
             let username = match username {
                 Some(username) => username,
-                None => {
-                    client_bail!("Owner 'username' (or 'email' to use as the username) is required")
-                }
+                None => client_bail!("Owner 'username' is required"),
             };
             config.validate_password(&owner.password)?;
             let password_hash = crate::auth::password::hash(&owner.password)?;
@@ -318,7 +311,6 @@ async fn create_tenant(
                 tenant_id: String::new(), // filled in once the tenant exists
                 roles: vec![ROLE_OWNER.to_owned()],
                 username,
-                email,
                 title: owner.title,
                 salutation: owner.salutation.unwrap_or_default(),
                 firstname: owner.firstname,

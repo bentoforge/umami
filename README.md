@@ -47,6 +47,8 @@ umami is the identity boundary, not the application.
 - **TOTP** two-factor (secrets encrypted at rest).
 - **WebAuthn / FIDO2 passkeys** — platform passkeys and hardware keys (e.g. YubiKey).
 - **Passwordless messaging login** — link a Telegram/WhatsApp identity, then mint tokens for it.
+- **Email contacts + password recovery** — confirmed addresses, a mailed reset link, and one SQS
+  write as the only outbound seam (see [docs/CONTACTS.md](docs/CONTACTS.md)).
 - **Personal access tokens** (act as a user, optionally role-restricted) and **M2M service keys**
   (machine principals carrying `scope:*`).
 - Synthetic **auth-strength markers** (`is:passkey` / `is:totp` / `is:2fa`) carried in the token.
@@ -267,6 +269,8 @@ Full reference: **[docs/CONFIG.md](docs/CONFIG.md)**.
 | [docs/PERMISSIONS.md](docs/PERMISSIONS.md) | The permission-string DSL and the mint algorithm. |
 | [docs/AUDIENCES.md](docs/AUDIENCES.md) | Audiences, the `apis` catalog, and the token-minting paths. |
 | [docs/API-KEYS.md](docs/API-KEYS.md) | Service keys vs. personal access tokens. |
+| [docs/CONTACTS.md](docs/CONTACTS.md) | Email contacts: the list, verification, and why a user record has no email field. |
+| [docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md) | Notification types, cadences, and who a firing reaches. |
 
 The identity/tenancy data model lives in the code: the entity structs (`User`, `Tenant`, `Session`,
 …) are the schema, and the model's design rationale is the module doc on
