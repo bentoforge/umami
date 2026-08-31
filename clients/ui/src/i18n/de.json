@@ -44,7 +44,6 @@
     "logoutAll": "Überall abmelden",
     "logoutAllConfirm": "Alle Sitzungen von „{{name}}“ beenden? Alle Geräte verlieren beim nächsten Refresh den Zugang.",
     "username": "Benutzername",
-    "email": "E-Mail",
     "locale": "Sprache",
     "localeAuto": "Automatisch (Browser)",
     "salutation": "Anrede",
@@ -86,7 +85,14 @@
     "submit": "Anmelden",
     "mfaHint": "Gib den 6-stelligen Code aus deiner Authenticator-App ein.",
     "passkey": "Mit Passkey anmelden",
-    "failed": "Anmeldung fehlgeschlagen"
+    "failed": "Anmeldung fehlgeschlagen",
+    "forgot": "Passwort vergessen?",
+    "recoverHeading": "Passwort zurücksetzen",
+    "recoverHint": "Benutzername oder eine bestätigte E-Mail-Adresse eingeben. Wenn wir Sie erreichen können, folgt ein Link.",
+    "recoverIdentifier": "Benutzername oder E-Mail-Adresse",
+    "recoverSubmit": "Link senden",
+    "recoverSent": "Wenn dieses Konto existiert und wir es erreichen können, ist ein Link unterwegs. Bitte prüfen Sie Ihr Postfach.",
+    "recoverBack": "Zurück zur Anmeldung"
   },
   "dashboard": {
     "passkeyAdded": "Passkey registriert."
@@ -196,6 +202,41 @@
     "new": "Neuen Service-Key anlegen",
     "allowSecretLogin": "Vereinfachten Login (Secret) erlauben",
     "allowSecretLoginHint": "Aus: der Token ist nur per signiertem HMAC nutzbar (Mode 2). An: der rohe Secret-Token kann direkt getauscht werden (Mode 1)."
+  },
+  "notifications": {
+    "title": "Benachrichtigungen",
+    "intro": "Was Sie erreicht, und wie oft. Versand an Ihre bevorzugte bestätigte Adresse.",
+    "useDefault": "Vorgabe ({{what}})",
+    "off": "Deaktiviert",
+    "on": "Aktiviert"
+  },
+  "contacts": {
+    "title": "E-Mail-Adressen",
+    "intro": "Wo umami Sie erreicht. Genutzt wird nur eine bestätigte Adresse — neue eintragen und bestätigen, bevor Sie die alte entfernen.",
+    "addressLabel": "E-Mail-Adresse",
+    "labelField": "Bezeichnung (optional)",
+    "add": "Hinzufügen",
+    "empty": "Keine Adressen.",
+    "addedOn": "Hinzugefügt am",
+    "preferred": "Bevorzugt",
+    "setPreferred": "Bevorzugt verwenden",
+    "clearPreferred": "Nicht mehr bevorzugen",
+    "unverified": "Nicht bestätigt",
+    "verify": "Bestätigungslink senden",
+    "verifySent": "Bestätigungslink an {{address}} gesendet.",
+    "alreadyVerified": "Diese Adresse ist bereits bestätigt.",
+    "delete": "Löschen",
+    "deleteConfirm": "Adresse „{{address}}“ entfernen?",
+    "menu": "Aktionen"
+  },
+  "verifyContact": {
+    "title": "E-Mail-Adresse bestätigen",
+    "working": "Wird bestätigt…",
+    "ok": "{{address}} ist bestätigt. Wir können Sie ab jetzt darüber erreichen.",
+    "missingToken": "Dieser Link ist unvollständig — er enthält kein Bestätigungs-Token.",
+    "retryHint": "Fordern Sie in Ihrem Profil einen neuen Link an.",
+    "toProfile": "Zu meinem Profil",
+    "toSignIn": "Zur Anmeldung"
   },
   "messaging": {
     "linksTitle": "Messaging-Verknüpfungen",

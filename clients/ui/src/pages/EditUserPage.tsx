@@ -1,6 +1,7 @@
 import type {
   ApiKeyView,
   AuditEntry,
+  Contact,
   CustomFieldDef,
   MessagingLink,
   RoleDef,
@@ -15,6 +16,7 @@ import { useUmami } from "../auth/UmamiProvider";
 import {
   AuditList,
   Banner,
+  ContactList,
   CustomFieldsForm,
   DropdownMenu,
   errMsg,
@@ -197,6 +199,7 @@ export function EditUserPage() {
           />
           <SessionsCard user={user} onError={setError} />
           <PatsCard userId={user.userId} />
+          <ContactsCard userId={user.userId} />
           <MessagingLinksCard userId={user.userId} />
           <MetaBox user={user} />
         </>
@@ -209,7 +212,7 @@ export function EditUserPage() {
   );
 }
 
-/** Read-only details with an Edit toggle for the name parts + custom fields + lock. Username/email
+/** Read-only details with an Edit toggle for the name parts + custom fields + lock. Username
  * are the login identity and stay read-only. */
 function DetailsCard({
   user,
@@ -228,7 +231,6 @@ function DetailsCard({
   const { t } = useTranslation();
   const [editing, setEditing] = useState(false);
   const [username, setUsername] = useState(user.username);
-  const [email, setEmail] = useState(user.email ?? "");
   const [title, setTitle] = useState(user.title ?? "");
   const [salutation, setSalutation] = useState<Salutation>(user.salutation);
   const [firstname, setFirstname] = useState(user.firstname ?? "");
@@ -239,7 +241,6 @@ function DetailsCard({
 
   const reset = useCallback(() => {
     setUsername(user.username);
-    setEmail(user.email ?? "");
     setTitle(user.title ?? "");
     setSalutation(user.salutation);
     setFirstname(user.firstname ?? "");
@@ -261,7 +262,6 @@ function DetailsCard({
     try {
       await client.patchUser(user.userId, {
         username,
-        email,
         title,
         salutation,
         firstname,
@@ -299,14 +299,6 @@ function DetailsCard({
                 className={input}
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-              />
-            </Field>
-            <Field label={t("users.email")}>
-              <input
-                className={input}
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
               />
             </Field>
             <Field label={t("users.salutation")}>
@@ -361,7 +353,6 @@ function DetailsCard({
       ) : (
         <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-2 text-sm">
           <DetailRow label={t("users.username")}>{user.username}</DetailRow>
-          <DetailRow label={t("users.email")}>{user.email ?? "—"}</DetailRow>
           <DetailRow label={t("users.name")}>
             {user.firstname || user.lastname ? user.fullName : "—"}
           </DetailRow>
@@ -624,6 +615,29 @@ function PatsCard({ userId }: { userId: string }) {
           <RateLimitDisclosure target={{ kind: "userPat", userId, keyId: pat.keyId }} />
         )}
       />
+    </section>
+  );
+}
+
+/** Read-only list of the user's email addresses (requires `manage:users`; scoped to the caller's
+ * tenant server-side). Hidden when the user has none, so the card is never an empty box. */
+function ContactsCard({ userId }: { userId: string }) {
+  const { client } = useUmami();
+  const { t } = useTranslation();
+  const [contacts, setContacts] = useState<Contact[] | null>(null);
+
+  useEffect(() => {
+    client
+      .listUserContacts(userId)
+      .then(setContacts)
+      .catch(() => setContacts([]));
+  }, [client, userId]);
+
+  if (!contacts || contacts.length === 0) return null;
+  return (
+    <section className={`${card} space-y-3`}>
+      <h2 className="font-medium text-slate-800 dark:text-slate-200">{t("contacts.title")}</h2>
+      <ContactList contacts={contacts} />
     </section>
   );
 }

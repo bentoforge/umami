@@ -90,7 +90,7 @@ export function UsersPage() {
     setNotice(null);
     try {
       await client.deleteUser(user.userId);
-      setNotice(`Deleted "${user.email}".`);
+      setNotice(`Deleted "${user.fullName || user.username}".`);
       await load();
     } catch (err) {
       setError(errMsg(err));
@@ -171,7 +171,7 @@ export function UsersPage() {
               {users.map((user) => {
                 const isSelf = user.userId === myId;
                 const displayName = user.fullName || user.username;
-                const sub = user.fullName ? user.username : (user.email ?? "");
+                const sub = user.fullName ? user.username : "";
                 return (
                   <tr
                     key={user.userId}
@@ -275,7 +275,6 @@ function CreateUser({
   const { client, me } = useUmami();
   const { t } = useTranslation();
   const [username, setUsername] = useState("");
-  const [email, setEmail] = useState("");
   const [roles, setRoles] = useState<string[]>([]);
   const [roleDefs, setRoleDefs] = useState<RoleDef[]>([]);
   const [assignable, setAssignable] = useState<string[]>([]);
@@ -312,8 +311,7 @@ function CreateUser({
     onError("");
     try {
       const res = await client.createUser({
-        username: username.trim() || undefined,
-        email: email.trim() || undefined,
+        username: username.trim(),
         roles,
         title,
         salutation,
@@ -322,7 +320,6 @@ function CreateUser({
         customFields: fields,
       });
       setUsername("");
-      setEmail("");
       setRoles([]);
       setTitle("");
       setSalutation("");
@@ -343,14 +340,6 @@ function CreateUser({
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Field label={t("users.username")}>
           <input className={input} value={username} onChange={(e) => setUsername(e.target.value)} />
-        </Field>
-        <Field label={t("users.email")}>
-          <input
-            className={input}
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-          />
         </Field>
         <Field label={t("users.salutation")}>
           <select

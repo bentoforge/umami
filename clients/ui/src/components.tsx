@@ -1,6 +1,7 @@
 import type {
   ApiKeyView,
   AuditEntry,
+  Contact,
   CustomFieldDef,
   MessagingLink,
   RoleDef,
@@ -454,6 +455,88 @@ export function MessagingLinkList({
                 label={t("messaging.menu")}
                 actions={[
                   { label: t("messaging.delete"), danger: true, onSelect: () => onDelete(link) },
+                ]}
+              />
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/** List of a user's email addresses: the address in bold, a muted "Added: <date>" subline, and a
+ * badge on the unverified ones plus the preferred one.
+ *
+ * The unverified badge is not decoration — only a verified address is ever sent to, so one sitting
+ * there unverified would otherwise look like a working contact. With `onDelete`/`onPrefer` each row
+ * gets a 3-dots menu (profile); without them the list is read-only (user-edit screen). */
+export function ContactList({
+  contacts,
+  preferred,
+  onDelete,
+  onPrefer,
+  onVerify,
+}: {
+  contacts: Contact[];
+  preferred?: string | null;
+  onDelete?: (contact: Contact) => void;
+  onPrefer?: (contact: Contact, prefer: boolean) => void;
+  /** Offered only for unverified rows, and only when the deployment can actually send mail. */
+  onVerify?: (contact: Contact) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <ul className="divide-y divide-slate-100 dark:divide-slate-700/50">
+      {contacts.map((contact) => {
+        const isPreferred = preferred === contact.address;
+        return (
+          <li key={contact.address} className="flex items-start justify-between gap-3 py-3">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-slate-900 dark:text-white">
+                <span className="truncate">{contact.address}</span>
+                {contact.label && <span className="text-xs text-slate-400">{contact.label}</span>}
+                {isPreferred && (
+                  <span className="rounded-full bg-[rgb(var(--brand))]/10 px-2 py-0.5 text-[11px] font-normal text-[rgb(var(--brand))]">
+                    {t("contacts.preferred")}
+                  </span>
+                )}
+                {!contact.verified && (
+                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-normal text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">
+                    {t("contacts.unverified")}
+                  </span>
+                )}
+              </div>
+              <div className="text-xs text-slate-400">
+                {t("contacts.addedOn")}: {formatDateTime(contact.created)}
+              </div>
+            </div>
+            {(onDelete || onPrefer || onVerify) && (
+              <DropdownMenu
+                label={t("contacts.menu")}
+                actions={[
+                  ...(onVerify && !contact.verified
+                    ? [{ label: t("contacts.verify"), onSelect: () => onVerify(contact) }]
+                    : []),
+                  ...(onPrefer
+                    ? [
+                        {
+                          label: isPreferred
+                            ? t("contacts.clearPreferred")
+                            : t("contacts.setPreferred"),
+                          onSelect: () => onPrefer(contact, !isPreferred),
+                        },
+                      ]
+                    : []),
+                  ...(onDelete
+                    ? [
+                        {
+                          label: t("contacts.delete"),
+                          danger: true,
+                          onSelect: () => onDelete(contact),
+                        },
+                      ]
+                    : []),
                 ]}
               />
             )}

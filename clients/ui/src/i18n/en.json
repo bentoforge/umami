@@ -44,7 +44,6 @@
     "logoutAll": "Log out everywhere",
     "logoutAllConfirm": "End all sessions of “{{name}}”? Every device loses access on its next refresh.",
     "username": "Username",
-    "email": "Email",
     "locale": "Language",
     "localeAuto": "Automatic (browser)",
     "salutation": "Salutation",
@@ -86,7 +85,14 @@
     "submit": "Sign in",
     "mfaHint": "Enter the 6-digit code from your authenticator app.",
     "passkey": "Sign in with a passkey",
-    "failed": "Sign-in failed"
+    "failed": "Sign-in failed",
+    "forgot": "Forgot your password?",
+    "recoverHeading": "Reset password",
+    "recoverHint": "Enter your username or a confirmed email address. If we can reach you, a link follows.",
+    "recoverIdentifier": "Username or email address",
+    "recoverSubmit": "Send link",
+    "recoverSent": "If that account exists and we can reach it, a link is on its way. Check your inbox.",
+    "recoverBack": "Back to sign-in"
   },
   "dashboard": {
     "passkeyAdded": "Passkey registered."
@@ -196,6 +202,41 @@
     "new": "New service key",
     "allowSecretLogin": "Allow simplified (secret) login",
     "allowSecretLoginHint": "Off: the token is usable only via the signed HMAC exchange (Mode 2). On: the raw secret can be exchanged directly (Mode 1)."
+  },
+  "notifications": {
+    "title": "Notifications",
+    "intro": "What reaches you, and how often. Sent to your preferred confirmed address.",
+    "useDefault": "Default ({{what}})",
+    "off": "Off",
+    "on": "On"
+  },
+  "contacts": {
+    "title": "Email addresses",
+    "intro": "Where umami can reach you. Only a confirmed address is ever used — add the new one and confirm it before removing the old.",
+    "addressLabel": "Email address",
+    "labelField": "Label (optional)",
+    "add": "Add",
+    "empty": "No addresses.",
+    "addedOn": "Added",
+    "preferred": "Preferred",
+    "setPreferred": "Use by preference",
+    "clearPreferred": "Stop preferring",
+    "unverified": "Not confirmed",
+    "verify": "Send confirmation link",
+    "verifySent": "Confirmation link sent to {{address}}.",
+    "alreadyVerified": "That address is already confirmed.",
+    "delete": "Delete",
+    "deleteConfirm": "Remove the address \"{{address}}\"?",
+    "menu": "Actions"
+  },
+  "verifyContact": {
+    "title": "Confirm email address",
+    "working": "Confirming\u2026",
+    "ok": "{{address}} is confirmed. We can reach you at it from now on.",
+    "missingToken": "This link is incomplete \u2014 it carries no confirmation token.",
+    "retryHint": "Request a fresh link from your profile.",
+    "toProfile": "To my profile",
+    "toSignIn": "To sign-in"
   },
   "messaging": {
     "linksTitle": "Messaging links",

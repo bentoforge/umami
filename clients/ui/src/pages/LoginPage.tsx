@@ -45,6 +45,34 @@ export function LoginPage() {
   const [mfaRequired, setMfaRequired] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Whether this deployment can mail at all. Asked before sign-in via the public capabilities
+  // endpoint, so the recovery link is only offered when it leads somewhere.
+  const [canRecover, setCanRecover] = useState(false);
+  const [recoverMode, setRecoverMode] = useState(false);
+  const [recoverSent, setRecoverSent] = useState(false);
+
+  useEffect(() => {
+    client
+      .capabilities()
+      .then((caps) => setCanRecover(caps.passwordRecovery))
+      .catch(() => setCanRecover(false));
+  }, [client]);
+
+  const onForgot = async (event: FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      await client.forgotPassword(username.trim());
+      // Always the same confirmation, because the server always answers the same way: showing
+      // anything account-specific here would undo the point of that.
+      setRecoverSent(true);
+    } catch (err) {
+      setError(err instanceof UmamiError ? err.message : t("login.failed"));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -155,65 +183,115 @@ export function LoginPage() {
         <div className="flex justify-center mb-6">
           <Logo className="h-16 w-auto max-w-full" />
         </div>
-        <h1 className="text-2xl font-semibold mb-6">{t("login.heading")}</h1>
-        <form onSubmit={onSubmit} className="space-y-4">
-          {/*
+        <h1 className="text-2xl font-semibold mb-6">
+          {t(recoverMode ? "login.recoverHeading" : "login.heading")}
+        </h1>
+
+        {recoverMode && (
+          <div className="space-y-4">
+            {recoverSent ? (
+              <>
+                <p className="text-sm text-login-text opacity-80">{t("login.recoverSent")}</p>
+                <button
+                  type="button"
+                  className={secondaryButtonClass}
+                  onClick={() => {
+                    setRecoverMode(false);
+                    setRecoverSent(false);
+                  }}
+                >
+                  {t("login.recoverBack")}
+                </button>
+              </>
+            ) : (
+              <form onSubmit={onForgot} className="space-y-4">
+                <p className="text-sm text-login-text opacity-80">{t("login.recoverHint")}</p>
+                <Field label={t("login.recoverIdentifier")}>
+                  <input
+                    type="text"
+                    required
+                    autoFocus
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    className={inputClass}
+                  />
+                </Field>
+                {error && <p className={errorBox}>{error}</p>}
+                <button type="submit" disabled={busy} className={primaryButtonClass}>
+                  {t("login.recoverSubmit")}
+                </button>
+                <button
+                  type="button"
+                  className={secondaryButtonClass}
+                  onClick={() => setRecoverMode(false)}
+                >
+                  {t("login.recoverBack")}
+                </button>
+              </form>
+            )}
+          </div>
+        )}
+
+        {!recoverMode && (
+          <form onSubmit={onSubmit} className="space-y-4">
+            {/*
             Two-step form: step one asks for username + password, step two for the
             one-time code. The username stays visible (read-only) so the password
             manager keeps the entry associated with this form.
           */}
-          <Field label={t("login.username")}>
-            <input
-              type="text"
-              required
-              // "webauthn" is what lets the browser put a passkey into this field's autofill
-              // list; without it, conditional mediation has nothing to attach to.
-              autoComplete="username webauthn"
-              readOnly={mfaRequired}
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              className={mfaRequired ? readOnlyInputClass : inputClass}
-            />
-          </Field>
-          {/*
+            <Field label={t("login.username")}>
+              <input
+                type="text"
+                required
+                // "webauthn" is what lets the browser put a passkey into this field's autofill
+                // list; without it, conditional mediation has nothing to attach to.
+                autoComplete="username webauthn"
+                readOnly={mfaRequired}
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                className={mfaRequired ? readOnlyInputClass : inputClass}
+              />
+            </Field>
+            {/*
             The password input is *removed* in the MFA step rather than hidden. As long
             as a fillable `current-password` field sits in the DOM, password managers
             keep treating step two as a password form and drop the one-time code into
             it. The value lives in React state, so the second submit still carries it.
           */}
-          {!mfaRequired && (
-            <Field label={t("login.password")}>
-              <input
-                type="password"
-                required
-                autoComplete="current-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className={inputClass}
-              />
-            </Field>
-          )}
-          {mfaRequired && (
-            <Field label={t("login.totp")}>
-              <input
-                type="text"
-                inputMode="numeric"
-                required
-                autoFocus
-                autoComplete="one-time-code"
-                value={totpCode}
-                onChange={(e) => setTotpCode(e.target.value)}
-                className={inputClass}
-              />
-              <p className="mt-1 text-xs text-login-text opacity-70">{t("login.mfaHint")}</p>
-            </Field>
-          )}
-          {error && <p className={errorBox}>{error}</p>}
-          <button type="submit" disabled={busy} className={primaryButtonClass}>
-            {t("login.submit")}
-          </button>
-        </form>
-        {!mfaRequired && (
+            {!mfaRequired && (
+              <Field label={t("login.password")}>
+                <input
+                  type="password"
+                  required
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className={inputClass}
+                />
+              </Field>
+            )}
+            {mfaRequired && (
+              <Field label={t("login.totp")}>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  required
+                  autoFocus
+                  autoComplete="one-time-code"
+                  value={totpCode}
+                  onChange={(e) => setTotpCode(e.target.value)}
+                  className={inputClass}
+                />
+                <p className="mt-1 text-xs text-login-text opacity-70">{t("login.mfaHint")}</p>
+              </Field>
+            )}
+            {error && <p className={errorBox}>{error}</p>}
+            <button type="submit" disabled={busy} className={primaryButtonClass}>
+              {t("login.submit")}
+            </button>
+          </form>
+        )}
+        {!recoverMode && !mfaRequired && (
           <button
             type="button"
             onClick={onPasskey}
@@ -221,6 +299,18 @@ export function LoginPage() {
             className={secondaryButtonClass}
           >
             {t("login.passkey")}
+          </button>
+        )}
+        {!recoverMode && !mfaRequired && canRecover && (
+          <button
+            type="button"
+            onClick={() => {
+              setRecoverMode(true);
+              setError(null);
+            }}
+            className="mt-4 w-full text-sm text-login-text opacity-70 hover:opacity-100 underline"
+          >
+            {t("login.forgot")}
           </button>
         )}
       </div>
