@@ -640,21 +640,10 @@ export class UmamiClient {
     return data.states;
   }
   /** Recently tripped rate-limit blocks across the deployment, newest first (requires
-   * `view:ratelimits`). Reads one bounded index page per policy — never a table scan. */
-  rateLimitBlocks(options?: {
-    /** How far back to look, in seconds (default 3600, clamped to 60 … 7 days). */
-    sinceSecs?: number;
-    /** How many blocks to return (default 100, capped at 250). */
-    limit?: number;
-    /** Narrow to a single policy; omitted ⇒ all of them. */
-    policy?: string;
-  }): Promise<RateLimitBlockPage> {
-    const qs = new URLSearchParams();
-    if (options?.sinceSecs !== undefined) qs.set("sinceSecs", String(options.sinceSecs));
-    if (options?.limit !== undefined) qs.set("limit", String(options.limit));
-    if (options?.policy) qs.set("policy", options.policy);
-    const query = qs.toString();
-    return this.request<RateLimitBlockPage>(`/rate-limits/blocks${query ? `?${query}` : ""}`);
+   * `view:ratelimits`). Takes no parameters: the window and the cap are the server's, and it
+   * reports both on the response — read `since` rather than assuming an hour. */
+  rateLimitBlocks(): Promise<RateLimitBlockPage> {
+    return this.request<RateLimitBlockPage>("/rate-limits/blocks");
   }
 }
 
