@@ -173,9 +173,12 @@ pub const DEFAULT_PER_IP_BLOCK_SECS: u32 = 300;
 /// `UMAMI_RATELIMIT_CACHE_CAP`.
 pub const DEFAULT_RATELIMIT_CACHE_CAP: usize = 50_000;
 
-/// Default window the rate-limit overview looks back over (1 hour).
-pub const DEFAULT_RATELIMIT_LOOKBACK_SECS: i64 = 3_600;
-/// Default number of blocks the rate-limit overview returns.
-pub const DEFAULT_RATELIMIT_BLOCK_LIMIT: i32 = 100;
-/// Hard cap on that number — the overview reads one bounded index page, never a scan.
-pub const MAX_RATELIMIT_BLOCK_LIMIT: i32 = 250;
+/// Window the rate-limit overview looks back over (1 hour).
+///
+/// Fixed rather than a caller's choice, together with [`RATELIMIT_BLOCK_LIMIT`]: the two are what
+/// bound the index read, so letting a client widen them would turn one screen into an arbitrarily
+/// expensive query. The response states both, so nothing has to be assumed on the other side.
+pub const RATELIMIT_LOOKBACK_SECS: i64 = 3_600;
+/// Number of blocks the rate-limit overview returns — one bounded index page per policy, never a
+/// scan. See [`RATELIMIT_LOOKBACK_SECS`].
+pub const RATELIMIT_BLOCK_LIMIT: i32 = 100;

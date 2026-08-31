@@ -4,17 +4,7 @@ import { useTranslation } from "react-i18next";
 import { useUmami } from "../auth/UmamiProvider";
 import { Banner, errMsg, formatDateTime, Loader } from "../components";
 import { formatDuration, policyLabelKey } from "../ratelimit";
-import { card, ghostButton, input, td, th } from "../ui";
-
-/** How far back the overview may look. The server clamps to 60 s … 7 days; these are the offered
- * steps, in seconds. */
-const LOOKBACKS = [3600, 6 * 3600, 24 * 3600, 7 * 24 * 3600];
-
-/** Policies the filter offers, in the order the server lists them. */
-const POLICIES = ["perIp:login", "perIp:token", "login", "tokenExchange"];
-
-/** Blocks fetched per request (the server caps this at 250). */
-const LIMIT = 100;
+import { card, ghostButton, td, th } from "../ui";
 
 /** Top-aligned cell: `td` bakes in `align-middle`, and a trailing `align-top` won't reliably win
  * the Tailwind cascade — so swap the class rather than append it. */
@@ -34,24 +24,19 @@ export function RateLimitsPage() {
   const [blocks, setBlocks] = useState<RateLimitBlock[] | null>(null);
   const [since, setSince] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [lookback, setLookback] = useState(LOOKBACKS[0]);
-  const [policy, setPolicy] = useState("");
 
   const load = useCallback(async () => {
     setError(null);
     try {
-      const page = await client.rateLimitBlocks({
-        sinceSecs: lookback,
-        limit: LIMIT,
-        policy: policy || undefined,
-      });
+      const page = await client.rateLimitBlocks();
       setBlocks(page.blocks);
+      // The window is the server's, so it is read off the response rather than restated here.
       setSince(page.since);
     } catch (err) {
       setError(errMsg(err));
       setBlocks([]);
     }
-  }, [client, lookback, policy]);
+  }, [client]);
 
   useEffect(() => {
     void load();
@@ -65,36 +50,9 @@ export function RateLimitsPage() {
         <h1 className="text-xl font-semibold text-slate-900 dark:text-white">
           {t("rateLimits.pageTitle")}
         </h1>
-        <div className="flex flex-wrap items-center gap-2">
-          <select
-            className={`${input} w-auto`}
-            value={policy}
-            aria-label={t("rateLimits.filterPolicy")}
-            onChange={(e) => setPolicy(e.target.value)}
-          >
-            <option value="">{t("rateLimits.allPolicies")}</option>
-            {POLICIES.map((code) => (
-              <option key={code} value={code}>
-                {t(policyLabelKey(code))}
-              </option>
-            ))}
-          </select>
-          <select
-            className={`${input} w-auto`}
-            value={lookback}
-            aria-label={t("rateLimits.filterWindow")}
-            onChange={(e) => setLookback(Number(e.target.value))}
-          >
-            {LOOKBACKS.map((secs) => (
-              <option key={secs} value={secs}>
-                {t("rateLimits.lastN", { duration: formatDuration(secs) })}
-              </option>
-            ))}
-          </select>
-          <button type="button" className={ghostButton} onClick={() => void load()}>
-            {t("rateLimits.reload")}
-          </button>
-        </div>
+        <button type="button" className={ghostButton} onClick={() => void load()}>
+          {t("rateLimits.reload")}
+        </button>
       </div>
 
       <p className="text-sm text-slate-500">

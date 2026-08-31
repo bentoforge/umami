@@ -18,13 +18,12 @@ use crate::auth::ratelimit::{ALL_POLICIES, POLICY_LOGIN, POLICY_TOKEN_EXCHANGE, 
 use crate::auth::ratelimit::{Policy, SubjectState};
 use crate::config::repository::ConfigRepository;
 use crate::constants::{
-    DEFAULT_RATELIMIT_BLOCK_LIMIT, DEFAULT_RATELIMIT_LOOKBACK_SECS,
     MANAGE_PERSONAL_TOKENS_PERMISSION, MANAGE_SERVICE_KEYS_PERMISSION, MANAGE_USERS_PERMISSION,
-    MAX_RATELIMIT_BLOCK_LIMIT, VIEW_RATELIMITS_PERMISSION,
+    RATELIMIT_BLOCK_LIMIT, RATELIMIT_LOOKBACK_SECS, VIEW_RATELIMITS_PERMISSION,
 };
 use crate::users::repository::UserRepository;
 use chrono::{DateTime, SecondsFormat, TimeZone, Utc};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::sync::Arc;
 use warp::Filter;
 use warp::filters::BoxedFilter;
@@ -118,43 +117,6 @@ struct BlockListResponse {
     since: String,
     /// The policies queried.
     policies: Vec<String>,
-}
-
-/// Optional `?sinceSecs=` (how far back to look) and `?limit=` (clamped to
-/// `1..=MAX_RATELIMIT_BLOCK_LIMIT`), plus an optional `?policy=` narrowing to one policy.
-#[derive(Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
-struct BlockQuery {
-    since_secs: Option<i64>,
-    limit: Option<i32>,
-    policy: Option<String>,
-}
-
-impl BlockQuery {
-    fn lookback(&self) -> i64 {
-        self.since_secs
-            .unwrap_or(DEFAULT_RATELIMIT_LOOKBACK_SECS)
-            .clamp(60, 7 * 24 * 3_600)
-    }
-
-    fn effective_limit(&self) -> i32 {
-        self.limit
-            .unwrap_or(DEFAULT_RATELIMIT_BLOCK_LIMIT)
-            .clamp(1, MAX_RATELIMIT_BLOCK_LIMIT)
-    }
-
-    /// The policies to query — the requested one, or all of them. An unknown name yields an empty
-    /// selection rather than an error, so a stale client sees "nothing" instead of a 400.
-    fn policies(&self) -> Vec<&'static str> {
-        match self.policy.as_deref() {
-            Some(wanted) => ALL_POLICIES
-                .iter()
-                .copied()
-                .filter(|policy| *policy == wanted)
-                .collect(),
-            None => ALL_POLICIES.to_vec(),
-        }
-    }
 }
 
 /// Formats an epoch as RFC3339, dropping a value the clock cannot represent.
@@ -266,15 +228,18 @@ pub fn user_pat_rate_limit_route(
         .boxed()
 }
 
-/// `GET /rate-limits/blocks[?sinceSecs=&limit=&policy=]` — the deployment-wide overview of what
-/// recently tripped (requires `view:ratelimits`).
+/// `GET /rate-limits/blocks` — the deployment-wide overview of what recently tripped (requires
+/// `view:ratelimits`).
+///
+/// Takes no parameters. The window and the cap are the server's to choose: they are what bounds
+/// the index read, and a caller that could widen them could turn one screen into an expensive
+/// query. The response states both, so the client labels the view from what it actually got.
 pub fn rate_limit_blocks_route(
     rate_limiter: Arc<RateLimiter>,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("rate-limits" / "blocks")
         .and(warp::get())
-        .and(warp::query::<BlockQuery>())
         .and(with_cloneable(rate_limiter))
         .and(with_user_with_any_permission(
             authenticator,
@@ -358,11 +323,10 @@ async fn handle_user_pat_rate_limit_route(
 
 #[tracing::instrument(level = "debug", name = "GET /rate-limits/blocks", skip_all)]
 async fn handle_rate_limit_blocks_route(
-    query: BlockQuery,
     rate_limiter: Arc<RateLimiter>,
     _caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(rate_limit_blocks(query, rate_limiter).await)
+    into_response(rate_limit_blocks(rate_limiter).await)
 }
 
 // ── Business handlers ────────────────────────────────────────────────────────
@@ -488,15 +452,11 @@ async fn user_pat_rate_limit(
     key_state(&key.key_id, key.rate_limit.as_ref(), config, rate_limiter).await
 }
 
-async fn rate_limit_blocks(
-    query: BlockQuery,
-    rate_limiter: Arc<RateLimiter>,
-) -> anyhow::Result<BlockListResponse> {
+async fn rate_limit_blocks(rate_limiter: Arc<RateLimiter>) -> anyhow::Result<BlockListResponse> {
     let now = Utc::now();
-    let since = now.timestamp() - query.lookback();
-    let policies = query.policies();
+    let since = now.timestamp() - RATELIMIT_LOOKBACK_SECS;
     let blocks = rate_limiter
-        .recent_blocks(&policies, since, query.effective_limit())
+        .recent_blocks(ALL_POLICIES, since, RATELIMIT_BLOCK_LIMIT)
         .await?;
 
     Ok(BlockListResponse {
@@ -505,7 +465,7 @@ async fn rate_limit_blocks(
             .filter_map(|block| view(block, now))
             .collect(),
         since: rfc3339(since).unwrap_or_default(),
-        policies: policies.into_iter().map(str::to_owned).collect(),
+        policies: ALL_POLICIES.iter().map(|p| (*p).to_owned()).collect(),
     })
 }
 

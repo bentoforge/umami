@@ -379,13 +379,17 @@ that would differ from node to node).
 | `GET /tenants/{id}/api-keys/{keyId}/rate-limit` | `manage:service-keys` (own tenant) | that service key's `tokenExchange` state, under the policy the key actually runs on (its override, or the global one) |
 | `GET /auth/me/api-keys/{keyId}/rate-limit` | `manage:personal-tokens` | the same, for one of your own PATs |
 | `GET /users/{id}/pats/{keyId}/rate-limit` | `manage:users` (own tenant) | the same, for a tenant user's PAT |
-| `GET /rate-limits/blocks[?sinceSecs=&limit=&policy=]` | `view:ratelimits` | blocks that tripped recently, across every policy, newest first |
+| `GET /rate-limits/blocks` | `view:ratelimits` | blocks that tripped recently, across every policy, newest first |
 
 **Cost.** The first five name their subject, so each is two `GetItem`s (the counter and the block)
 on the table's hash key — no index involved. The overview cannot name its subjects (*which* IPs
 tripped is the question), so it queries a GSI, `BlocksByPolicyIndex` (hash `policy`, range
-`blockedAt`), for one bounded page per policy: `sinceSecs` defaults to 3600 and is clamped to
-60 s … 7 days, `limit` defaults to 100 and is capped at 250. It never scans.
+`blockedAt`), for one bounded page per policy — the last hour, at most 100 blocks. It never scans.
+
+Those two bounds take no query parameter: they are exactly what limits the read, so a caller able
+to widen them could turn one screen into an arbitrarily expensive query. The response carries
+`since` and `policies`, so a client labels the view from what it actually got rather than from an
+assumption.
 
 **Only blocks are indexed.** The index attributes are written solely by `set_block`, which runs when
 a subject actually trips a threshold — rare by construction. Writing them on every `increment`
