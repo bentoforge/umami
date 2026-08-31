@@ -21,10 +21,11 @@
 //! elsewhere is re-hydrated on the fresh window's first request (`count == 1`).
 
 pub mod repository;
+pub mod service;
 
 use chrono::{DateTime, Utc};
 use lru::LruCache;
-use repository::RateLimitRepository;
+use repository::{BlockRecord, RateLimitRepository};
 use std::env;
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
@@ -33,6 +34,23 @@ use warp::http::header::{CONTENT_TYPE, HeaderValue, RETRY_AFTER};
 use warp::reply::Response;
 
 use crate::constants::DEFAULT_RATELIMIT_CACHE_CAP;
+
+/// Policy name: the per-client-IP volume cap on `POST /auth/login`.
+pub const POLICY_PER_IP_LOGIN: &str = "perIp:login";
+/// Policy name: the per-client-IP volume cap on `POST /auth/token`.
+pub const POLICY_PER_IP_TOKEN: &str = "perIp:token";
+/// Policy name: the per-account brute-force cap on failed logins.
+pub const POLICY_LOGIN: &str = "login";
+/// Policy name: the per-API-key volume cap on the token exchange.
+pub const POLICY_TOKEN_EXCHANGE: &str = "tokenExchange";
+
+/// Every policy that can trip a block, in the order the admin overview lists them.
+pub const ALL_POLICIES: &[&str] = &[
+    POLICY_PER_IP_LOGIN,
+    POLICY_PER_IP_TOKEN,
+    POLICY_LOGIN,
+    POLICY_TOKEN_EXCHANGE,
+];
 
 /// Small grace added to every item's TTL (seconds) so a row always outlives the window/block it
 /// represents before DynamoDB may expire it.
@@ -76,6 +94,43 @@ pub enum Decision {
         /// Seconds until the block lifts (for the `Retry-After` header).
         retry_after: i64,
     },
+}
+
+/// A subject's live state under one policy, as reported to the management UI.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubjectState {
+    /// The policy this state belongs to (`perIp:login`, `login`, `tokenExchange`, …).
+    pub policy: String,
+    /// The subject the state is keyed on (an IP, a user id or a key id).
+    pub subject: String,
+    /// The cap in force — 0 when the policy is switched off, in which case nothing is counted.
+    pub max: u32,
+    /// The counting window, in seconds.
+    pub window_secs: i64,
+    /// How long a block lasts once the cap trips, in seconds.
+    pub block_secs: i64,
+    /// Requests (volume) or failures (brute-force) counted in the current window.
+    pub count: u64,
+    /// When the current window resets (epoch seconds), if there is a window running.
+    pub window_ends_at: Option<i64>,
+    /// When an active block lifts (epoch seconds); `None` when the subject is not blocked.
+    pub blocked_until: Option<i64>,
+}
+
+impl SubjectState {
+    /// The zero state for a policy/subject: nothing counted, nothing blocked.
+    fn empty(policy_name: &str, subject: &str, policy: &Policy) -> Self {
+        SubjectState {
+            policy: policy_name.to_owned(),
+            subject: subject.to_owned(),
+            max: policy.max,
+            window_secs: policy.window_secs,
+            block_secs: policy.block_secs,
+            count: 0,
+            window_ends_at: None,
+            blocked_until: None,
+        }
+    }
 }
 
 /// Rate limiter: policy logic + the per-node LRU block cache in front of a [`RateLimitRepository`].
@@ -151,7 +206,13 @@ impl RateLimiter {
         // 4. Over the cap → set + cache a block and reject this request.
         if count > u64::from(policy.max) {
             return self
-                .trip_block(&block_id, now_epoch, policy.block_secs)
+                .trip_block(
+                    &block_id,
+                    policy_name,
+                    subject,
+                    now_epoch,
+                    policy.block_secs,
+                )
                 .await;
         }
 
@@ -209,7 +270,13 @@ impl RateLimiter {
         if count >= u64::from(policy.max) {
             let block_id = block_id(policy_name, subject);
             return self
-                .trip_block(&block_id, now_epoch, policy.block_secs)
+                .trip_block(
+                    &block_id,
+                    policy_name,
+                    subject,
+                    now_epoch,
+                    policy.block_secs,
+                )
                 .await;
         }
         Decision::Allow
@@ -229,6 +296,96 @@ impl RateLimiter {
             tracing::warn!("rate-limit block clear failed (ignored): {err:#}");
         }
         self.evict_block(&block_id);
+    }
+
+    // ── Inspection (read-only, for the management UI) ────────────────────────────
+
+    /// A subject's live state under a volume policy (per-IP, per-key).
+    ///
+    /// Deliberately does **not** go through [`check`](Self::check): that counts, and looking at a
+    /// number must not change it. It also skips the LRU, which holds only this node's known blocks —
+    /// reading it would make the same subject look different depending on which node answered.
+    pub async fn inspect_volume(
+        &self,
+        policy_name: &str,
+        policy: &Policy,
+        subject: &str,
+        now: DateTime<Utc>,
+    ) -> anyhow::Result<SubjectState> {
+        let mut state = SubjectState::empty(policy_name, subject, policy);
+        if policy.disabled() {
+            return Ok(state);
+        }
+        let now_epoch = now.timestamp();
+        let bucket = now_epoch.div_euclid(policy.window_secs);
+        let counter_id = counter_id(policy_name, subject, bucket);
+        let block_id = block_id(policy_name, subject);
+
+        let items = self
+            .repo
+            .get_items(&[counter_id.clone(), block_id.clone()])
+            .await?;
+        state.count = items
+            .get(&counter_id)
+            .and_then(|item| item.count)
+            .unwrap_or(0);
+        // A fixed window: the bucket boundary is arithmetic, no stored value needed.
+        state.window_ends_at = Some((bucket + 1) * policy.window_secs);
+        state.blocked_until = items
+            .get(&block_id)
+            .and_then(|item| item.blocked_until)
+            .filter(|until| *until > now_epoch);
+        Ok(state)
+    }
+
+    /// A subject's live state under the brute-force policy (failed logins per account).
+    pub async fn inspect_failures(
+        &self,
+        policy_name: &str,
+        policy: &Policy,
+        subject: &str,
+        now: DateTime<Utc>,
+    ) -> anyhow::Result<SubjectState> {
+        let mut state = SubjectState::empty(policy_name, subject, policy);
+        if policy.disabled() {
+            return Ok(state);
+        }
+        let now_epoch = now.timestamp();
+        let counter_id = failure_counter_id(policy_name, subject);
+        let block_id = block_id(policy_name, subject);
+
+        let items = self
+            .repo
+            .get_items(&[counter_id.clone(), block_id.clone()])
+            .await?;
+        if let Some(counter) = items.get(&counter_id) {
+            state.count = counter.count.unwrap_or(0);
+            // The counter rolls rather than sitting in a fixed bucket, so its TTL is the only record
+            // of when the last failure landed — back out the grace to get the reset time.
+            state.window_ends_at = counter.expires_at.map(|ttl| ttl - TTL_GRACE_SECS);
+        }
+        state.blocked_until = items
+            .get(&block_id)
+            .and_then(|item| item.blocked_until)
+            .filter(|until| *until > now_epoch);
+        Ok(state)
+    }
+
+    /// Blocks set for each of `policies` at or after `since_epoch`, merged and newest first, capped
+    /// at `limit` overall. One bounded index query per policy — never a scan.
+    pub async fn recent_blocks(
+        &self,
+        policies: &[&str],
+        since_epoch: i64,
+        limit: i32,
+    ) -> anyhow::Result<Vec<BlockRecord>> {
+        let mut blocks = Vec::new();
+        for policy in policies {
+            blocks.extend(self.repo.list_blocks(policy, since_epoch, limit).await?);
+        }
+        blocks.sort_by_key(|block| std::cmp::Reverse(block.blocked_at));
+        blocks.truncate(limit.max(1) as usize);
+        Ok(blocks)
     }
 
     // ── Shared helpers ───────────────────────────────────────────────────────────
@@ -270,11 +427,28 @@ impl RateLimiter {
     }
 
     /// Sets a block in the store (best-effort) and caches it locally, returning the `Block` decision.
-    async fn trip_block(&self, block_id: &str, now_epoch: i64, block_secs: i64) -> Decision {
+    ///
+    /// `policy_name` and `subject` are written alongside the block so the row is self-describing in
+    /// the admin overview — the item id alone is opaque, and this is the one write that indexes.
+    async fn trip_block(
+        &self,
+        block_id: &str,
+        policy_name: &str,
+        subject: &str,
+        now_epoch: i64,
+        block_secs: i64,
+    ) -> Decision {
         let until = now_epoch + block_secs;
         if let Err(err) = self
             .repo
-            .set_block(block_id, until, until + TTL_GRACE_SECS)
+            .set_block(
+                block_id,
+                policy_name,
+                subject,
+                now_epoch,
+                until,
+                until + TTL_GRACE_SECS,
+            )
             .await
         {
             // Fail-open on the write, but still cache locally so this node protects itself.
@@ -339,8 +513,9 @@ pub fn too_many_requests(retry_after: i64) -> Response {
 
 #[cfg(test)]
 mod tests {
-    use super::repository::MockRateLimitRepository;
+    use super::repository::{BlockRecord, MockRateLimitRepository, StoredItem};
     use super::*;
+    use std::collections::HashMap;
 
     fn limiter(repo: MockRateLimitRepository) -> RateLimiter {
         RateLimiter::new(Arc::new(repo), 128)
@@ -371,7 +546,7 @@ mod tests {
             .returning(|_, _| Box::pin(async { Ok(4) }));
         repo.expect_set_block()
             .times(1)
-            .returning(|_, _, _| Box::pin(async { Ok(()) }));
+            .returning(|_, _, _, _, _, _| Box::pin(async { Ok(()) }));
         let decision = limiter(repo)
             .check("perIp:login", &policy, "1.2.3.4", now())
             .await;
@@ -409,7 +584,7 @@ mod tests {
             .returning(|_, _| Box::pin(async { Ok(4) }));
         repo.expect_set_block()
             .times(1)
-            .returning(|_, _, _| Box::pin(async { Ok(()) }));
+            .returning(|_, _, _, _, _, _| Box::pin(async { Ok(()) }));
         let limiter = limiter(repo);
         assert!(matches!(
             limiter.check("perIp:token", &policy, "9.9.9.9", now).await,
@@ -447,7 +622,7 @@ mod tests {
             .returning(|_, _| Box::pin(async { Ok(5) }));
         repo.expect_set_block()
             .times(1)
-            .returning(|_, _, _| Box::pin(async { Ok(()) }));
+            .returning(|_, _, _, _, _, _| Box::pin(async { Ok(()) }));
         let decision = limiter(repo)
             .record_failure("login", &policy, "alice", now)
             .await;
@@ -507,6 +682,180 @@ mod tests {
         assert_eq!(
             limiter.is_blocked("login", &policy, "alice", now()).await,
             Decision::Allow
+        );
+    }
+
+    #[tokio::test]
+    async fn trip_block_records_the_policy_and_subject_it_blocked() {
+        let policy = Policy::new(3, 60, 300);
+        let now = now();
+        let mut repo = MockRateLimitRepository::new();
+        repo.expect_increment()
+            .times(1)
+            .returning(|_, _| Box::pin(async { Ok(4) }));
+        // The block row must carry enough to render it in the overview — the id alone is opaque.
+        repo.expect_set_block()
+            .withf(
+                move |id, policy_name, subject, blocked_at, blocked_until, ttl| {
+                    id == "b#perIp:login#1.2.3.4"
+                        && policy_name == POLICY_PER_IP_LOGIN
+                        && subject == "1.2.3.4"
+                        && *blocked_at == now.timestamp()
+                        && *blocked_until == now.timestamp() + 300
+                        && *ttl > *blocked_until
+                },
+            )
+            .times(1)
+            .returning(|_, _, _, _, _, _| Box::pin(async { Ok(()) }));
+        let decision = limiter(repo)
+            .check(POLICY_PER_IP_LOGIN, &policy, "1.2.3.4", now)
+            .await;
+        assert_eq!(decision, Decision::Block { retry_after: 300 });
+    }
+
+    #[tokio::test]
+    async fn inspecting_a_subject_never_counts_it() {
+        let policy = Policy::new(60, 60, 300);
+        let now = now();
+        let bucket = now.timestamp().div_euclid(60);
+        let counter = format!("v#tokenExchange#key1#{bucket}");
+
+        let mut repo = MockRateLimitRepository::new();
+        // An increment here would mean looking at a number changed it; the mock has none set up,
+        // so any call would panic the test.
+        repo.expect_get_items().times(1).returning(move |ids| {
+            let counter = counter.clone();
+            let ids = ids.to_vec();
+            Box::pin(async move {
+                assert_eq!(
+                    ids,
+                    vec![counter.clone(), "b#tokenExchange#key1".to_owned()]
+                );
+                Ok(HashMap::from([(
+                    counter,
+                    StoredItem {
+                        count: Some(17),
+                        ..StoredItem::default()
+                    },
+                )]))
+            })
+        });
+
+        let state = limiter(repo)
+            .inspect_volume(POLICY_TOKEN_EXCHANGE, &policy, "key1", now)
+            .await
+            .unwrap();
+        assert_eq!(state.count, 17);
+        assert_eq!(state.max, 60);
+        assert_eq!(state.blocked_until, None);
+        // A fixed window ends at the next bucket boundary, whatever the store holds.
+        assert_eq!(state.window_ends_at, Some((bucket + 1) * 60));
+    }
+
+    #[tokio::test]
+    async fn inspection_reports_an_active_block_and_drops_an_expired_one() {
+        let policy = Policy::new(5, 300, 900);
+        let now = now();
+
+        let expired = now.timestamp() - 1;
+        let mut repo = MockRateLimitRepository::new();
+        repo.expect_get_items().times(1).returning(move |_| {
+            Box::pin(async move {
+                Ok(HashMap::from([(
+                    "b#login#alice".to_owned(),
+                    StoredItem {
+                        blocked_until: Some(expired),
+                        ..StoredItem::default()
+                    },
+                )]))
+            })
+        });
+        let state = limiter(repo)
+            .inspect_failures(POLICY_LOGIN, &policy, "alice", now)
+            .await
+            .unwrap();
+        assert_eq!(state.blocked_until, None);
+
+        let active = now.timestamp() + 120;
+        let ttl = now.timestamp() + 300 + TTL_GRACE_SECS;
+        let mut repo = MockRateLimitRepository::new();
+        repo.expect_get_items().times(1).returning(move |_| {
+            Box::pin(async move {
+                Ok(HashMap::from([
+                    (
+                        "f#login#alice".to_owned(),
+                        StoredItem {
+                            count: Some(3),
+                            expires_at: Some(ttl),
+                            ..StoredItem::default()
+                        },
+                    ),
+                    (
+                        "b#login#alice".to_owned(),
+                        StoredItem {
+                            blocked_until: Some(active),
+                            ..StoredItem::default()
+                        },
+                    ),
+                ]))
+            })
+        });
+        let state = limiter(repo)
+            .inspect_failures(POLICY_LOGIN, &policy, "alice", now)
+            .await
+            .unwrap();
+        assert_eq!(state.count, 3);
+        assert_eq!(state.blocked_until, Some(active));
+        // The rolling counter has no bucket; its reset time is backed out of the item's TTL.
+        assert_eq!(state.window_ends_at, Some(ttl - TTL_GRACE_SECS));
+    }
+
+    #[tokio::test]
+    async fn inspection_of_a_disabled_policy_never_touches_the_store() {
+        let policy = Policy::new(0, 60, 300);
+        // No `expect_get_items`: a disabled policy counts nothing, so there is nothing to read.
+        let limiter = limiter(MockRateLimitRepository::new());
+        let state = limiter
+            .inspect_volume(POLICY_TOKEN_EXCHANGE, &policy, "key1", now())
+            .await
+            .unwrap();
+        assert_eq!(state.count, 0);
+        assert_eq!(state.max, 0);
+    }
+
+    #[tokio::test]
+    async fn recent_blocks_merges_policies_newest_first_and_honours_the_limit() {
+        let mut repo = MockRateLimitRepository::new();
+        repo.expect_list_blocks().returning(|policy, since, limit| {
+            let policy = policy.to_owned();
+            Box::pin(async move {
+                assert_eq!(since, 1_000);
+                assert_eq!(limit, 2);
+                Ok(vec![BlockRecord {
+                    policy: policy.clone(),
+                    subject: format!("subject-{policy}"),
+                    blocked_at: match policy.as_str() {
+                        "perIp:login" => 1_100,
+                        _ => 1_200,
+                    },
+                    blocked_until: 1_500,
+                }])
+            })
+        });
+
+        let blocks = limiter(repo)
+            .recent_blocks(
+                &[POLICY_PER_IP_LOGIN, POLICY_PER_IP_TOKEN, POLICY_LOGIN],
+                1_000,
+                2,
+            )
+            .await
+            .unwrap();
+        assert_eq!(blocks.len(), 2, "the overall limit caps the merged list");
+        assert!(blocks[0].blocked_at >= blocks[1].blocked_at, "newest first");
+        assert_ne!(
+            blocks[0].policy, POLICY_PER_IP_LOGIN,
+            "the oldest is dropped"
         );
     }
 }

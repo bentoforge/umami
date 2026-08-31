@@ -10,7 +10,9 @@ use crate::auth::AuthContext;
 use crate::auth::broker::{MintParams, mint_for_api};
 use crate::auth::cookies::{build_refresh_cookie, clear_refresh_cookie, parse_refresh_cookie};
 use crate::auth::password;
-use crate::auth::ratelimit::{Decision, Policy, too_many_requests};
+use crate::auth::ratelimit::{
+    Decision, POLICY_LOGIN, POLICY_PER_IP_LOGIN, Policy, too_many_requests,
+};
 use crate::auth::session::repository::NewSession;
 use crate::auth::session::{generate_refresh_secret, hash_refresh_secret, verify_refresh_secret};
 use crate::bail_i18n;
@@ -448,7 +450,7 @@ async fn login(
     if let Some(ip) = audit_ip.as_deref()
         && let Decision::Block { retry_after } = context
             .rate_limiter
-            .check("perIp:login", &per_ip, ip, now)
+            .check(POLICY_PER_IP_LOGIN, &per_ip, ip, now)
             .await
     {
         return Ok(LoginOutcome::RateLimited { retry_after });
@@ -487,7 +489,7 @@ async fn login(
     // password verification.
     if let Decision::Block { retry_after } = context
         .rate_limiter
-        .is_blocked("login", &login_policy, &user.user_id, now)
+        .is_blocked(POLICY_LOGIN, &login_policy, &user.user_id, now)
         .await
     {
         return Ok(LoginOutcome::RateLimited { retry_after });
@@ -513,7 +515,7 @@ async fn login(
             .await;
             let _ = context
                 .rate_limiter
-                .record_failure("login", &login_policy, &user.user_id, now)
+                .record_failure(POLICY_LOGIN, &login_policy, &user.user_id, now)
                 .await;
             bail_i18n!(
                 StatusCode::UNAUTHORIZED,
@@ -527,7 +529,7 @@ async fn login(
         record_best_effort(&context.audit, bad("Login failed: wrong password".into())).await;
         let _ = context
             .rate_limiter
-            .record_failure("login", &login_policy, &user.user_id, now)
+            .record_failure(POLICY_LOGIN, &login_policy, &user.user_id, now)
             .await;
         bail_i18n!(
             StatusCode::UNAUTHORIZED,
@@ -567,7 +569,7 @@ async fn login(
             .await;
             let _ = context
                 .rate_limiter
-                .record_failure("login", &login_policy, &user.user_id, now)
+                .record_failure(POLICY_LOGIN, &login_policy, &user.user_id, now)
                 .await;
             bail_i18n!(StatusCode::UNAUTHORIZED, &locale, "auth.mfa_invalid");
         }
@@ -580,7 +582,7 @@ async fn login(
     // Credentials (and any second factor) verified — clear the account's failure counter/block.
     context
         .rate_limiter
-        .record_success("login", &login_policy, &user.user_id)
+        .record_success(POLICY_LOGIN, &login_policy, &user.user_id)
         .await;
 
     // Default to the umami admin API when the caller didn't request a specific target.

@@ -182,6 +182,7 @@ define their own.
 | `manage:users` | users CRUD + admin password reset, `GET /users/{id}/assignable-roles` |
 | `manage:service-keys` | service-key create/list/revoke, `GET /tenants/{id}/assignable-scopes` |
 | `manage:config` | `GET`/`PUT /config` |
+| `view:ratelimits` | `GET /rate-limits/blocks` — the deployment-wide rate-limit overview (§8) |
 | `manage:profile` | edit own profile — `PATCH /auth/me` (name parts + self-editable custom fields) |
 | `manage:passwords` | own security settings — `POST /auth/me/password`, TOTP setup/verify/disable, passkey registration |
 | `manage:personal-tokens` | own personal access tokens under `/auth/me/api-keys` |
@@ -211,7 +212,7 @@ role matrix; see [§6](#6-proposed-standard-config) for that. The default `apis[
 |--------|---------|
 | *(empty — always)* | `manage:profile`, `manage:passwords`, `manage:personal-tokens`, `manage:sessions` |
 | `role:owner` | `admin:tenant`, `manage:users`, `manage:service-keys`, `manage:config` |
-| `is:system-tenant` | `manage:tenants`, `switch:tenant` |
+| `is:system-tenant-member` | `manage:tenants`, `switch:tenant`, `view:ratelimits` |
 | `is:messaging-configured` | `manage:messaging` |
 | `scope:messaging-linker + is:system-tenant` | `messaging:link` |
 | `scope:messaging-resolver + is:system-tenant` | `messaging:resolve` |
@@ -274,7 +275,7 @@ feature/scope and a product-API entry with eligibility + claims. Copy, adjust, `
       "permissions": [
         { "when": "role:owner",  "grant": ["admin:tenant","manage:users","manage:service-keys","manage:config"] },
         { "when": "role:admin",  "grant": ["manage:users","manage:service-keys"] },
-        { "when": "is:system-tenant", "grant": ["manage:tenants","switch:tenant"] },
+        { "when": "is:system-tenant", "grant": ["manage:tenants","switch:tenant","view:ratelimits"] },
         // Granular self-service for every non-read-only user (a read-only role is simply excluded —
         // there is no separate deny marker).
         { "when": "!role:readonly", "grant": ["manage:profile","manage:passwords","manage:personal-tokens","manage:sessions"] },
@@ -352,7 +353,8 @@ Mechanics & guarantees:
 
 - **Storage:** DynamoDB (`<DYNAMO_TABLE_PREFIX>-rate-limits`), behind a `RateLimitRepository` trait
   so the backend is swappable. Counters use an atomic `ADD` (fixed window); each row carries a
-  numeric `ttl` so DynamoDB self-cleans; the TTL is enabled by umami on boot (see the README).
+  numeric `ttl` so DynamoDB self-cleans; the TTL is enabled by umami on boot (see the README). One
+  sparse GSI, `BlocksByPolicyIndex`, indexes **blocks only** — see [§8.1](#81-reading-the-limiter-management-ui).
 - **Response:** a uniform `429 Too Many Requests` + `Retry-After`, with a generic body (no
   account-existence leak).
 - **Fail-open:** if the store is unavailable, umami **allows** auth (it never DoSes itself) and logs
@@ -362,3 +364,52 @@ Mechanics & guarantees:
   flow (the per-IP cap still applies). See [API-KEYS.md](API-KEYS.md).
 - **Env:** only the LRU cache size is env (`UMAMI_RATELIMIT_CACHE_CAP`, default 50000); thresholds
   live here in the config.
+
+### 8.1 Reading the limiter (management UI)
+
+Everything the limiter knows is readable, read-only, through five routes. None of them counts the
+request it is reporting on — inspection goes straight to the stored items rather than through the
+enforcement path, which would both increment the counter and consult the node-local LRU (an answer
+that would differ from node to node).
+
+| Route | Permission | Shows |
+|-------|-----------|-------|
+| `GET /auth/me/rate-limit` | any valid token | your own `login` failure count and block |
+| `GET /users/{id}/rate-limit` | `manage:users` (own tenant) | that account's `login` state |
+| `GET /tenants/{id}/api-keys/{keyId}/rate-limit` | `manage:service-keys` (own tenant) | that service key's `tokenExchange` state, under the policy the key actually runs on (its override, or the global one) |
+| `GET /auth/me/api-keys/{keyId}/rate-limit` | `manage:personal-tokens` | the same, for one of your own PATs |
+| `GET /users/{id}/pats/{keyId}/rate-limit` | `manage:users` (own tenant) | the same, for a tenant user's PAT |
+| `GET /rate-limits/blocks[?sinceSecs=&limit=&policy=]` | `view:ratelimits` | blocks that tripped recently, across every policy, newest first |
+
+**Cost.** The first five name their subject, so each is two `GetItem`s (the counter and the block)
+on the table's hash key — no index involved. The overview cannot name its subjects (*which* IPs
+tripped is the question), so it queries a GSI, `BlocksByPolicyIndex` (hash `policy`, range
+`blockedAt`), for one bounded page per policy: `sinceSecs` defaults to 3600 and is clamped to
+60 s … 7 days, `limit` defaults to 100 and is capped at 250. It never scans.
+
+**Only blocks are indexed.** The index attributes are written solely by `set_block`, which runs when
+a subject actually trips a threshold — rare by construction. Writing them on every `increment`
+instead would add an indexed write to every login and token exchange and funnel all of them into one
+partition per policy name: the hot partition the rate limiter exists to prevent. The consequence is
+worth stating plainly — **a counter that never trips leaves no trace in the overview.** It answers
+"who got blocked", not "who is close to the cap"; for the latter, look at a named subject.
+
+**Upgrading an existing deployment.** `BlocksByPolicyIndex` is created with the table, and umami
+also *converges* it on every boot — `CreateTable` is a no-op on a table that already exists, so a
+deployment that predates the overview would otherwise never get the index. Convergence needs
+`dynamodb:UpdateTable` on the table prefix; without it umami logs a warning and carries on (auth is
+unaffected, the overview just stays empty). The manual equivalent:
+
+```bash
+aws dynamodb update-table --table-name <DYNAMO_TABLE_PREFIX>-rate-limits \
+  --attribute-definitions AttributeName=policy,AttributeType=S AttributeName=blockedAt,AttributeType=N \
+  --global-secondary-index-updates '[{"Create":{"IndexName":"BlocksByPolicyIndex","KeySchema":[{"AttributeName":"policy","KeyType":"HASH"},{"AttributeName":"blockedAt","KeyType":"RANGE"}],"Projection":{"ProjectionType":"ALL"}}}]'
+```
+
+Either way the overview only shows blocks written *after* the index exists: older block rows carry
+no `policy`/`blockedAt` attributes, and DynamoDB's backfill can only index what an item holds.
+
+`view:ratelimits` is deliberately separate from `view:audit`. The audit log is tenant-scoped;
+client IPs belong to no tenant at all, so the overview is a deployment-wide operator's view. The
+built-in bootstrap config grants it alongside the cross-tenant admin permissions
+(`is:system-tenant-member`).

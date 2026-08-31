@@ -72,6 +72,10 @@ use crate::auth::me::{
 };
 use crate::auth::ratelimit::RateLimiter;
 use crate::auth::ratelimit::repository::{DynamoRateLimitRepository, RateLimitRepository};
+use crate::auth::ratelimit::service::{
+    api_key_rate_limit_route, my_pat_rate_limit_route, my_rate_limit_route,
+    rate_limit_blocks_route, user_pat_rate_limit_route, user_rate_limit_route,
+};
 use crate::auth::secretbox::SecretBox;
 use crate::auth::session::repository::DynamoSessionRepository;
 use crate::auth::switch_tenant::switch_tenant_route;
@@ -442,7 +446,7 @@ async fn app() -> anyhow::Result<()> {
         logout_user_route(user_repository.clone(), authenticator.clone()),
         // authorization management (assignable roles/scopes/features + feature grant/revoke)
         assignable_roles_route(
-            user_repository,
+            user_repository.clone(),
             tenant_repository.clone(),
             config_repository.clone(),
             system_tenant_id.clone(),
@@ -477,7 +481,39 @@ async fn app() -> anyhow::Result<()> {
         put_config_route(config_repository.clone(), authenticator.clone()),
         // audit log (read)
         tenant_audit_route(audit_repository.clone(), authenticator.clone()),
-        my_audit_route(audit_repository, authenticator)
+        my_audit_route(audit_repository, authenticator.clone()),
+        // rate limits (read-only inspection + the deployment-wide overview)
+        my_rate_limit_route(
+            config_repository.clone(),
+            rate_limiter.clone(),
+            authenticator.clone()
+        ),
+        user_rate_limit_route(
+            user_repository.clone(),
+            config_repository.clone(),
+            rate_limiter.clone(),
+            authenticator.clone()
+        ),
+        api_key_rate_limit_route(
+            api_key_repository.clone(),
+            config_repository.clone(),
+            rate_limiter.clone(),
+            authenticator.clone()
+        ),
+        my_pat_rate_limit_route(
+            api_key_repository.clone(),
+            config_repository.clone(),
+            rate_limiter.clone(),
+            authenticator.clone()
+        ),
+        user_pat_rate_limit_route(
+            api_key_repository.clone(),
+            user_repository.clone(),
+            config_repository.clone(),
+            rate_limiter.clone(),
+            authenticator.clone()
+        ),
+        rate_limit_blocks_route(rate_limiter.clone(), authenticator)
     ];
 
     // Optionally serve the built management UI (SPA) under /app from the same origin. Mounted only
