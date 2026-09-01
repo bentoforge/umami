@@ -205,7 +205,7 @@
   },
   "notifications": {
     "title": "Notifications",
-    "intro": "What reaches you, and how often. Sent to your preferred confirmed address.",
+    "intro": "What reaches you, and how often. Sent to your preferred confirmed e-mail address.",
     "useDefault": "Default ({{what}})",
     "off": "Off",
     "on": "On"

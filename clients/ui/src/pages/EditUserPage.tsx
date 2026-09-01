@@ -192,15 +192,15 @@ export function EditUserPage() {
             onError={setError}
           />
           <RolesCard user={user} onChanged={reload} onError={setError} />
+          <ContactsCard userId={user.userId} />
+          <MessagingLinksCard userId={user.userId} />
           <AuditCard userId={user.userId} />
+          <PatsCard userId={user.userId} />
+          <SessionsCard user={user} onError={setError} />
           <RateLimitCard
             target={{ kind: "user", userId: user.userId }}
             hint={t("rateLimits.userHint")}
           />
-          <SessionsCard user={user} onError={setError} />
-          <PatsCard userId={user.userId} />
-          <ContactsCard userId={user.userId} />
-          <MessagingLinksCard userId={user.userId} />
           <MetaBox user={user} />
         </>
       )}

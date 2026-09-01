@@ -205,8 +205,8 @@
   },
   "notifications": {
     "title": "Benachrichtigungen",
-    "intro": "Was Sie erreicht, und wie oft. Versand an Ihre bevorzugte bestätigte Adresse.",
-    "useDefault": "Vorgabe ({{what}})",
+    "intro": "Was Sie erreicht, und wie oft. Versand an Ihre bevorzugte bestätigte E-Mail-Adresse.",
+    "useDefault": "Standardeinstellung ({{what}})",
     "off": "Deaktiviert",
     "on": "Aktiviert"
   },

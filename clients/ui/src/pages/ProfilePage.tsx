@@ -46,14 +46,14 @@ export function ProfilePage() {
     <div className="space-y-6">
       <h1 className="text-xl font-semibold text-slate-900 dark:text-white">{t("profile.title")}</h1>
       <BaseDataCard />
-      <AuditCard />
-      <RateLimitCard target={{ kind: "me" }} hint={t("rateLimits.meHint")} />
-      {client.hasPermission("manage:sessions") && <SessionsPanel />}
-      {client.hasPermission("manage:passwords") && <SecurityCard />}
-      {client.hasPermission("manage:personal-tokens") && <PatsPanel />}
       {client.hasPermission("manage:contacts") && <ContactsPanel />}
       {client.hasPermission("manage:contacts") && <NotificationsPanel />}
       {client.hasPermission("manage:messaging") && <MessagingPanel />}
+      {client.hasPermission("manage:passwords") && <SecurityCard />}
+      {client.hasPermission("manage:personal-tokens") && <PatsPanel />}
+      <AuditCard />
+      <RateLimitCard target={{ kind: "me" }} hint={t("rateLimits.meHint")} />
+      {client.hasPermission("manage:sessions") && <SessionsPanel />}
     </div>
   );
 }
