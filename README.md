@@ -162,7 +162,7 @@ aws sso login --profile dbx-dev
 
 # 2. Config from the template, then fill the secrets (see below)
 cp .env.example .env
-#   UMAMI_SIGNING_KEY : a private EC P-256 JWK with a "kid", e.g.
+#   UMAMI_SIGNING_KEY : a private EC P-256 JWK with a "kid", in SINGLE quotes, e.g.
 #                       step crypto jwk create pub.jwk key.jwk --kty EC --crv P-256 \
 #                         --kid dev-1 --use sig --insecure --no-password   # paste key.jwk
 #   UMAMI_MFA_KEY     : openssl rand -base64 32
@@ -214,7 +214,7 @@ the **system config document** (behavior — roles, features, APIs, security pol
 | Variable | Purpose |
 |---|---|
 | `UMAMI_ISSUER` | The `iss` claim — must exactly match what product services trust (trailing slash included). |
-| `UMAMI_SIGNING_KEY` | Active signing key as a **private EC P-256 JWK** (JSON, with a `kid`). Signs tokens; its public half is published in the JWKS. Load from a secret store in prod. |
+| `UMAMI_SIGNING_KEY` | Active signing key as a **private EC P-256 JWK** (JSON, with a `kid`). Signs tokens; its public half is published in the JWKS. Load from a secret store in prod. In a `.env` file it needs single quotes — dotenv strips the JSON's own double quotes from an unquoted value. |
 | `UMAMI_PREVIOUS_KEYS` | Rotation: JSON array of retired **public** JWKs, kept in the JWKS so tokens from a just-rotated key still verify until they expire. |
 | `UMAMI_DEFAULT_AUDIENCE` | Fallback `aud` when a call names none. |
 | `UMAMI_MFA_KEY` | Key (base64 of 32 bytes) encrypting TOTP secrets at rest. |
