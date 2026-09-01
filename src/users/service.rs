@@ -16,7 +16,7 @@ use crate::constants::{
 };
 use crate::tenants::repository::TenantRepository;
 use crate::users::repository::{NewUser, UserRepository};
-use crate::users::{DisplayNames, Salutation, User, normalize_email, normalize_name};
+use crate::users::{DisplayNames, Salutation, User, normalize_name};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -39,10 +39,8 @@ const REQUIRE_MANAGE_USERS: &[&str] = &[MANAGE_USERS_PERMISSION];
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct CreateUserRequest {
-    /// Login username (required, unique). If omitted, the `email` is used as the username.
+    /// Login username — required and globally unique.
     username: Option<String>,
-    /// Optional contact email (not unique, may be absent).
-    email: Option<String>,
     /// Optional initial password. Omitted (the normal case) → a temporary one is generated and
     /// returned once, flagged as a still-unchanged reset password.
     #[serde(default)]
@@ -66,8 +64,6 @@ struct CreateUserRequest {
 struct PatchUserRequest {
     /// New login username (globally unique). Absent = unchanged; must not be empty.
     username: Option<String>,
-    /// Contact email. Absent = unchanged; empty string clears it.
-    email: Option<String>,
     roles: Option<Vec<String>>,
     locked: Option<bool>,
     /// BCP-47 language tag; empty string clears it back to the deployment default.
@@ -103,7 +99,6 @@ struct UserView {
     tenant_id: String,
     roles: Vec<String>,
     username: String,
-    email: Option<String>,
     /// Structured name parts (the editable source of truth).
     title: Option<String>,
     salutation: Salutation,
@@ -147,7 +142,6 @@ impl UserView {
             tenant_id: user.tenant_id,
             roles: user.roles,
             username: user.username,
-            email: user.email,
             title: user.title,
             salutation: user.salutation,
             firstname: user.firstname,
@@ -216,7 +210,7 @@ pub fn create_user_route(
 
 /// `GET /users[?q=…]` — list the caller's tenant's users (requires `manage:users`). Sorted by
 /// recent activity, capped, with optional case-insensitive multi-term search over
-/// username/email/name/custom fields.
+/// username/name/custom fields.
 pub fn list_users_route(
     users: Arc<dyn UserRepository>,
     config: Arc<dyn ConfigRepository>,
@@ -429,20 +423,16 @@ async fn create_user(
 ) -> anyhow::Result<CreateUserResponse> {
     let tenant_id = caller.tenant_id()?.to_owned();
 
-    // Username is the login identifier; fall back to the email when the caller omits it. At least
-    // one of the two must be present.
-    let email = request
-        .email
-        .map(|email| email.trim().to_owned())
-        .filter(|email| !email.is_empty());
+    // The username is the login identifier and the only thing that can serve as one, so it is
+    // required outright. It used to fall back to the email; an address is now a contact, and a
+    // contact is not an identity.
     let username = request
         .username
         .map(|username| username.trim().to_owned())
-        .filter(|username| !username.is_empty())
-        .or_else(|| email.clone());
+        .filter(|username| !username.is_empty());
     let username = match username {
         Some(username) => username,
-        None => client_bail!("A 'username' (or 'email' to use as the username) is required"),
+        None => client_bail!("A 'username' is required"),
     };
 
     let config = config.current().await?;
@@ -476,7 +466,6 @@ async fn create_user(
             tenant_id,
             roles,
             username,
-            email,
             title: request.title,
             salutation: request.salutation.unwrap_or_default(),
             firstname: request.firstname,
@@ -588,14 +577,6 @@ async fn patch_user(
             .rename_username(&user.user_id, &user.username, &username)
             .await?;
         user.username = username;
-    }
-    if let Some(email) = request.email {
-        let email = email.trim();
-        user.email = if email.is_empty() {
-            None
-        } else {
-            Some(normalize_email(email))
-        };
     }
     if let Some(roles) = request.roles {
         validate_roles(

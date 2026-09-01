@@ -10,6 +10,65 @@ salutation.MADAM:
   de: Frau
   en: Ms
 
+# ── Password recovery ──────────────────────────────────────────────────────────
+# The link is account takeover in one click for whoever reads it, so the text says plainly what it
+# does and what to do if it was not requested. %{name} is the addressable name, %{link} the
+# single-use reset URL.
+auth.reset.subject:
+  de: Passwort zurücksetzen
+  en: Reset your password
+auth.reset.body:
+  de: |
+    Hallo %{name},
+
+    über den folgenden Link können Sie ein neues Passwort setzen:
+
+    %{link}
+
+    Der Link gilt einmalig und läuft bald ab. Sobald Sie ihn benutzen, werden alle bestehenden
+    Anmeldungen beendet.
+
+    Wenn Sie das nicht angefordert haben, ignorieren Sie diese Nachricht — Ihr Passwort bleibt
+    unverändert. Erhalten Sie solche Nachrichten unerwartet, wenden Sie sich an Ihre Administration.
+  en: |
+    Hello %{name},
+
+    you can set a new password using the following link:
+
+    %{link}
+
+    The link works once and expires shortly. Using it ends every existing sign-in.
+
+    If you did not request this, ignore this message — your password stays as it is. If messages like
+    this arrive unexpectedly, contact your administrator.
+
+# ── Address verification ───────────────────────────────────────────────────────
+# The only mail umami renders itself. Plain text on purpose: it has to survive every client, and
+# there is nothing here that markup would clarify. %{name} is the server-composed addressable name
+# (may be empty when the user has no name parts), %{link} the single-use confirmation URL.
+contact.verify.subject:
+  de: Bitte bestätigen Sie Ihre E-Mail-Adresse
+  en: Please confirm your email address
+contact.verify.body:
+  de: |
+    Hallo %{name},
+
+    bitte bestätigen Sie diese E-Mail-Adresse, damit wir Sie darüber erreichen können:
+
+    %{link}
+
+    Der Link gilt einmalig. Wenn Sie das nicht angefordert haben, ignorieren Sie diese Nachricht —
+    ohne Bestätigung wird die Adresse nicht verwendet.
+  en: |
+    Hello %{name},
+
+    please confirm this email address so we can reach you at it:
+
+    %{link}
+
+    The link works once. If you did not request this, ignore this message — without confirmation the
+    address will not be used.
+
 # ── Sign-in ────────────────────────────────────────────────────────────────────
 # Deliberately indistinguishable: the message must not reveal whether the username exists, the
 # password was wrong, or the account is locked. Keep them identical when adding a language.

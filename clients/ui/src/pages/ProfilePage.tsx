@@ -1,9 +1,12 @@
 import type {
   ApiKeyView,
   AuditEntry,
+  Contact,
+  ContactsResponse,
   CustomFieldDef,
   MessagingCodeResponse,
   MessagingLink,
+  MyNotificationsResponse,
   RoleDef,
   Salutation,
   SessionView,
@@ -15,6 +18,7 @@ import { useUmami } from "../auth/UmamiProvider";
 import {
   AuditList,
   Banner,
+  ContactList,
   CustomFieldsForm,
   errMsg,
   Field,
@@ -42,12 +46,14 @@ export function ProfilePage() {
     <div className="space-y-6">
       <h1 className="text-xl font-semibold text-slate-900 dark:text-white">{t("profile.title")}</h1>
       <BaseDataCard />
+      {client.hasPermission("manage:contacts") && <ContactsPanel />}
+      {client.hasPermission("manage:contacts") && <NotificationsPanel />}
+      {client.hasPermission("manage:messaging") && <MessagingPanel />}
+      {client.hasPermission("manage:passwords") && <SecurityCard />}
+      {client.hasPermission("manage:personal-tokens") && <PatsPanel />}
       <AuditCard />
       <RateLimitCard target={{ kind: "me" }} hint={t("rateLimits.meHint")} />
       {client.hasPermission("manage:sessions") && <SessionsPanel />}
-      {client.hasPermission("manage:passwords") && <SecurityCard />}
-      {client.hasPermission("manage:personal-tokens") && <PatsPanel />}
-      {client.hasPermission("manage:messaging") && <MessagingPanel />}
     </div>
   );
 }
@@ -145,6 +151,281 @@ function SessionsPanel() {
           ))}
         </ul>
       )}
+    </section>
+  );
+}
+
+/** Notification preferences: one control per type the caller is eligible for.
+ *
+ * A single select carries all three stored states, because they are genuinely three and collapsing
+ * any two of them loses something:
+ *
+ * - *default* — never touched, so whatever the deployment decides applies, now and later
+ * - *never* — an explicit choice the deployment cannot override
+ * - a cadence — one of the rhythms the type is actually fired at
+ *
+ * A type marked transactional renders without a control: it cannot be switched off, and offering a
+ * disabled dropdown would suggest otherwise. */
+function NotificationsPanel() {
+  const { client } = useUmami();
+  const { t } = useTranslation();
+  const [data, setData] = useState<MyNotificationsResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    setError(null);
+    try {
+      setData(await client.myNotifications());
+    } catch (err) {
+      setError(errMsg(err));
+    }
+  }, [client]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  /** The empty option is *unset*; everything else is a value the server declared as allowed. */
+  const choose = async (code: string, value: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      if (value === "") {
+        await client.clearNotificationChoice(code);
+      } else {
+        await client.setNotificationChoice(code, value);
+      }
+      await load();
+    } catch (err) {
+      setError(errMsg(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** The words for one allowed value. `off`/`on` are umami's own vocabulary and are translated
+   * here; a cadence is the deployment's and brings its label from the config. */
+  const labelFor = (type: MyNotificationsResponse["types"][number], value: string) =>
+    value === "off" || value === "on"
+      ? t(`notifications.${value}`)
+      : (type.cadences.find((c) => c.code === value)?.name ?? value);
+
+  const types = data?.types ?? [];
+  // Nothing configured, or nothing this user is eligible for: no empty box.
+  if (data && types.length === 0) return null;
+
+  return (
+    <section className={`${card} space-y-4`}>
+      <div>
+        <h2 className="font-medium text-slate-800 dark:text-slate-200">
+          {t("notifications.title")}
+        </h2>
+        <p className="text-sm text-slate-500">{t("notifications.intro")}</p>
+      </div>
+
+      <Banner tone="error">{error}</Banner>
+
+      <ul className="divide-y divide-slate-100 dark:divide-slate-700/50">
+        {types.map((type) => {
+          // An absent choice is the unset state and maps to the empty option.
+          const value = type.choice ?? "";
+          return (
+            <li key={type.code} className="flex flex-wrap items-center justify-between gap-3 py-3">
+              <div className="min-w-0">
+                <div className="text-sm font-medium text-slate-900 dark:text-white">
+                  {type.name}
+                </div>
+                {type.description && (
+                  <div className="text-xs text-slate-400">{type.description}</div>
+                )}
+              </div>
+              <select
+                className={`${input} w-auto`}
+                value={value}
+                disabled={busy}
+                onChange={(e) => void choose(type.code, e.target.value)}
+              >
+                {/*
+                  Switching something off comes first and is offered for every type, with or without
+                  a rhythm — it must never be the option somebody has to hunt for.
+                */}
+                <option value="off">{t("notifications.off")}</option>
+                <option value="">
+                  {t("notifications.useDefault", {
+                    what: type.default ? labelFor(type, type.default) : t("notifications.off"),
+                  })}
+                </option>
+                {type.allowed
+                  .filter((allowed) => allowed !== "off")
+                  .map((allowed) => (
+                    <option key={allowed} value={allowed}>
+                      {labelFor(type, allowed)}
+                    </option>
+                  ))}
+              </select>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
+/** Email contacts: the addresses umami can reach the caller at, which one they prefer, and a form
+ * to add another.
+ *
+ * A list rather than one field because a change of address has to be possible without a gap in
+ * reachability: add the new address, verify it, then drop the old one. */
+function ContactsPanel() {
+  const { client } = useUmami();
+  const { t } = useTranslation();
+  const [data, setData] = useState<ContactsResponse | null>(null);
+  const [address, setAddress] = useState("");
+  const [label, setLabel] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    setError(null);
+    try {
+      setData(await client.getContacts());
+    } catch (err) {
+      setError(errMsg(err));
+    }
+  }, [client]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const add = async () => {
+    if (!address.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await client.addContact(address.trim(), label.trim() || undefined);
+      setAddress("");
+      setLabel("");
+      setAdding(false);
+      await load();
+    } catch (err) {
+      setError(errMsg(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const verify = async (contact: Contact) => {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await client.startContactVerification(contact.address);
+      setNotice(
+        result.status === "already-verified"
+          ? t("contacts.alreadyVerified")
+          : t("contacts.verifySent", { address: contact.address }),
+      );
+      await load();
+    } catch (err) {
+      setError(errMsg(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const prefer = async (contact: Contact, on: boolean) => {
+    setError(null);
+    try {
+      await client.setPreferredContact(on ? contact.address : null);
+      await load();
+    } catch (err) {
+      setError(errMsg(err));
+    }
+  };
+
+  const remove = async (contact: Contact) => {
+    if (!window.confirm(t("contacts.deleteConfirm", { address: contact.address }))) return;
+    setError(null);
+    try {
+      await client.deleteContact(contact.address);
+      await load();
+    } catch (err) {
+      setError(errMsg(err));
+    }
+  };
+
+  const contacts = data?.contacts ?? [];
+  return (
+    <section className={`${card} space-y-4`}>
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="font-medium text-slate-800 dark:text-slate-200">{t("contacts.title")}</h2>
+        {!adding && (
+          <button className={primaryButton} onClick={() => setAdding(true)}>
+            {t("contacts.new")}
+          </button>
+        )}
+      </div>
+
+      <Banner tone="error">{error}</Banner>
+      <Banner tone="ok">{notice}</Banner>
+
+      {adding && (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-end gap-2">
+            <Field label={t("contacts.addressLabel")}>
+              <input
+                className={input}
+                type="email"
+                value={address}
+                placeholder="name@example.com"
+                onChange={(e) => setAddress(e.target.value)}
+              />
+            </Field>
+            <Field label={t("contacts.labelField")}>
+              <input className={input} value={label} onChange={(e) => setLabel(e.target.value)} />
+            </Field>
+          </div>
+          <div className="flex gap-2">
+            <button
+              className={primaryButton}
+              disabled={busy || !address.trim()}
+              onClick={() => void add()}
+            >
+              {t("contacts.add")}
+            </button>
+            <button
+              className={ghostButton}
+              disabled={busy}
+              onClick={() => {
+                setAdding(false);
+                setAddress("");
+                setLabel("");
+              }}
+            >
+              {t("contacts.cancel")}
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div>
+        {contacts.length === 0 ? (
+          <span className="text-xs text-slate-400">{t("contacts.empty")}</span>
+        ) : (
+          <ContactList
+            contacts={contacts}
+            preferred={data?.preferred ?? null}
+            chosen={data?.chosen ?? null}
+            onDelete={remove}
+            onPrefer={prefer}
+            onVerify={data?.verificationAvailable ? verify : undefined}
+          />
+        )}
+      </div>
     </section>
   );
 }
@@ -419,7 +700,6 @@ function BaseDataCard() {
       ) : (
         <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-2 text-sm">
           <DetailRow label={t("users.username")}>{u.username}</DetailRow>
-          <DetailRow label={t("users.email")}>{u.email ?? "—"}</DetailRow>
           <DetailRow label={t("users.name")}>
             {u.firstname || u.lastname ? u.fullName : "—"}
           </DetailRow>

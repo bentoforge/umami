@@ -6,7 +6,7 @@
 //! Email is optional contact info and is not indexed.
 
 use crate::search::{query_matches, value_search_text};
-use crate::users::{User, normalize_email, normalize_name, normalize_username};
+use crate::users::{User, normalize_name, normalize_username};
 use anyhow::Context;
 use async_trait::async_trait;
 use aws_sdk_dynamodb::types::{
@@ -79,8 +79,6 @@ pub struct NewUser {
     pub roles: Vec<String>,
     /// Login username — required, globally unique (normalized). Stored as given (trimmed).
     pub username: String,
-    /// Optional contact email (normalized when present).
-    pub email: Option<String>,
     /// Optional honorific/title.
     pub title: Option<String>,
     /// How to address the user.
@@ -102,6 +100,7 @@ pub struct NewUser {
 
 /// Persistence interface for user identities.
 #[async_trait]
+#[cfg_attr(test, mockall::automock)]
 pub trait UserRepository: Send + Sync {
     /// Creates a new user, enforcing global username uniqueness (via the `user-usernames` table).
     /// Returns a client error if the username is already taken. Email is not unique.
@@ -113,7 +112,7 @@ pub trait UserRepository: Send + Sync {
     /// Fetches a user by id. `None` if unknown.
     async fn get_user(&self, user_id: &str) -> anyhow::Result<Option<User>>;
 
-    /// Finds users in `tenant_id` matching `query` (case-insensitive over username/email/name/custom
+    /// Finds users in `tenant_id` matching `query` (case-insensitive over username/name/custom
     /// fields; empty = all), newest-active first, returning at most `limit` plus a `truncated` flag.
     /// The DynamoDB backend streams the per-tenant GSI and stops once the cap is reached.
     async fn find_users(
@@ -218,10 +217,6 @@ impl UserRepository for DynamoUserRepository {
             client_bail!("A username is required");
         }
         let normalized = normalize_username(&username);
-        let email = new_user
-            .email
-            .map(|email| normalize_email(&email))
-            .filter(|email| !email.is_empty());
         let now = Utc::now();
 
         let user = User {
@@ -230,7 +225,6 @@ impl UserRepository for DynamoUserRepository {
             tenant_id: new_user.tenant_id,
             roles: new_user.roles,
             username,
-            email,
             title: normalize_name(new_user.title),
             salutation: new_user.salutation,
             firstname: normalize_name(new_user.firstname),
@@ -254,6 +248,8 @@ impl UserRepository for DynamoUserRepository {
             has_passkey: false,
             created_by: new_user.created_by.clone(),
             last_changed_by: new_user.created_by,
+            preferred_contact: None,
+            notification_choices: Default::default(),
         };
 
         // Claim the username first: a conditional put fails if it's already taken, giving strict
@@ -516,13 +512,16 @@ impl UserRepository for DynamoUserRepository {
     }
 }
 
-/// Concatenates a user's searchable text: username, email, name parts, and every custom-field value.
+/// Concatenates a user's searchable text: username, name parts, and every custom-field value.
 /// Fed to `query_matches` for the in-memory tenant-scoped search.
+///
+/// Addresses are deliberately absent: they live in `user-contacts`, and pulling them in would mean
+/// a per-user read for every row this scan touches. Looking a user up *by* an address is a direct
+/// query on the by-address GSI instead — cheaper than the scan this feeds.
 fn user_haystack(user: &User) -> String {
     let mut haystack = format!(
-        "{} {} {} {} {}",
+        "{} {} {} {}",
         user.username,
-        user.email.as_deref().unwrap_or(""),
         user.title.as_deref().unwrap_or(""),
         user.firstname.as_deref().unwrap_or(""),
         user.lastname.as_deref().unwrap_or("")

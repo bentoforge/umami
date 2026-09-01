@@ -5,11 +5,14 @@
 pub mod apikeys;
 pub mod authorize;
 pub mod broker;
+pub mod capabilities;
+pub mod challenge;
 pub mod cookies;
 pub mod login;
 pub mod me;
 pub mod password;
 pub mod ratelimit;
+pub mod recovery;
 pub mod secretbox;
 pub mod session;
 pub mod switch_tenant;
@@ -35,6 +38,8 @@ pub struct AuthContext {
     pub users: Arc<dyn UserRepository>,
     /// Tenant persistence — used to resolve config-driven token claims (e.g. `features`).
     pub tenants: Arc<dyn TenantRepository>,
+    /// Contact store, read at mint time **only** when the target API asks for `$user.email`.
+    pub contacts: Arc<dyn crate::contacts::repository::ContactRepository>,
     /// Session persistence backing the refresh flow.
     pub sessions: Arc<dyn SessionRepository>,
     /// ES256 access-token issuer.
@@ -63,6 +68,7 @@ impl AuthContext {
     pub fn from_env(
         users: Arc<dyn UserRepository>,
         tenants: Arc<dyn TenantRepository>,
+        contacts: Arc<dyn crate::contacts::repository::ContactRepository>,
         sessions: Arc<dyn SessionRepository>,
         tokens: Arc<TokenIssuer>,
         config: Arc<dyn ConfigRepository>,
@@ -81,6 +87,7 @@ impl AuthContext {
         Ok(Self {
             users,
             tenants,
+            contacts,
             sessions,
             tokens,
             config,

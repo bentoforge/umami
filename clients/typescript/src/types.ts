@@ -9,7 +9,6 @@ export interface AccessClaims {
   aud?: string;
   /** The active tenant this token is scoped to. */
   tenant: string;
-  email: string;
   permissions: string[];
   iat: number;
   exp: number;
@@ -91,8 +90,6 @@ export interface UserView extends NameParts {
   roles: string[];
   /** Login identifier — unique. */
   username: string;
-  /** Optional contact email — not unique, may be null/absent. */
-  email: string | null;
   /** Admin lock — a locked user cannot log in. */
   locked: boolean;
   customFields: Record<string, unknown>;
@@ -124,10 +121,9 @@ export interface NameInput {
 }
 
 export interface CreateUserRequest extends NameInput {
-  /** Login username (unique). If omitted, `email` is used as the username. */
-  username?: string;
-  /** Optional contact email (not unique). */
-  email?: string;
+  /** Login username — required and unique. An email address is a *contact*, not an identity, so
+   * there is nothing to fall back to. */
+  username: string;
   /** Optional initial password. Omit (the normal case) to have a temporary one generated and
    * returned once in {@link CreateUserResponse.temporaryPassword}. */
   password?: string;
@@ -144,8 +140,6 @@ export type CreateUserResponse = UserView & {
 export interface PatchUserRequest extends NameInput {
   /** New login username (globally unique). Omit to leave unchanged; must not be empty. */
   username?: string;
-  /** Contact email. Omit to leave unchanged; empty string clears it. */
-  email?: string;
   roles?: string[];
   locked?: boolean;
   customFields?: Record<string, unknown>;
@@ -158,8 +152,10 @@ export interface MeUser extends NameParts {
   tenantId: string;
   roles: string[];
   username: string;
-  email: string | null;
   locked: boolean;
+  /** The email address the user would rather be reached at, or null. A statement of intent:
+   * resolution still requires the address to exist and be verified. */
+  preferredContact?: string | null;
   customFields: Record<string, unknown>;
   /** Whether TOTP MFA is configured (never exposes the secret). */
   mfaEnabled: boolean;
@@ -222,10 +218,8 @@ export interface CreateTenantRequest {
   /** Optional first owner. Omit to create an empty tenant (add users afterwards by impersonating
    * it on the Tenants screen). */
   owner?: {
-    /** Owner login username (unique). If omitted, `email` is used as the username. */
-    username?: string;
-    /** Optional contact email (not unique). */
-    email?: string;
+    /** Owner login username — required and unique. */
+    username: string;
     password: string;
   };
   /** Custom-field values, validated against `customTenantFields`. */
@@ -314,7 +308,7 @@ export interface ApiDef {
   /** Ordered rules mapping subjects → granted permissions (accumulated top-to-bottom). */
   permissions: PermissionRule[];
   /** Claim mapping: claimName → source. A source is a literal string, a `$user.<field>` /
-   * `$tenant.<field>` reference (`id`, `username`, `email`, `name`, `fullName`, `addressableName`,
+   * `$tenant.<field>` reference (`id`, `username`, `name`, `fullName`, `addressableName`,
    * `roles`, `name`/`slug`/`features`, …), or `$user.custom.<key>` / `$tenant.custom.<key>`. */
   claims?: Record<string, string>;
 }
@@ -333,6 +327,8 @@ export interface Config {
   security: SecuritySettings;
   /** Messaging integration (Telegram/WhatsApp) settings. */
   messaging?: MessagingConfig;
+  /** The notification types users can subscribe to. */
+  notificationTypes?: NotificationTypeDef[];
   /** White-labeling for the management UI. */
   branding?: BrandingConfig;
   /** The catalog of target APIs umami can mint tokens for. */
@@ -449,8 +445,137 @@ export interface MessagingLink {
 export interface ResolvedMessagingUser {
   userId: string;
   tenantId: string;
-  email?: string | null;
+  username: string;
   roles: string[];
+}
+
+/** What the sign-in screen may offer, readable before anyone has signed in. */
+export interface Capabilities {
+  /** Whether a mail path is configured, i.e. whether `forgotPassword` can reach anybody. `false`
+   * ⇒ hide the recovery link rather than offering a dead end. */
+  passwordRecovery: boolean;
+}
+
+// ── Notifications ─────────────────────────────────────────────────────────────
+
+/** How often something arrives — and the rhythm a single firing represents.
+ *
+ * `immediate` is an ordinary member rather than a special case, which is what makes the matching
+ * rule plain equality: a push-style type declares `["immediate"]` and its subscribers choose it. */
+/** A stored choice or a cadence code. Three kinds of value share one space:
+ * `"off"`, `"on"` (for a type with no rhythm), or one of the type's cadence codes.
+ * `off`/`on` are reserved and cannot be cadence codes. */
+export type Choice = string;
+
+/** A cadence code — one of the deployment's own rhythm names. */
+export type Cadence = string;
+
+/** One cadence a type is fired at: a stable code plus the words a user reads.
+ *
+ * Shaped like a role or a feature, and for the same reason — the code is the deployment's own, so
+ * the label travels with it rather than being looked up in a catalogue that cannot know it. */
+export interface CadenceDef {
+  /** Stable, lowercase. Compared against a firing and a stored choice. */
+  code: Cadence;
+  /** Label for the picker. */
+  name: string;
+}
+
+/** A notification type in the config catalogue — the unit of consent. */
+export interface NotificationTypeDef {
+  /** Stable code an app names when it fires, and the key a choice is stored under. */
+  code: string;
+  name: string;
+  description?: string;
+  /** The cadences this type is actually fired at. A firing naming anything else is rejected, and
+   * only these may be offered to a user — otherwise they would subscribe and never hear anything.
+   *
+   * **Empty is legitimate** and means the type has no rhythm of its own: the choice is then `on` or
+   * `off`, and a firing names no cadences. */
+  cadences?: CadenceDef[];
+  /** Applies to a user who never chose: `"on"`, a cadence code, or omitted for off. */
+  default?: Choice | null;
+  /** DSL over the recipient's **offline** subject set — `role:*`, `feature:*`,
+   * `is:system-tenant{,-member}`. Not the session markers (`is:2fa`, …): a notification has no
+   * session, so an expression naming one would never match. */
+  eligibleIf?: string;
+}
+
+/** One type as the profile screen sees it. */
+export interface NotificationTypeView {
+  code: string;
+  name: string;
+  description?: string;
+  cadences: CadenceDef[];
+  default: Choice | null;
+  /** Every value this type accepts, always including `"off"` — exactly what a picker should offer. */
+  allowed: Choice[];
+  /** The user's own choice; **absent when they never touched it**, in which case the default
+   * applies, now and whenever the deployment changes it. */
+  choice?: Choice;
+  /** What currently applies, choice and default folded together. `"off"` = nothing arrives. */
+  effective: Choice;
+}
+
+/** The caller's subscribable types. */
+export interface MyNotificationsResponse {
+  types: NotificationTypeView[];
+}
+
+/** One resolved recipient. Carries **no address** — enough to write a message, not to harvest a
+ * list. Hand the `userId` back to {@link UmamiClient.sendNotifications} and umami resolves it. */
+export interface NotificationRecipient {
+  userId: string;
+  addressableName: string;
+  locale: string;
+  /** Which of the firing's cadences matched, or absent for a type with no rhythm. Ignorable when
+   * the wording does not differ. */
+  cadence?: Cadence;
+}
+
+/** Audience for one firing. */
+export interface AudienceResponse {
+  recipients: NotificationRecipient[];
+  /** `true` when the tenant has more users than one resolve returns. */
+  truncated: boolean;
+}
+
+/** Per-recipient outcome of a send. Partial success is the normal case. */
+export interface NotificationSendResult {
+  userId: string;
+  status: "queued" | "no-address" | "failed";
+  messageId?: string;
+}
+
+// ── Contacts (email) ──────────────────────────────────────────────────────────
+
+/** One email address a user can be reached at.
+ *
+ * `verified` means the owner proved possession by answering a challenge sent to it. An address an
+ * admin typed in is never verified, and only a verified address is ever sent to. Keyed
+ * `(userId, address)` server-side — the address itself is the handle. */
+export interface Contact {
+  userId: string;
+  address: string;
+  tenantId: string;
+  label?: string;
+  verified: boolean;
+  verifiedAt?: string;
+  created: string;
+}
+
+/** The caller's addresses plus which one they prefer. */
+export interface ContactsResponse {
+  contacts: Contact[];
+  /** The address mail actually goes to: the chosen one while it is confirmed and still held,
+   * otherwise the oldest confirmed address. `null` when nothing is confirmed. */
+  preferred: string | null;
+  /** The choice the user actually made, if any — as opposed to the fallback in `preferred`.
+   * Only an explicit choice can be un-chosen. */
+  chosen?: string | null;
+  /** Whether this deployment can send a verification mail at all. `false` means the "verify"
+   * action leads nowhere and should not be offered. */
+  verificationAvailable: boolean;
 }
 
 // ── Audit log ───────────────────────────────────────────────────────────────

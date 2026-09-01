@@ -139,6 +139,15 @@ async fn put_config(request: Config, config: Arc<dyn ConfigRepository>) -> anyho
         );
     }
 
+    // Validate before publishing. This is where the notification catalogue's typo protection lives
+    // now that a cadence is a plain string: a duplicate code, a type nothing can fire, or a default
+    // naming a cadence the type is never fired at would all otherwise fail invisibly, as an audience
+    // that silently resolves to nobody.
+    crate::notify::types::validate_catalogue(&request.notification_types)?;
+    for api in &request.apis {
+        crate::config::validate_claims(&api.code, &api.claims)?;
+    }
+
     let mut next = request;
     next.version = current.version + 1;
     config.save(next.clone()).await?;

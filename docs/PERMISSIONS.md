@@ -151,9 +151,11 @@ exchange runs through.)*
    if `rule.when` holds against `subjects ∪ granted`, add `rule.grant` to `granted`. Result = `granted`
    (deduped, sorted).
 4. **Eligibility:** if `api.eligibility` is set and doesn't hold against `subjects ∪ granted` → 403.
-5. **Claims:** `api.claims` (`customUser:*` / `customTenant:*`; literals) — as in AUDIENCES.md, plus
-   `kind: "api_key"` for machine tokens. **No `features` claim** by default — everything the product
-   needs is cooked into `permissions`.
+5. **Claims:** `api.claims` — `$user.*` / `$tenant.*` / `$user.custom.<code>` /
+   `$tenant.custom.<code>` references, or a literal string without the `$`. See AUDIENCES.md for the
+   full table. Plus `kind` for machine and chat-resolved tokens, and `amr` when the session used a
+   second factor. **No `features` claim** by default — everything the product needs is cooked into
+   `permissions`.
 
 ## 5. Assignability + management
 

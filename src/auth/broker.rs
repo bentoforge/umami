@@ -30,7 +30,6 @@ pub struct MintParams<'a> {
     pub api_code: &'a str,
     /// `sub` (user id or key id).
     pub subject: &'a str,
-    pub email: &'a str,
     pub tenant_id: &'a str,
     pub token_version: u32,
     /// The principal's **namespaced subject labels** — a user/PAT's `role:*` (already intersected
@@ -45,8 +44,10 @@ pub struct MintParams<'a> {
     ///
     /// Resolved by the caller, not here, because only the caller has the inputs: a session knows
     /// the user's profile *and* the request's `Accept-Language`, a key exchange knows what the
-    /// relaying service asked for. umami always fills the claim, so no service downstream has to
-    /// guess when a user is present.
+    /// relaying service asked for.
+    ///
+    /// Always *resolved*, but only *emitted* when the target API maps `$user.locale` — there is no
+    /// hardcoded locale claim.
     pub locale: &'a str,
     /// Whether the principal's **home** tenant is the system tenant (adds
     /// `is:system-tenant-member`). Unlike [`Self::system_tenant`] this survives a tenant switch:
@@ -59,6 +60,10 @@ pub struct MintParams<'a> {
     /// The user principal, when the token acts as a user (`None` for an M2M service key). Source of
     /// the `$user.*` claim references and the composed display names.
     pub user: Option<&'a crate::users::User>,
+    /// Contact store, consulted **only** when the target API's claim mapping references
+    /// `$user.email` — so a deployment that does not want an address in its tokens pays nothing for
+    /// the option, and every other login stays one read lighter.
+    pub contacts: &'a dyn crate::contacts::repository::ContactRepository,
     /// The token's tenant record, when available. Source of the `$tenant.name`/`slug`/`custom.*`
     /// claim references (`$tenant.id`/`features` come from `tenant_id`/`features` regardless).
     pub tenant: Option<&'a crate::tenants::Tenant>,
@@ -100,8 +105,8 @@ pub async fn mint_for_api(
     if params.passkey || params.totp {
         subject_set.push(TWO_FACTOR_MARKER.to_owned());
     }
-    // Global capability marker: messaging self-service is available when the deployment has a bot
-    // and/or WhatsApp number configured.
+    // Global capability marker: messaging self-service only exists once the deployment has a bot
+    // and/or a WhatsApp number to point users at.
     if config.messaging.is_configured() {
         subject_set.push(MESSAGING_CONFIGURED_MARKER.to_owned());
     }
@@ -115,6 +120,32 @@ pub async fn mint_for_api(
         ),
     };
 
+    // The one claim that costs a read, so it is only paid for when something asks. Preference first
+    // when it is confirmed, else the single confirmed address — the same rule notifications use,
+    // because "which address is *the* one" must not have two answers.
+    let email = match (api.wants_user_email(), params.user) {
+        (true, Some(user)) => {
+            let confirmed: Vec<String> = params
+                .contacts
+                .list_contacts(&user.user_id)
+                .await?
+                .into_iter()
+                .filter(|contact| contact.verified)
+                .map(|contact| contact.address)
+                .collect();
+            match user.preferred_contact.as_deref() {
+                Some(preferred) if confirmed.iter().any(|a| a == preferred) => {
+                    Some(preferred.to_owned())
+                }
+                _ => match confirmed.as_slice() {
+                    [only] => Some(only.clone()),
+                    _ => None,
+                },
+            }
+        }
+        _ => None,
+    };
+
     // Assemble the claim context once, then let the config-driven mapping resolve `$…` references
     // against it (the single interpretation point lives in `config::resolve_claim_source`).
     let display_names = match params.user {
@@ -125,7 +156,7 @@ pub async fn mint_for_api(
     let ctx = crate::config::ClaimContext {
         user_id: params.subject,
         username: params.user.map_or("", |user| user.username.as_str()),
-        email: params.email,
+        email: email.as_deref(),
         display_names: &display_names,
         title: params.user.and_then(|user| user.title.as_deref()),
         salutation: params.user.map_or("", |user| user.salutation.code()),
@@ -167,7 +198,6 @@ pub async fn mint_for_api(
         .issue_access_token(
             &AccessTokenClaims {
                 subject: params.subject,
-                email: params.email,
                 tenant: Some(params.tenant_id),
                 audience: Some(&api.audience),
                 permissions: &permissions,

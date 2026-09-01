@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { useUmami } from "./auth/UmamiProvider";
 import { Loader } from "./components";
 import { AdminLayout } from "./pages/AdminLayout";
@@ -11,12 +11,21 @@ import { EditUserPage } from "./pages/EditUserPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ProfilePage } from "./pages/ProfilePage";
 import { RateLimitsPage } from "./pages/RateLimitsPage";
+import { ResetPasswordPage } from "./pages/ResetPasswordPage";
 import { StartPage } from "./pages/StartPage";
 import { TenantsPage } from "./pages/TenantsPage";
 import { UsersPage } from "./pages/UsersPage";
+import { VerifyContactPage } from "./pages/VerifyContactPage";
 
 export function App() {
   const { me, loading, client } = useUmami();
+  const { pathname } = useLocation();
+
+  // Checked *above* the session gate: both links arrive by mail, and the mail client regularly
+  // carries no umami session. The token in the URL is the proof — for the reset it has to be, since
+  // the whole premise is that the user cannot sign in.
+  if (pathname === "/verify-contact") return <VerifyContactPage />;
+  if (pathname === "/reset-password") return <ResetPasswordPage />;
 
   if (loading) {
     return (

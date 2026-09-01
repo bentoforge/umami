@@ -194,7 +194,6 @@ struct AccessClaims<'a> {
     aud: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tenant: Option<&'a str>,
-    email: &'a str,
     permissions: &'a [String],
     iat: i64,
     exp: i64,
@@ -205,12 +204,13 @@ struct AccessClaims<'a> {
 }
 
 /// The inputs needed to mint an access token for a user in a given active tenant.
+///
+/// Profile claims — email, name, locale — are **not** here. They come from the target API's
+/// config-driven claim mapping and arrive via `extra`, so umami puts no personal data in every token
+/// by default; a deployment that wants an address in its tokens maps one.
 pub struct AccessTokenClaims<'a> {
     /// User id → `sub`.
     pub subject: &'a str,
-    /// Email → `email`. Other profile claims (name, locale, …) are not hardcoded here — they come
-    /// from the target API's config-driven claim mapping, flattened in via `extra`.
-    pub email: &'a str,
     /// Active tenant → `tenant` (omitted when `None`).
     pub tenant: Option<&'a str>,
     /// Target audience → `aud` (falls back to the issuer's default when `None`).
@@ -264,7 +264,6 @@ impl TokenIssuer {
             sub: request.subject,
             aud: request.audience.or(self.default_audience.as_deref()),
             tenant: request.tenant,
-            email: request.email,
             permissions: request.permissions,
             iat,
             exp,
@@ -403,7 +402,6 @@ mod tests {
             .issue_access_token(
                 &AccessTokenClaims {
                     subject: "u1",
-                    email: "jane@test",
                     tenant: Some("t1"),
                     audience: None,
                     permissions: &perms,

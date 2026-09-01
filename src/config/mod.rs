@@ -8,17 +8,22 @@ pub mod repository;
 pub mod service;
 
 use crate::constants::{
-    DEFAULT_ACCESS_TTL_SECS, DEFAULT_LOGIN_BLOCK_SECS, DEFAULT_LOGIN_MAX_FAILURES,
-    DEFAULT_LOGIN_WINDOW_SECS, DEFAULT_MESSAGING_CODE_TTL_SECS, DEFAULT_PER_IP_BLOCK_SECS,
+    DEFAULT_ACCESS_TTL_SECS, DEFAULT_CONTACT_CHALLENGE_TTL_SECS, DEFAULT_LOGIN_BLOCK_SECS,
+    DEFAULT_LOGIN_MAX_FAILURES, DEFAULT_LOGIN_WINDOW_SECS, DEFAULT_MAIL_SEND_BLOCK_SECS,
+    DEFAULT_MAIL_SEND_MAX_PER_WINDOW, DEFAULT_MAIL_SEND_WINDOW_SECS,
+    DEFAULT_MESSAGING_CODE_TTL_SECS, DEFAULT_PASSWORD_RESET_TTL_SECS, DEFAULT_PER_IP_BLOCK_SECS,
     DEFAULT_PER_IP_MAX_PER_WINDOW, DEFAULT_PER_IP_WINDOW_SECS, DEFAULT_REFRESH_TTL_SECS,
     DEFAULT_TOKEN_BLOCK_SECS, DEFAULT_TOKEN_MAX_PER_WINDOW, DEFAULT_TOKEN_WINDOW_SECS,
-    MANAGE_CONFIG_PERMISSION, MANAGE_MESSAGING_PERMISSION, MANAGE_PASSWORDS_PERMISSION,
-    MANAGE_PERSONAL_TOKENS_PERMISSION, MANAGE_PROFILE_PERMISSION, MANAGE_SERVICE_KEYS_PERMISSION,
-    MANAGE_SESSIONS_PERMISSION, MANAGE_TENANTS_PERMISSION, MANAGE_USERS_PERMISSION,
-    MESSAGING_CONFIGURED_MARKER, MESSAGING_LINK_PERMISSION, MESSAGING_RESOLVE_PERMISSION,
-    ROLE_MEMBER, ROLE_OWNER, SWITCH_TENANT_PERMISSION, SYSTEM_TENANT_MARKER,
-    SYSTEM_TENANT_MEMBER_MARKER, VIEW_AUDIT_PERMISSION, VIEW_RATELIMITS_PERMISSION,
+    MANAGE_CONFIG_PERMISSION, MANAGE_CONTACTS_PERMISSION, MANAGE_MESSAGING_PERMISSION,
+    MANAGE_PASSWORDS_PERMISSION, MANAGE_PERSONAL_TOKENS_PERMISSION, MANAGE_PROFILE_PERMISSION,
+    MANAGE_SERVICE_KEYS_PERMISSION, MANAGE_SESSIONS_PERMISSION, MANAGE_TENANTS_PERMISSION,
+    MANAGE_USERS_PERMISSION, MESSAGING_CONFIGURED_MARKER, MESSAGING_LINK_PERMISSION,
+    MESSAGING_RESOLVE_PERMISSION, NOTIFICATIONS_AUDIENCE_PERMISSION,
+    NOTIFICATIONS_REPORT_PERMISSION, NOTIFICATIONS_SEND_PERMISSION, ROLE_MEMBER, ROLE_OWNER,
+    SWITCH_TENANT_PERMISSION, SYSTEM_TENANT_MARKER, SYSTEM_TENANT_MEMBER_MARKER,
+    VIEW_AUDIT_PERMISSION, VIEW_RATELIMITS_PERMISSION,
 };
+use crate::notify::types::NotificationTypeDef;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -122,7 +127,10 @@ impl ApiDef {
 pub struct ClaimContext<'a> {
     pub user_id: &'a str,
     pub username: &'a str,
-    pub email: &'a str,
+    /// The user's confirmed email address, resolved **only** when the target API asks for it (see
+    /// [`ApiDef::wants_user_email`]). `None` when nothing asked, when the user has no confirmed
+    /// address, or when the principal is a machine key.
+    pub email: Option<&'a str>,
     pub display_names: &'a crate::users::DisplayNames,
     pub title: Option<&'a str>,
     pub salutation: &'a str,
@@ -142,7 +150,9 @@ pub struct ClaimContext<'a> {
 
 /// The **single** place a claim-mapping *source* string is interpreted:
 /// - a plain string is used **literally** (e.g. `"dbx-core"` → `"dbx-core"`);
-/// - `$user.<field>` — one of `id`, `username`, `email`, `title`, `salutation`, `firstname`,
+/// - `$user.email` — the user's **confirmed** address (see [`crate::contacts`]); resolved only when
+///   an API actually asks for it, and omitted when there is none;
+/// - `$user.<field>` — one of `id`, `username`, `title`, `salutation`, `firstname`,
 ///   `lastname`, `locale`, `name`, `fullName`, `addressableName`, `roles`;
 /// - `$tenant.<field>` — one of `id`, `name`, `slug`, `features`;
 /// - `$user.custom.<code>` / `$tenant.custom.<code>` — the named custom field's value.
@@ -162,7 +172,9 @@ pub fn resolve_claim_source(source: &str, ctx: &ClaimContext<'_>) -> Option<Valu
     match reference {
         "user.id" => Some(json!(ctx.user_id)),
         "user.username" => Some(json!(ctx.username)),
-        "user.email" => Some(json!(ctx.email)),
+        // Omitted rather than empty when there is no confirmed address: a claim carrying "" would
+        // read downstream as "we know their address and it is blank".
+        "user.email" => ctx.email.map(|value| json!(value)),
         "user.title" => ctx.title.map(|value| json!(value)),
         "user.salutation" => Some(json!(ctx.salutation)),
         "user.firstname" => ctx.firstname.map(|value| json!(value)),
@@ -177,6 +189,89 @@ pub fn resolve_claim_source(source: &str, ctx: &ClaimContext<'_>) -> Option<Valu
         "tenant.slug" => Some(json!(ctx.tenant_slug)),
         "tenant.features" => Some(json!(ctx.tenant_features)),
         _ => None,
+    }
+}
+
+/// Every `$…` reference [`resolve_claim_source`] understands, for the publish-time gate and for the
+/// error message that tells an author what they may have meant.
+const CLAIM_REFERENCES: [&str; 16] = [
+    "user.id",
+    "user.username",
+    "user.email",
+    "user.title",
+    "user.salutation",
+    "user.firstname",
+    "user.lastname",
+    "user.name",
+    "user.fullName",
+    "user.addressableName",
+    "user.locale",
+    "user.roles",
+    "tenant.id",
+    "tenant.name",
+    "tenant.slug",
+    "tenant.features",
+];
+
+/// Rejects a claim mapping that cannot mean what its author intended.
+///
+/// Two failures, both silent today and both easy to write:
+///
+/// - **An unknown `$…` reference.** `$user.emial` resolves to nothing, so the claim is simply absent
+///   from every token — no error, no log line, just a downstream service that never sees it.
+/// - **A literal that looks like a reference.** `"tenant.features"` without the `$` is a *literal
+///   string*, so the claim carries the words `tenant.features` instead of the array. This one has
+///   bitten the documentation itself.
+///
+/// A deliberate literal is still fine — the check only fires on a value that names a known reference
+/// or starts with a known prefix while missing its `$`.
+pub fn validate_claims(api_code: &str, claims: &BTreeMap<String, String>) -> anyhow::Result<()> {
+    for (name, source) in claims {
+        match source.strip_prefix('$') {
+            Some(reference) => {
+                let known = CLAIM_REFERENCES.contains(&reference)
+                    || reference.starts_with("user.custom.")
+                    || reference.starts_with("tenant.custom.");
+                if !known {
+                    client_bail!(
+                        "Claim '{name}' on API '{api_code}' references '${reference}', which does \
+                         not exist — the claim would simply be missing from every token. Known: \
+                         {}, $user.custom.<code>, $tenant.custom.<code>",
+                        CLAIM_REFERENCES
+                            .iter()
+                            .map(|entry| format!("${entry}"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
+                }
+            }
+            None => {
+                let looks_like_a_reference = CLAIM_REFERENCES.contains(&source.as_str())
+                    || source.starts_with("user.")
+                    || source.starts_with("tenant.")
+                    || source.starts_with("customUser:")
+                    || source.starts_with("customTenant:");
+                if looks_like_a_reference {
+                    client_bail!(
+                        "Claim '{name}' on API '{api_code}' is the literal string '{source}'. If a \
+                         reference was meant, write it with a leading '$' (e.g. '$tenant.features' \
+                         or '$tenant.custom.<code>')"
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+impl ApiDef {
+    /// Whether this API's claim mapping references `$user.email`.
+    ///
+    /// Checked before minting so the contact lookup only happens for a deployment that actually
+    /// wants the address in its tokens — every other login stays one read lighter, and umami keeps
+    /// putting no personal data in a token nobody asked for.
+    pub fn wants_user_email(&self) -> bool {
+        self.claims.values().any(|source| source == "$user.email")
     }
 }
 
@@ -319,6 +414,13 @@ pub struct SecuritySettings {
     pub access_ttl_secs: u64,
     /// Refresh/session lifetime (seconds).
     pub refresh_ttl_secs: u64,
+    /// Validity window for an address-verification challenge (seconds).
+    #[serde(default = "default_contact_challenge_ttl_secs")]
+    pub contact_challenge_ttl_secs: u64,
+    /// Validity window for a password-reset link (seconds). Deliberately shorter than the
+    /// confirmation link — a reset link is account takeover in one click for whoever reads it.
+    #[serde(default = "default_password_reset_ttl_secs")]
+    pub password_reset_ttl_secs: u64,
     /// Validity window for a messaging link code (seconds). Older codes are rotated on read and
     /// rejected on link.
     #[serde(default = "default_messaging_code_ttl_secs")]
@@ -338,6 +440,16 @@ pub struct SecuritySettings {
     /// credibility to any destination. Empty list = the flow is off.
     #[serde(default)]
     pub redirect_uris: Vec<String>,
+}
+
+/// Serde default for [`SecuritySettings::contact_challenge_ttl_secs`].
+fn default_contact_challenge_ttl_secs() -> u64 {
+    DEFAULT_CONTACT_CHALLENGE_TTL_SECS
+}
+
+/// Serde default for [`SecuritySettings::password_reset_ttl_secs`].
+fn default_password_reset_ttl_secs() -> u64 {
+    DEFAULT_PASSWORD_RESET_TTL_SECS
 }
 
 /// Serde default for [`SecuritySettings::messaging_code_ttl_secs`] (back-compat for older configs).
@@ -389,6 +501,12 @@ pub struct RateLimitsConfig {
     /// separate counters, so a flood on one does not consume the other's budget).
     #[serde(default = "default_per_ip_rate_limit")]
     pub per_ip: VolumeRateLimit,
+    /// Per-**user** cap on transactional mail umami sends on their behalf (address verification,
+    /// password recovery). Keyed on the user rather than the IP: the address being mailed sits on
+    /// somebody's contact list, so the account is the thing to hold accountable. Without this cap,
+    /// anyone with an account can add a stranger's address and have umami mail them on repeat.
+    #[serde(default = "default_mail_send_rate_limit")]
+    pub mail_send: VolumeRateLimit,
 }
 
 impl Default for RateLimitsConfig {
@@ -397,6 +515,7 @@ impl Default for RateLimitsConfig {
             login: default_login_rate_limit(),
             token_exchange: default_token_exchange_rate_limit(),
             per_ip: default_per_ip_rate_limit(),
+            mail_send: default_mail_send_rate_limit(),
         }
     }
 }
@@ -425,6 +544,15 @@ fn default_per_ip_rate_limit() -> VolumeRateLimit {
         max_per_window: DEFAULT_PER_IP_MAX_PER_WINDOW,
         window_secs: DEFAULT_PER_IP_WINDOW_SECS,
         block_secs: DEFAULT_PER_IP_BLOCK_SECS,
+    }
+}
+
+/// Serde default for [`RateLimitsConfig::mail_send`].
+fn default_mail_send_rate_limit() -> VolumeRateLimit {
+    VolumeRateLimit {
+        max_per_window: DEFAULT_MAIL_SEND_MAX_PER_WINDOW,
+        window_secs: DEFAULT_MAIL_SEND_WINDOW_SECS,
+        block_secs: DEFAULT_MAIL_SEND_BLOCK_SECS,
     }
 }
 
@@ -467,6 +595,9 @@ pub struct Config {
     /// Messaging integration (Telegram/WhatsApp) settings.
     #[serde(default)]
     pub messaging: MessagingConfig,
+    /// The notification types users can subscribe to — see [`NotificationTypeDef`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notification_types: Vec<NotificationTypeDef>,
     /// White-labeling for the management UI (accent CSS, logo, favicon).
     #[serde(default)]
     pub branding: BrandingConfig,
@@ -475,8 +606,17 @@ pub struct Config {
     pub apis: Vec<ApiDef>,
 }
 
+impl Config {
+    /// The notification type with this code, if the catalogue defines one.
+    pub fn find_notification_type(&self, code: &str) -> Option<&NotificationTypeDef> {
+        self.notification_types
+            .iter()
+            .find(|entry| entry.code == code)
+    }
+}
+
 /// A tenant's feature set *including* the synthetic markers `assignableIf` gates on
-/// (`is:system-tenant`, `feature:messaging-configured`).
+/// (`is:system-tenant`, `is:messaging-configured`).
 ///
 /// A newtype rather than a bare `Vec<String>`, and only producible by
 /// [`Config::eval_feature_set`], because the distinction is invisible at a call site and easy to
@@ -725,6 +865,16 @@ impl Default for Config {
                     "Messaging resolver",
                     Some(SYSTEM_TENANT_MARKER),
                 ),
+                scope(
+                    "scope:notifier",
+                    "Notifier (resolve audiences + send)",
+                    Some(SYSTEM_TENANT_MARKER),
+                ),
+                scope(
+                    "scope:mail-worker",
+                    "Mail worker (report undeliverable)",
+                    Some(SYSTEM_TENANT_MARKER),
+                ),
             ],
             features: Vec::new(),
             custom_tenant_fields: Vec::new(),
@@ -735,6 +885,8 @@ impl Default for Config {
                 min_password_length: 8,
                 access_ttl_secs: DEFAULT_ACCESS_TTL_SECS,
                 refresh_ttl_secs: DEFAULT_REFRESH_TTL_SECS,
+                contact_challenge_ttl_secs: DEFAULT_CONTACT_CHALLENGE_TTL_SECS,
+                password_reset_ttl_secs: DEFAULT_PASSWORD_RESET_TTL_SECS,
                 messaging_code_ttl_secs: DEFAULT_MESSAGING_CODE_TTL_SECS,
                 rate_limits: RateLimitsConfig::default(),
                 // Empty by default: the hosted-login redirect stays off until a deployment
@@ -742,6 +894,9 @@ impl Default for Config {
                 redirect_uris: Vec::new(),
             },
             messaging: MessagingConfig::default(),
+            // Empty: what a deployment notifies about is entirely its own, and inventing a type
+            // would put an unasked-for switch in everybody's profile.
+            notification_types: Vec::new(),
             branding: BrandingConfig::default(),
             // The umami admin API. This is a deliberately MINIMAL, bootstrap-only mapping: it grants
             // the system-tenant owner enough to log in and administer (so they can then write the
@@ -764,6 +919,7 @@ impl Default for Config {
                             MANAGE_PASSWORDS_PERMISSION,
                             MANAGE_PERSONAL_TOKENS_PERMISSION,
                             MANAGE_SESSIONS_PERMISSION,
+                            MANAGE_CONTACTS_PERMISSION,
                         ],
                     ),
                     // Bootstrap owner: full self-tenant administration + config.
@@ -803,6 +959,21 @@ impl Default for Config {
                         &format!("scope:messaging-resolver + {SYSTEM_TENANT_MARKER}"),
                         &[MESSAGING_RESOLVE_PERMISSION],
                     ),
+                    // Notifications M2M. Granted together here because one service key currently
+                    // does both jobs; a deployment that wants a send-only app writes two scopes.
+                    rule(
+                        &format!("scope:notifier + {SYSTEM_TENANT_MARKER}"),
+                        &[
+                            NOTIFICATIONS_AUDIENCE_PERMISSION,
+                            NOTIFICATIONS_SEND_PERMISSION,
+                        ],
+                    ),
+                    // The mail worker's own scope: it reports what it could not deliver and nothing
+                    // else. Separate because it is a different principal from the app that sends.
+                    rule(
+                        &format!("scope:mail-worker + {SYSTEM_TENANT_MARKER}"),
+                        &[NOTIFICATIONS_REPORT_PERMISSION],
+                    ),
                 ],
                 claims: BTreeMap::new(),
             }],
@@ -812,6 +983,94 @@ impl Default for Config {
 
 #[cfg(test)]
 mod tests {
+    /// The lookup costs a read, so it only happens for a deployment that asked. This is the check
+    /// that decides.
+    #[test]
+    fn the_email_lookup_is_only_paid_for_when_something_asks() {
+        let api = |claims: BTreeMap<String, String>| ApiDef {
+            code: "dbx-core".to_owned(),
+            audience: "dbx-core".to_owned(),
+            eligibility: None,
+            permissions: Vec::new(),
+            claims,
+        };
+        assert!(!api(BTreeMap::new()).wants_user_email());
+        assert!(
+            !api(BTreeMap::from([(
+                "svc".to_owned(),
+                "$user.username".to_owned()
+            )]))
+            .wants_user_email()
+        );
+        assert!(
+            api(BTreeMap::from([(
+                "mail".to_owned(),
+                "$user.email".to_owned()
+            )]))
+            .wants_user_email()
+        );
+    }
+
+    /// An absent address must omit the claim, not send an empty one — `""` downstream reads as
+    /// "we know their address and it is blank".
+    #[test]
+    fn the_email_claim_is_omitted_when_there_is_none() {
+        let names = crate::users::DisplayNames::default();
+        let empty = BTreeMap::new();
+        let mut ctx = ClaimContext {
+            user_id: "u",
+            username: "jane",
+            email: None,
+            display_names: &names,
+            title: None,
+            salutation: "",
+            locale: "en",
+            firstname: None,
+            lastname: None,
+            roles: &[],
+            user_custom: &empty,
+            tenant_id: "t",
+            tenant_name: "",
+            tenant_slug: "",
+            tenant_features: &[],
+            tenant_custom: &empty,
+        };
+        assert_eq!(resolve_claim_source("$user.email", &ctx), None);
+        ctx.email = Some("jane@example.com");
+        assert_eq!(
+            resolve_claim_source("$user.email", &ctx),
+            Some(json!("jane@example.com"))
+        );
+    }
+
+    /// Both halves of the silent failure this gate exists for — and it has to stay quiet about a
+    /// literal that was genuinely meant as one.
+    #[test]
+    fn the_claim_gate_catches_both_ways_of_writing_it_wrong() {
+        let claims =
+            |name: &str, source: &str| BTreeMap::from([(name.to_owned(), source.to_owned())]);
+
+        assert!(validate_claims("dbx-core", &claims("org", "$tenant.custom.customerNo")).is_ok());
+        assert!(validate_claims("dbx-core", &claims("feat", "$tenant.features")).is_ok());
+        assert!(
+            validate_claims("dbx-core", &claims("svc", "dbx-core")).is_ok(),
+            "a plain literal is a legitimate claim value"
+        );
+
+        assert!(
+            validate_claims("dbx-core", &claims("mail", "$user.emial")).is_err(),
+            "a typo'd reference would leave the claim missing from every token"
+        );
+        assert!(
+            validate_claims("dbx-core", &claims("feat", "tenant.features")).is_err(),
+            "a missing $ makes it a literal — the failure the docs themselves shipped"
+        );
+        assert!(
+            validate_claims("dbx-core", &claims("org", "customTenant:customerNo")).is_err(),
+            "the old syntax no longer resolves and must not pass silently"
+        );
+    }
+
     use super::*;
 
     fn set<'a>(items: &'a [&'a str]) -> BTreeSet<&'a str> {
@@ -1143,9 +1402,9 @@ mod tests {
         let tenant_cf = BTreeMap::new();
         let features = vec!["feature:ai".to_owned()];
         let ctx = ClaimContext {
+            email: None,
             user_id: "u1",
             username: "jane",
-            email: "jane@x",
             display_names: &names,
             title: None,
             salutation: "",

@@ -381,9 +381,9 @@ async fn mint_access_token(
         &context.tokens,
         config,
         MintParams {
+            contacts: context.contacts.as_ref(),
             api_code,
             subject: &user.user_id,
-            email: user.email.as_deref().unwrap_or_default(),
             tenant_id,
             token_version: user.token_version,
             subjects: &user.roles,

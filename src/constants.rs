@@ -80,6 +80,33 @@ pub const MESSAGING_RESOLVE_PERMISSION: &str = "messaging:resolve";
 /// deployment actually has a Telegram bot and/or WhatsApp number configured.
 pub const MANAGE_MESSAGING_PERMISSION: &str = "manage:messaging";
 
+/// Self-service management of one's own **email contacts** (list/add/remove, verify, preferred).
+///
+/// Part of the baseline self-service set rather than gated on a marker: keeping your own addresses
+/// current is profile data, not a deployment capability. What *is* gated on infrastructure is
+/// verification and password recovery — both need a configured mail path, and neither exists yet.
+pub const MANAGE_CONTACTS_PERMISSION: &str = "manage:contacts";
+
+/// Resolve who hears about one notification firing. Held by a system-tenant service key carrying
+/// `scope:notifier`.
+///
+/// Separate from [`NOTIFICATIONS_SEND_PERMISSION`] on purpose: an app that only needs to *send* must
+/// not also be able to enumerate a tenant's users, and the two are different jobs even where they
+/// happen to be the same app today.
+pub const NOTIFICATIONS_AUDIENCE_PERMISSION: &str = "notifications:audience";
+
+/// Hand finished notification messages over for delivery. Held by a system-tenant service key
+/// carrying `scope:notifier`.
+pub const NOTIFICATIONS_SEND_PERMISSION: &str = "notifications:send";
+
+/// Report back that a message could not be delivered. Held by the **mail worker** — the thing that
+/// consumes the queue — via a system-tenant service key carrying `scope:mail-worker`.
+///
+/// Its own permission and its own scope, separate from `notifications:send`: the worker and the app
+/// that asks for a send are different principals, and the worker has no business resolving an
+/// audience or sending anything of its own.
+pub const NOTIFICATIONS_REPORT_PERMISSION: &str = "notifications:report";
+
 // ── Synthetic subject markers (computed at mint time, never stored) ────────────
 
 /// Added to the subject set when the token's tenant is the configured `UMAMI_SYSTEM_TENANT_ID`.
@@ -128,13 +155,13 @@ pub const MAX_TEXT_BODY_SIZE: u64 = 1024 * 1024;
 /// `"<sessionId>.<refreshSecret>"`; only umami's refresh endpoint ever reads it.
 pub const REFRESH_COOKIE_NAME: &str = "umami_refresh";
 
-// ── Token / session TTL defaults (overridable via env) ────────────────────────
+// ── Token / session TTL defaults (config `security`; overridable per-config) ───
 
-/// Default access-token lifetime in seconds (10 min). Kept short because it equals the worst-case
-/// revocation latency at product services (they verify offline). Override via `UMAMI_ACCESS_TTL_SECS`.
+/// Default `security.accessTtlSecs` — access-token lifetime in seconds (10 min). Kept short because
+/// it equals the worst-case revocation latency at product services (they verify offline).
 pub const DEFAULT_ACCESS_TTL_SECS: u64 = 600;
 
-/// Default refresh/session lifetime in seconds (30 days). Override via `UMAMI_REFRESH_TTL_SECS`.
+/// Default `security.refreshTtlSecs` — refresh/session lifetime in seconds (30 days).
 pub const DEFAULT_REFRESH_TTL_SECS: u64 = 30 * 24 * 60 * 60;
 
 /// Default validity window for a messaging link code (10 min). A code older than this is treated as
@@ -167,6 +194,25 @@ pub const DEFAULT_PER_IP_MAX_PER_WINDOW: u32 = 300;
 pub const DEFAULT_PER_IP_WINDOW_SECS: u32 = 60;
 /// Default `perIp.blockSecs` — how long an IP stays blocked after flooding an endpoint (5 min).
 pub const DEFAULT_PER_IP_BLOCK_SECS: u32 = 300;
+
+/// Default `mailSend.maxPerWindow` — verification/recovery mails a single user may trigger per
+/// window. Low on purpose: without a cap, anyone with an account can add a stranger's address to
+/// their own list and have umami mail that stranger on repeat.
+pub const DEFAULT_MAIL_SEND_MAX_PER_WINDOW: u32 = 5;
+/// Default `mailSend.windowSecs` — the per-user send window (1 hour).
+pub const DEFAULT_MAIL_SEND_WINDOW_SECS: u32 = 3600;
+/// Default `mailSend.blockSecs` — how long a user stays blocked after exceeding it (1 hour).
+pub const DEFAULT_MAIL_SEND_BLOCK_SECS: u32 = 3600;
+
+/// Default validity window for a password-reset link (1 hour).
+///
+/// Much shorter than the confirmation link: this one is account takeover in a click for whoever
+/// reads it, and someone who just asked for it is looking at their inbox now.
+pub const DEFAULT_PASSWORD_RESET_TTL_SECS: u64 = 3600;
+
+/// Default validity window for an address-verification challenge (24 hours). Long enough that a
+/// mail read the next morning still works, short enough that a link left in an inbox goes stale.
+pub const DEFAULT_CONTACT_CHALLENGE_TTL_SECS: u64 = 86_400;
 
 /// Default upper bound on the per-node in-memory LRU block cache (distinct blocked subjects held in
 /// memory). Bounded so many distinct IPs cannot memory-DoS a node. Override with

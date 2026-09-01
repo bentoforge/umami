@@ -15,6 +15,14 @@ import type {
   ExchangeResponse,
   LoginResponse,
   MeResponse,
+  AudienceResponse,
+  Cadence,
+  Capabilities,
+  Choice,
+  Contact,
+  ContactsResponse,
+  MyNotificationsResponse,
+  NotificationSendResult,
   MessagingCodeResponse,
   MessagingLink,
   MfaStatus,
@@ -437,7 +445,7 @@ export class UmamiClient {
     });
   }
   /** List the caller's tenant's users (sorted by recent activity, capped at 250). `q` is an
-   * optional case-insensitive search over username / email / name / custom fields. */
+   * optional case-insensitive search over username / name / custom fields. */
   listUsers(q?: string, limit?: number): Promise<{ users: UserView[]; truncated: boolean }> {
     return this.request<{ users: UserView[]; truncated: boolean }>(`/users${listQs(q, limit)}`);
   }
@@ -492,6 +500,168 @@ export class UmamiClient {
   /** Revokes all of a tenant user's sessions by bumping their tokenVersion (requires `manage:users`). */
   async logoutUser(userId: string): Promise<void> {
     await this.request(`/users/${enc(userId)}/logout-all`, { method: "POST" });
+  }
+
+  // ── notifications ───────────────────────────────────────────────────────────
+
+  /** The caller's subscribable types, already filtered by eligibility, with their choices. */
+  myNotifications(): Promise<MyNotificationsResponse> {
+    return this.request<MyNotificationsResponse>("/auth/me/notifications");
+  }
+  /** Set the caller's choice for one type: `"off"`, `"on"`, or one of its cadence codes — whatever
+   * {@link NotificationTypeView.allowed} lists.
+   *
+   * To go back to *unset* — follow whatever the deployment decides, now and later — use
+   * {@link UmamiClient.clearNotificationChoice}. Unset and `"off"` are different states. */
+  setNotificationChoice(code: string, choice: Choice): Promise<{ code: string; choice?: Choice }> {
+    return this.request<{ code: string; choice?: Choice }>(
+      `/auth/me/notifications/${enc(code)}`,
+      { method: "PUT", body: JSON.stringify({ choice }) },
+    );
+  }
+  /** Clear the caller's choice back to *unset*, so the configured default applies again. */
+  clearNotificationChoice(code: string): Promise<{ code: string; choice?: Choice }> {
+    return this.request<{ code: string; choice?: Choice }>(
+      `/auth/me/notifications/${enc(code)}`,
+      { method: "DELETE" },
+    );
+  }
+  /** Who hears about one firing (`notifications:audience`).
+   *
+   * `cadences` are the rhythms **this** firing represents — a Friday run is typically
+   * `["daily","weekly"]`. Naming one the type does not declare is a 400 rather than an empty
+   * audience, because "nobody subscribed" and "the schedule drifted" look identical otherwise. */
+  notificationAudience(params: {
+    tenantId: string;
+    type: string;
+    /** Omit or leave empty for a type with no rhythm of its own. */
+    cadences?: Cadence[];
+  }): Promise<AudienceResponse> {
+    return this.request<AudienceResponse>("/notifications/audience", {
+      method: "POST",
+      body: JSON.stringify(params),
+    });
+  }
+  /** Hand finished messages over for delivery (`notifications:send`), at most 500 per call.
+   *
+   * `type` names the notification type this send follows; pass `null` for a **transactional**
+   * message, which has one recipient and one reason and never consulted the catalogue.
+   *
+   * This endpoint never re-checks a preference — the caller is trusted to have resolved an audience,
+   * and the permission is the control on that trust. */
+  sendNotifications(
+    type: string | null,
+    messages: { userId: string; subject: string; body: string }[],
+  ): Promise<{ results: NotificationSendResult[] }> {
+    return this.request<{ results: NotificationSendResult[] }>("/notifications/send", {
+      method: "POST",
+      body: JSON.stringify({ type: type ?? undefined, messages }),
+    });
+  }
+
+  /** Report a **hard** delivery failure (`notifications:report`, held by the mail worker).
+   *
+   * Withdraws the address's confirmation, so umami stops sending there — including reset links.
+   * Only permanent failures and complaints belong here: a full mailbox or a greylisting is the
+   * worker's to retry and says nothing about whether the address is still the user's. */
+  reportUndeliverable(report: {
+    userId: string;
+    address: string;
+    event: "bounced" | "complained";
+    messageId?: string;
+  }): Promise<{ status: string }> {
+    return this.request<{ status: string }>("/notifications/undeliverable", {
+      method: "POST",
+      body: JSON.stringify(report),
+    });
+  }
+
+  // ── password recovery (all unauthenticated) ─────────────────────────────────
+
+  /** What the sign-in screen may offer. Public; safe to call before signing in. */
+  capabilities(): Promise<Capabilities> {
+    return this.request<Capabilities>("/auth/capabilities", {}, false);
+  }
+  /** Ask for a reset link. `identifier` is a username or an email address.
+   *
+   * **Always resolves with 202**, whatever happened — unknown account, unconfirmed address, an
+   * address two accounts share. Any difference would turn this into an "does this account exist"
+   * oracle. A `429` is the one exception and is about the caller's own volume. */
+  forgotPassword(identifier: string): Promise<{ status: string }> {
+    return this.request<{ status: string }>(
+      "/auth/forgot-password",
+      { method: "POST", body: JSON.stringify({ identifier }) },
+      false,
+    );
+  }
+  /** Set a new password with the secret from the mailed link. Ends every existing session.
+   *
+   * Named for the *recovery* rather than the path, because {@link UmamiClient.resetPassword} is the
+   * admin action on somebody else's account. Different powers: one is proven by a mailed secret, the
+   * other by `manage:users`. */
+  completeRecovery(token: string, newPassword: string): Promise<{ status: string }> {
+    return this.request<{ status: string }>(
+      "/auth/reset-password",
+      { method: "POST", body: JSON.stringify({ token, newPassword }) },
+      false,
+    );
+  }
+
+  // ── contacts (email) ────────────────────────────────────────────────────────
+
+  /** The caller's email addresses, plus the preferred one. */
+  getContacts(): Promise<ContactsResponse> {
+    return this.request<ContactsResponse>("/auth/me/contacts");
+  }
+  /** Add an address. Starts unverified — only a verified address is ever sent to. */
+  addContact(address: string, label?: string): Promise<Contact> {
+    return this.request<Contact>("/auth/me/contacts", {
+      method: "POST",
+      body: JSON.stringify({ address, label }),
+    });
+  }
+  /** Remove one of the caller's addresses. Clears an explicit choice that named this one.
+   *
+   * The address travels in the body, not the path: it is personal data, and a URL is copied into
+   * every access log and tracing span on the way. */
+  deleteContact(address: string): Promise<{ status: string }> {
+    return this.request<{ status: string }>("/auth/me/contacts", {
+      method: "DELETE",
+      body: JSON.stringify({ address }),
+    });
+  }
+  /** Set (or clear, with `null`) the caller's preferred address. */
+  setPreferredContact(address: string | null): Promise<{ preferred: string | null }> {
+    return this.request<{ preferred: string | null }>("/auth/me/preferred-contact", {
+      method: "PUT",
+      body: JSON.stringify({ address }),
+    });
+  }
+  /** Mail a fresh confirmation link to one of the caller's own addresses.
+   *
+   * Idempotent and free for an already-verified address: nothing is sent. Capped per user by
+   * `security.rateLimits.mailSend` — a 429 carries `Retry-After`. */
+  startContactVerification(address: string): Promise<{ status: string }> {
+    return this.request<{ status: string }>("/auth/me/contacts/verify", {
+      method: "POST",
+      body: JSON.stringify({ address }),
+    });
+  }
+  /** Finish a verification with the secret from the mailed link.
+   *
+   * **Unauthenticated on purpose** — the link is opened in a mail client that regularly has no
+   * umami session. The token is the proof. */
+  verifyContact(token: string): Promise<{ status: string; address: string }> {
+    return this.request<{ status: string; address: string }>(
+      "/auth/contacts/verify",
+      { method: "POST", body: JSON.stringify({ token }) },
+      false,
+    );
+  }
+  /** A tenant user's addresses, read-only (requires `manage:users`; own tenant). */
+  async listUserContacts(userId: string): Promise<Contact[]> {
+    const data = await this.request<{ contacts: Contact[] }>(`/users/${enc(userId)}/contacts`);
+    return data.contacts;
   }
 
   // ── messaging links ─────────────────────────────────────────────────────────

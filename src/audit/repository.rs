@@ -37,6 +37,7 @@ const DEFAULT_RETENTION_DAYS: i64 = 365;
 
 /// Persistence for the audit log.
 #[async_trait]
+#[cfg_attr(test, mockall::automock)]
 pub trait AuditRepository: Send + Sync {
     /// Appends an audit entry (stamps `id`/`timestamp`/`ttl`).
     async fn record(&self, entry: NewAuditEntry) -> anyhow::Result<()>;

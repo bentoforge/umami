@@ -14,6 +14,7 @@ import {
   Loader,
   RoleToggleList,
   roleCatalog,
+  Tag,
 } from "../components";
 import { card, input, primaryButton, td, th } from "../ui";
 
@@ -90,7 +91,7 @@ export function UsersPage() {
     setNotice(null);
     try {
       await client.deleteUser(user.userId);
-      setNotice(`Deleted "${user.email}".`);
+      setNotice(`Deleted "${user.fullName || user.username}".`);
       await load();
     } catch (err) {
       setError(errMsg(err));
@@ -171,7 +172,7 @@ export function UsersPage() {
               {users.map((user) => {
                 const isSelf = user.userId === myId;
                 const displayName = user.fullName || user.username;
-                const sub = user.fullName ? user.username : (user.email ?? "");
+                const sub = user.fullName ? user.username : "";
                 return (
                   <tr
                     key={user.userId}
@@ -236,33 +237,6 @@ export function UsersPage() {
   );
 }
 
-/** A small status pill for the user row (you / locked / generated-pw / 2FA / passkey). */
-function Tag({
-  tone = "neutral",
-  children,
-}: {
-  tone?: "neutral" | "info" | "danger";
-  children: string;
-}) {
-  // Fixed blue, not the brand token. These tags state a fact about the row — this
-  // is you, this is the system tenant — and are not a place for the deployment's
-  // identity: rebranding must not repaint them, and it must not put the accent on
-  // something that is merely informational.
-  const cls =
-    tone === "info"
-      ? "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300"
-      : tone === "danger"
-        ? "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300"
-        : "bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300";
-  return (
-    <span
-      className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium ${cls}`}
-    >
-      {children}
-    </span>
-  );
-}
-
 function CreateUser({
   fieldDefs,
   onDone,
@@ -275,7 +249,6 @@ function CreateUser({
   const { client, me } = useUmami();
   const { t } = useTranslation();
   const [username, setUsername] = useState("");
-  const [email, setEmail] = useState("");
   const [roles, setRoles] = useState<string[]>([]);
   const [roleDefs, setRoleDefs] = useState<RoleDef[]>([]);
   const [assignable, setAssignable] = useState<string[]>([]);
@@ -312,8 +285,7 @@ function CreateUser({
     onError("");
     try {
       const res = await client.createUser({
-        username: username.trim() || undefined,
-        email: email.trim() || undefined,
+        username: username.trim(),
         roles,
         title,
         salutation,
@@ -322,7 +294,6 @@ function CreateUser({
         customFields: fields,
       });
       setUsername("");
-      setEmail("");
       setRoles([]);
       setTitle("");
       setSalutation("");
@@ -343,14 +314,6 @@ function CreateUser({
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Field label={t("users.username")}>
           <input className={input} value={username} onChange={(e) => setUsername(e.target.value)} />
-        </Field>
-        <Field label={t("users.email")}>
-          <input
-            className={input}
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-          />
         </Field>
         <Field label={t("users.salutation")}>
           <select
