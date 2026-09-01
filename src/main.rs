@@ -421,8 +421,16 @@ async fn app() -> anyhow::Result<()> {
         capabilities_route(notifier.clone()),
         // notifications (self-service: what I subscribe to)
         my_notifications_route(notify_deps.clone(), authenticator.clone()),
-        set_choice_route(notify_deps.clone(), authenticator.clone()),
-        clear_choice_route(notify_deps.clone(), authenticator.clone()),
+        set_choice_route(
+            notify_deps.clone(),
+            audit_repository.clone(),
+            authenticator.clone()
+        ),
+        clear_choice_route(
+            notify_deps.clone(),
+            audit_repository.clone(),
+            authenticator.clone()
+        ),
         // notifications (machine: who hears about a firing, then hand the messages over)
         audience_route(
             notify_deps.clone(),

@@ -285,6 +285,7 @@ function ContactsPanel() {
   const [label, setLabel] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -308,6 +309,7 @@ function ContactsPanel() {
       await client.addContact(address.trim(), label.trim() || undefined);
       setAddress("");
       setLabel("");
+      setAdding(false);
       await load();
     } catch (err) {
       setError(errMsg(err));
@@ -359,35 +361,56 @@ function ContactsPanel() {
   const contacts = data?.contacts ?? [];
   return (
     <section className={`${card} space-y-4`}>
-      <div>
+      <div className="flex items-center justify-between gap-3">
         <h2 className="font-medium text-slate-800 dark:text-slate-200">{t("contacts.title")}</h2>
-        <p className="text-sm text-slate-500">{t("contacts.intro")}</p>
+        {!adding && (
+          <button className={primaryButton} onClick={() => setAdding(true)}>
+            {t("contacts.new")}
+          </button>
+        )}
       </div>
 
       <Banner tone="error">{error}</Banner>
       <Banner tone="ok">{notice}</Banner>
 
-      <div className="flex flex-wrap items-end gap-2">
-        <Field label={t("contacts.addressLabel")}>
-          <input
-            className={input}
-            type="email"
-            value={address}
-            placeholder="name@example.com"
-            onChange={(e) => setAddress(e.target.value)}
-          />
-        </Field>
-        <Field label={t("contacts.labelField")}>
-          <input className={input} value={label} onChange={(e) => setLabel(e.target.value)} />
-        </Field>
-        <button
-          className={primaryButton}
-          disabled={busy || !address.trim()}
-          onClick={() => void add()}
-        >
-          {t("contacts.add")}
-        </button>
-      </div>
+      {adding && (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-end gap-2">
+            <Field label={t("contacts.addressLabel")}>
+              <input
+                className={input}
+                type="email"
+                value={address}
+                placeholder="name@example.com"
+                onChange={(e) => setAddress(e.target.value)}
+              />
+            </Field>
+            <Field label={t("contacts.labelField")}>
+              <input className={input} value={label} onChange={(e) => setLabel(e.target.value)} />
+            </Field>
+          </div>
+          <div className="flex gap-2">
+            <button
+              className={primaryButton}
+              disabled={busy || !address.trim()}
+              onClick={() => void add()}
+            >
+              {t("contacts.add")}
+            </button>
+            <button
+              className={ghostButton}
+              disabled={busy}
+              onClick={() => {
+                setAdding(false);
+                setAddress("");
+                setLabel("");
+              }}
+            >
+              {t("contacts.cancel")}
+            </button>
+          </div>
+        </div>
+      )}
 
       <div>
         {contacts.length === 0 ? (
@@ -396,6 +419,7 @@ function ContactsPanel() {
           <ContactList
             contacts={contacts}
             preferred={data?.preferred ?? null}
+            chosen={data?.chosen ?? null}
             onDelete={remove}
             onPrefer={prefer}
             onVerify={data?.verificationAvailable ? verify : undefined}

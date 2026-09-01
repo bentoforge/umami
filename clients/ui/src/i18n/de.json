@@ -212,7 +212,8 @@
   },
   "contacts": {
     "title": "E-Mail-Adressen",
-    "intro": "Wo umami Sie erreicht. Genutzt wird nur eine bestätigte Adresse — neue eintragen und bestätigen, bevor Sie die alte entfernen.",
+    "new": "Adresse hinzufügen",
+    "cancel": "Abbrechen",
     "addressLabel": "E-Mail-Adresse",
     "labelField": "Bezeichnung (optional)",
     "add": "Hinzufügen",

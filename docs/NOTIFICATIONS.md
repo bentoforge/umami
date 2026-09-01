@@ -160,6 +160,9 @@ who never expressed an opinion. So `DELETE` removes the key rather than writing 
 | `PUT` | `/auth/me/notifications/{code}` | `{choice}` — `"off"`, `"on"` or a cadence code. Anything the type does not accept is a `400` |
 | `DELETE` | `/auth/me/notifications/{code}` | back to *unset* |
 
+Both writes are **audited**. "I never asked for these" is a claim umami has to be able to answer,
+and the answer is only as good as the record of who changed what when.
+
 ### Machine — system-tenant service keys (`scope:notifier`)
 
 | Method | Path | Permission |
@@ -209,9 +212,10 @@ Other properties worth knowing:
 
 ## 6. Which address a notification goes to
 
-The user's preferred address when it is confirmed, otherwise their single confirmed one. Several
-confirmed addresses and no preference is not a choice umami makes for them — `send` answers
-`no-address` and the audience leaves them out.
+Their chosen address while it is confirmed, otherwise the oldest confirmed one they hold — resolved
+through the single rule in [CONTACTS.md](CONTACTS.md) §5, the same one the profile screen displays.
+A user with no confirmed address at all is left out of the audience and answered `no-address` by
+`send`.
 
 Delivery itself is one SQS write per message with `kind: "notification"`; the payload and the
 worker's contract are documented in [CONTACTS.md](CONTACTS.md) §3.

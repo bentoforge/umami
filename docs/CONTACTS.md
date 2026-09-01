@@ -147,26 +147,61 @@ All gated on `manage:contacts`, which the default config grants in the **baselin
 |--------|------|-------|
 | `GET` | `/auth/me/contacts` | the caller's addresses + the preferred one |
 | `POST` | `/auth/me/contacts` | `{address, label?}` → 201, unverified. A duplicate is a 409 |
-| `DELETE` | `/auth/me/contacts/{address}` | also clears the preference if it named this address |
-| `POST` | `/auth/me/contacts/{address}/verify` | mails a fresh confirmation link → 202. Free no-op when already confirmed; `503` with no mail path; `429` over the cap |
-| `PUT` | `/auth/me/preferred-contact` | `{address}`, or `null` to clear |
+| `DELETE` | `/auth/me/contacts` | `{address}` — also drops an explicit choice that named it |
+| `POST` | `/auth/me/contacts/verify` | `{address}` → mails a fresh confirmation link, 202. Free no-op when already confirmed; `503` with no mail path; `429` over the cap |
+| `PUT` | `/auth/me/preferred-contact` | `{address}`, or `null` to clear. `409` for an unconfirmed address |
 | `GET` | `/users/{id}/contacts` | admin, read-only, `manage:users`; scoped server-side to the caller's tenant |
 | `POST` | `/auth/contacts/verify` | **unauthenticated** — `{token}` from the mailed link |
 
-**Every mutation is audited** — added, removed, preference changed, mail queued (with its
-`messageId`), and verified. Reachability is a security-relevant property: whoever controls the
-address a reset link goes to controls the account, so the trail exists from the start rather than
-being added after the first incident.
+**No address ever appears in a path.** Every one of these takes it in the body, even where a path
+segment would read better, because a URL is copied into every access log, proxy log and tracing span
+between the browser and umami — places with no retention policy and no erasure story. umami already
+refuses to hand addresses to the apps it serves (`/notifications/audience` returns none); handing
+them to the infrastructure instead would be the same leak by another route. Opaque ids — user,
+tenant, session, key — stay in the path, where they belong.
+
+**Every mutation is audited** — added, removed, verified, preference changed, and mail queued, with
+its `messageId`. So is a verification mail that was **not** sent, for
+want of a queue or against the rate limit: a user clicking "confirm" and getting an error is the
+symptom of a misconfigured deployment, and the operator who has to notice it is not the person
+seeing the error. Reachability is a security-relevant property: whoever controls the address a reset
+link goes to controls the account, so the trail exists from the start rather than being added after
+the first incident.
 
 ### The preferred address
 
-`user.preferredContact` names one of the user's addresses. It is a statement of **intent**, and only
-ownership is checked when it is set — preferring an address before it is verified is legitimate, and
-refusing it would make the user come back a second time.
+`user.preferredContact` records what the user **chose**. Where mail actually goes is *derived* from
+it, every time, by the profile screen and by every sender alike:
 
-Everything else is enforced at resolution: a value naming an address that no longer exists or is not
-verified counts as "no preference". Deleting an address clears a preference that named it, so the
-stored value never points at something outside the user's list.
+1. the chosen address, while the user still holds it and has confirmed it;
+2. otherwise the **oldest** confirmed address they hold;
+3. otherwise nothing — the user is unreachable, and `send` answers `no-address`.
+
+The fallback is by age because the address proven longest is the one the user has been reachable at
+longest, and picking by age gives every caller the same answer.
+
+Deriving rather than storing is deliberate. The alternative — rewriting the stored value whenever an
+address is added, removed, confirmed or bounced — still needs rule 2 anyway, since no sender can
+trust a value written by an earlier version of that logic. Two mechanisms answering one question is
+how a profile screen and a password reset end up disagreeing about which mailbox is the user's.
+
+Everything therefore follows without a repair job:
+
+- confirming a first address makes it the one mail goes to;
+- deleting the chosen address hands over to the next confirmed one;
+- a bounce that withdraws a confirmation does the same, immediately, not at the next failed send.
+
+`GET /auth/me/contacts` returns the **resolved** address in `preferred`, so the badge in the UI marks
+the row that actually receives mail, and the raw choice in `chosen` beside it. The two are reported
+separately because only an explicit choice can be un-chosen: offering to un-pick a derived
+preference would be an action that visibly does nothing.
+
+Setting a preference is where the rule is enforced up front instead: `PUT
+/auth/me/preferred-contact` refuses an unconfirmed address with a `409`. Nothing is ever sent to one,
+so the setting would change nothing while reading as though the account's mail now went there — and
+there the user is present and can be told which step is missing. Deleting the chosen address clears
+the stored value too, so a later address of the same name does not silently inherit a preference set
+in another life.
 
 ---
 
@@ -185,7 +220,7 @@ It used to have one. The field is **gone**, not hidden, and four things went wit
   up *by* an address is a direct query on `ByAddressIndex` instead, which is cheaper than the scan.
 
 **`$user.email` is available as a claim** for a deployment that wants an address in its tokens —
-sourced from the preferred confirmed address, or the sole confirmed one. It is resolved **only** when
+sourced from the preferred address, which is a confirmed one by the rules above. It is resolved **only** when
 a target API's mapping actually references it, so nobody pays a read for an option they did not take,
 and it is *omitted* rather than empty when there is no confirmed address.
 

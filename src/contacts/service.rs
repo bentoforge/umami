@@ -15,6 +15,7 @@ use crate::auth::challenge::{ChallengeRepository, Purpose, confirm_address};
 use crate::auth::ratelimit::{Decision, POLICY_MAIL_SEND, RateLimiter, too_many_requests};
 use crate::config::repository::ConfigRepository;
 use crate::constants::{MANAGE_CONTACTS_PERMISSION, MANAGE_USERS_PERMISSION, MAX_TEXT_BODY_SIZE};
+use crate::contacts::preference::preference_for;
 use crate::contacts::repository::{ContactRepository, NewContact};
 use crate::contacts::{Contact, normalize_email};
 use crate::notify::{Notifier, OutboundMail};
@@ -42,8 +43,16 @@ const REQUIRE_MANAGE_USERS: &[&str] = &[MANAGE_USERS_PERMISSION];
 #[serde(rename_all = "camelCase")]
 struct ContactsResponse {
     contacts: Vec<Contact>,
-    /// The address the user would rather be reached at, if they named one.
+    /// The address mail actually goes to — the user's choice while it holds, else the fallback.
+    /// See [`crate::contacts::preference`].
     preferred: Option<String>,
+    /// The choice the user actually made, when they made one.
+    ///
+    /// Reported next to `preferred` so a screen can tell "I picked this" from "this is simply the
+    /// one you have left". Without the distinction, offering to un-pick a derived preference is an
+    /// action that visibly does nothing: clearing an empty value changes no answer.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    chosen: Option<String>,
     /// Whether this deployment can actually send a verification mail.
     ///
     /// Reported so the screen that offers "verify" knows whether the button leads anywhere. Without
@@ -59,6 +68,18 @@ struct AddContactRequest {
     address: String,
     #[serde(default)]
     label: Option<String>,
+}
+
+/// Request naming one of the caller's own addresses.
+///
+/// In the **body**, not the path. An address is personal data, and a path lands in every access log,
+/// proxy log and tracing span along the way — places with no retention policy and no erasure story.
+/// umami goes out of its way not to hand addresses to the apps it serves (`/notifications/audience`
+/// returns none); putting them in the URL would leak them to the infrastructure instead.
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct AddressRequest {
+    address: String,
 }
 
 /// Request finishing a verification: the secret from the mailed link.
@@ -137,8 +158,9 @@ pub fn delete_my_contact_route(
     audit: Arc<dyn AuditRepository>,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
-    warp::path!("auth" / "me" / "contacts" / String)
+    warp::path!("auth" / "me" / "contacts")
         .and(warp::delete())
+        .and(with_body_as_json::<AddressRequest>(MAX_TEXT_BODY_SIZE))
         .and(with_cloneable(contacts))
         .and(with_cloneable(users))
         .and(with_cloneable(audit))
@@ -171,8 +193,9 @@ pub fn start_verification_route(
     audit: Arc<dyn AuditRepository>,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
-    warp::path!("auth" / "me" / "contacts" / String / "verify")
+    warp::path!("auth" / "me" / "contacts" / "verify")
         .and(warp::post())
+        .and(with_body_as_json::<AddressRequest>(MAX_TEXT_BODY_SIZE))
         .and(with_cloneable(deps))
         .and(with_cloneable(audit))
         .and(with_user_with_any_permission(authenticator, REQUIRE_SELF))
@@ -240,13 +263,13 @@ async fn handle_add_my_contact_route(
 
 #[tracing::instrument(level = "debug", name = "DELETE /auth/me/contacts/{address}", skip_all)]
 async fn handle_delete_my_contact_route(
-    address: String,
+    request: AddressRequest,
     contacts: Arc<dyn ContactRepository>,
     users: Arc<dyn UserRepository>,
     audit: Arc<dyn AuditRepository>,
     caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(delete_my_contact(address, contacts, users, audit, caller).await)
+    into_response(delete_my_contact(request, contacts, users, audit, caller).await)
 }
 
 #[tracing::instrument(level = "debug", name = "PUT /auth/me/preferred-contact", skip_all)]
@@ -266,12 +289,12 @@ async fn handle_preferred_contact_route(
     skip_all
 )]
 async fn handle_start_verification_route(
-    address: String,
+    request: AddressRequest,
     deps: VerifyDeps,
     audit: Arc<dyn AuditRepository>,
     caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    match start_verification(address, deps, audit, caller).await {
+    match start_verification(request, deps, audit, caller).await {
         // A blocked send returns 429 + Retry-After directly: the ApiError path cannot carry the
         // header, so it bypasses `into_response` the same way a blocked login does.
         Ok(StartOutcome::RateLimited { retry_after }) => Ok(too_many_requests(retry_after)),
@@ -316,13 +339,16 @@ async fn my_contacts(
 ) -> anyhow::Result<ContactsResponse> {
     let user_id = caller.user_id()?;
     let list = contacts.list_contacts(user_id).await?;
-    let preferred = users
+    let stored = users
         .get_user(user_id)
         .await?
         .and_then(|user| user.preferred_contact);
     Ok(ContactsResponse {
+        // The resolved address, not the stored choice: the screen has to mark the row that actually
+        // receives mail, or the badge means something different here than it does to a sender.
+        preferred: preference_for(stored.as_deref(), &list),
+        chosen: stored,
         contacts: list,
-        preferred,
         verification_available: notifier.is_configured(),
     })
 }
@@ -343,14 +369,14 @@ enum StartOutcome {
 
 /// Mails a fresh challenge to one of the caller's own addresses.
 async fn start_verification(
-    address: String,
+    request: AddressRequest,
     deps: VerifyDeps,
     audit: Arc<dyn AuditRepository>,
     caller: AuthUser,
 ) -> anyhow::Result<StartOutcome> {
     let user_id = caller.user_id()?;
     let tenant_id = caller.tenant_id()?;
-    let address = normalize_email(&address)?;
+    let address = normalize_email(&request.address)?;
 
     // Only the caller's own addresses, and only ones they still hold. Half the key is their user id,
     // so a foreign address is simply not in their partition.
@@ -368,6 +394,17 @@ async fn start_verification(
 
     // Refuse up front rather than accepting a request that goes nowhere.
     if !deps.notifier.is_configured() {
+        // Audited even though nothing was sent. A user clicking "confirm" and getting an error is
+        // precisely the symptom of a deployment with no mail queue, and the operator who has to
+        // notice that is not the person seeing the error.
+        audit_contact(
+            &audit,
+            AuditSeverity::Bad,
+            tenant_id,
+            user_id,
+            format!("Verification mail for {address} not sent — this deployment cannot send mail"),
+        )
+        .await;
         status_bail!(
             StatusCode::SERVICE_UNAVAILABLE,
             "This deployment cannot send mail, so an address cannot be verified"
@@ -387,6 +424,14 @@ async fn start_verification(
         .check(POLICY_MAIL_SEND, &policy, user_id, Utc::now())
         .await
     {
+        audit_contact(
+            &audit,
+            AuditSeverity::Bad,
+            tenant_id,
+            user_id,
+            format!("Verification mail for {address} not sent — rate limit reached"),
+        )
+        .await;
         return Ok(StartOutcome::RateLimited { retry_after });
     }
 
@@ -520,7 +565,7 @@ async fn add_my_contact(
 }
 
 async fn delete_my_contact(
-    address: String,
+    request: AddressRequest,
     contacts: Arc<dyn ContactRepository>,
     users: Arc<dyn UserRepository>,
     audit: Arc<dyn AuditRepository>,
@@ -528,19 +573,9 @@ async fn delete_my_contact(
 ) -> anyhow::Result<Value> {
     let user_id = caller.user_id()?;
     let tenant_id = caller.tenant_id()?;
-    let address = normalize_email(&address)?;
+    let address = normalize_email(&request.address)?;
 
     contacts.delete_contact(user_id, &address).await?;
-
-    // Clear a preference that pointed here, so the stored value never names an address the user no
-    // longer has. Resolution tolerates a stale value anyway, but leaving one behind would show the
-    // user a preference for something that is not in their list.
-    if let Some(mut user) = users.get_user(user_id).await?
-        && user.preferred_contact.as_deref() == Some(address.as_str())
-    {
-        user.preferred_contact = None;
-        let _ = users.put_user(user).await?;
-    }
 
     audit_contact(
         &audit,
@@ -551,15 +586,24 @@ async fn delete_my_contact(
     )
     .await;
 
+    // Drop a stored choice that named this address. Resolution would ignore it anyway, but a
+    // re-added address of the same name would otherwise silently inherit a preference the user set
+    // in another life. Which address is reached instead follows from the list — nothing to write.
+    if let Some(mut user) = users.get_user(user_id).await?
+        && user.preferred_contact.as_deref() == Some(address.as_str())
+    {
+        user.preferred_contact = None;
+        let _ = users.put_user(user).await?;
+    }
+
     Ok(json!({ "status": "removed" }))
 }
 
 /// Sets or clears the caller's preferred address.
 ///
-/// Only ownership is checked, not verification: preferring an address before it is verified is a
-/// legitimate statement of intent, and refusing it would make the user come back a second time.
-/// What must not happen is *sending* to an unverified address — that is enforced where a message is
-/// resolved, not here.
+/// The address must be **verified**. A preference for an unverified one would be a setting that
+/// changes nothing — only a proven address is ever sent to — while reading like the account's mail
+/// now goes there. Refusing it says plainly that the confirmation is the missing step.
 async fn preferred_contact(
     request: PreferredRequest,
     contacts: Arc<dyn ContactRepository>,
@@ -574,10 +618,15 @@ async fn preferred_contact(
         Some(raw) if !raw.trim().is_empty() => Some(normalize_email(&raw)?),
         _ => None,
     };
-    if let Some(address) = address.as_deref()
-        && contacts.get_contact(user_id, address).await?.is_none()
-    {
-        status_bail!(StatusCode::NOT_FOUND, "You have no such address on file");
+    if let Some(address) = address.as_deref() {
+        match contacts.get_contact(user_id, address).await? {
+            None => status_bail!(StatusCode::NOT_FOUND, "You have no such address on file"),
+            Some(contact) if !contact.verified => status_bail!(
+                StatusCode::CONFLICT,
+                "Confirm this address before making it the preferred one"
+            ),
+            Some(_) => {}
+        }
     }
 
     let mut user = match users.get_user(user_id).await? {

@@ -212,7 +212,8 @@
   },
   "contacts": {
     "title": "Email addresses",
-    "intro": "Where umami can reach you. Only a confirmed address is ever used — add the new one and confirm it before removing the old.",
+    "new": "Add address",
+    "cancel": "Cancel",
     "addressLabel": "Email address",
     "labelField": "Label (optional)",
     "add": "Add",
@@ -231,9 +232,9 @@
   },
   "verifyContact": {
     "title": "Confirm email address",
-    "working": "Confirming\u2026",
+    "working": "Confirming…",
     "ok": "{{address}} is confirmed. We can reach you at it from now on.",
-    "missingToken": "This link is incomplete \u2014 it carries no confirmation token.",
+    "missingToken": "This link is incomplete — it carries no confirmation token.",
     "retryHint": "Request a fresh link from your profile.",
     "toProfile": "To my profile",
     "toSignIn": "To sign-in"

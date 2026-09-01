@@ -567,7 +567,12 @@ export interface Contact {
 /** The caller's addresses plus which one they prefer. */
 export interface ContactsResponse {
   contacts: Contact[];
+  /** The address mail actually goes to: the chosen one while it is confirmed and still held,
+   * otherwise the oldest confirmed address. `null` when nothing is confirmed. */
   preferred: string | null;
+  /** The choice the user actually made, if any — as opposed to the fallback in `preferred`.
+   * Only an explicit choice can be un-chosen. */
+  chosen?: string | null;
   /** Whether this deployment can send a verification mail at all. `false` means the "verify"
    * action leads nowhere and should not be offered. */
   verificationAvailable: boolean;

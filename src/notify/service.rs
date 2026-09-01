@@ -30,6 +30,7 @@ use crate::constants::{
     NOTIFICATIONS_REPORT_PERMISSION, NOTIFICATIONS_SEND_PERMISSION,
 };
 use crate::contacts::normalize_email;
+use crate::contacts::preference::preference_for;
 use crate::contacts::repository::ContactRepository;
 use crate::notify::types::{
     CHOICE_OFF, CadenceDef, Delivery, NotificationTypeDef, normalize_cadence, resolve_delivery,
@@ -205,12 +206,14 @@ pub fn my_notifications_route(
 /// `PUT /auth/me/notifications/{code}` — set the caller's choice (`null` = never).
 pub fn set_choice_route(
     deps: NotifyDeps,
+    audit: Arc<dyn AuditRepository>,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("auth" / "me" / "notifications" / String)
         .and(warp::put())
         .and(with_body_as_json::<ChoiceRequest>(MAX_TEXT_BODY_SIZE))
         .and(with_cloneable(deps))
+        .and(with_cloneable(audit))
         .and(with_user_with_any_permission(authenticator, REQUIRE_SELF))
         .and_then(handle_set_choice_route)
         .boxed()
@@ -222,11 +225,13 @@ pub fn set_choice_route(
 /// deployment decides", which is not the same as "never".
 pub fn clear_choice_route(
     deps: NotifyDeps,
+    audit: Arc<dyn AuditRepository>,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("auth" / "me" / "notifications" / String)
         .and(warp::delete())
         .and(with_cloneable(deps))
+        .and(with_cloneable(audit))
         .and(with_user_with_any_permission(authenticator, REQUIRE_SELF))
         .and_then(handle_clear_choice_route)
         .boxed()
@@ -299,9 +304,10 @@ async fn handle_set_choice_route(
     code: String,
     request: ChoiceRequest,
     deps: NotifyDeps,
+    audit: Arc<dyn AuditRepository>,
     caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(set_choice(code, Some(request), deps, caller).await)
+    into_response(set_choice(code, Some(request), deps, audit, caller).await)
 }
 
 #[tracing::instrument(
@@ -312,9 +318,10 @@ async fn handle_set_choice_route(
 async fn handle_clear_choice_route(
     code: String,
     deps: NotifyDeps,
+    audit: Arc<dyn AuditRepository>,
     caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(set_choice(code, None, deps, caller).await)
+    into_response(set_choice(code, None, deps, audit, caller).await)
 }
 
 #[tracing::instrument(level = "debug", name = "POST /notifications/audience", skip_all)]
@@ -431,6 +438,7 @@ async fn set_choice(
     code: String,
     request: Option<ChoiceRequest>,
     deps: NotifyDeps,
+    audit: Arc<dyn AuditRepository>,
     caller: AuthUser,
 ) -> anyhow::Result<Value> {
     let user_id = caller.user_id()?;
@@ -472,8 +480,23 @@ async fn set_choice(
                 .insert(code.clone(), value.clone());
         }
     }
-    {}
     let _ = deps.users.put_user(user).await?;
+
+    // Consent is worth a trail: "I never asked for these" is a claim umami has to be able to answer,
+    // and the answer is only as good as the record of who changed what when.
+    record_best_effort(
+        &audit,
+        NewAuditEntry::new(
+            AuditSeverity::Neutral,
+            caller.tenant_id().ok().map(str::to_owned),
+            Some(user_id.to_owned()),
+            match chosen.as_deref() {
+                Some(value) => format!("Notification '{code}' set to '{value}'"),
+                None => format!("Notification '{code}' reset to the deployment default"),
+            },
+        ),
+    )
+    .await;
 
     Ok(json!({ "code": code, "choice": chosen }))
 }
@@ -563,27 +586,14 @@ async fn has_confirmed_address(deps: &NotifyDeps, user_id: &str) -> anyhow::Resu
         .any(|contact| contact.verified))
 }
 
-/// The address a notification for `user` goes to: their preference when confirmed, else their
-/// single confirmed one. Several confirmed addresses without a preference is not a choice umami can
-/// make for them.
+/// The address a notification for `user` goes to.
+///
+/// The one rule, shared with the profile screen — see [`crate::contacts::preference`]. A sender and
+/// the screen disagreeing about where mail goes is a bug nobody would see until a password reset
+/// landed in the wrong mailbox, so neither gets its own copy of the answer.
 async fn delivery_address(deps: &NotifyDeps, user: &User) -> anyhow::Result<Option<String>> {
-    let confirmed: Vec<String> = deps
-        .contacts
-        .list_contacts(&user.user_id)
-        .await?
-        .into_iter()
-        .filter(|contact| contact.verified)
-        .map(|contact| contact.address)
-        .collect();
-    if let Some(preferred) = user.preferred_contact.as_deref()
-        && confirmed.iter().any(|address| address == preferred)
-    {
-        return Ok(Some(preferred.to_owned()));
-    }
-    match confirmed.as_slice() {
-        [only] => Ok(Some(only.clone())),
-        _ => Ok(None),
-    }
+    let held = deps.contacts.list_contacts(&user.user_id).await?;
+    Ok(preference_for(user.preferred_contact.as_deref(), &held))
 }
 
 /// Queues one finished message per recipient.

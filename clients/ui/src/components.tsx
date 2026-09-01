@@ -466,20 +466,24 @@ export function MessagingLinkList({
 }
 
 /** List of a user's email addresses: the address in bold, a muted "Added: <date>" subline, and a
- * badge on the unverified ones plus the preferred one.
+ * tag on the unverified ones plus the preferred one.
  *
- * The unverified badge is not decoration — only a verified address is ever sent to, so one sitting
+ * The unverified tag is not decoration — only a verified address is ever sent to, so one sitting
  * there unverified would otherwise look like a working contact. With `onDelete`/`onPrefer` each row
  * gets a 3-dots menu (profile); without them the list is read-only (user-edit screen). */
 export function ContactList({
   contacts,
   preferred,
+  chosen,
   onDelete,
   onPrefer,
   onVerify,
 }: {
   contacts: Contact[];
   preferred?: string | null;
+  /** The address the user explicitly picked, if any. Only that one can be un-picked — clearing a
+   * preference umami derived would change no answer, so the action is not offered. */
+  chosen?: string | null;
   onDelete?: (contact: Contact) => void;
   onPrefer?: (contact: Contact, prefer: boolean) => void;
   /** Offered only for unverified rows, and only when the deployment can actually send mail. */
@@ -491,21 +495,13 @@ export function ContactList({
       {contacts.map((contact) => {
         const isPreferred = preferred === contact.address;
         return (
-          <li key={contact.address} className="flex items-start justify-between gap-3 py-3">
-            <div className="min-w-0">
+          <li key={contact.address} className="flex items-center justify-between gap-3 py-4">
+            <div className="min-w-0 space-y-1">
               <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-slate-900 dark:text-white">
                 <span className="truncate">{contact.address}</span>
                 {contact.label && <span className="text-xs text-slate-400">{contact.label}</span>}
-                {isPreferred && (
-                  <span className="rounded-full bg-[rgb(var(--brand))]/10 px-2 py-0.5 text-[11px] font-normal text-[rgb(var(--brand))]">
-                    {t("contacts.preferred")}
-                  </span>
-                )}
-                {!contact.verified && (
-                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-normal text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">
-                    {t("contacts.unverified")}
-                  </span>
-                )}
+                {isPreferred && <Tag tone="info">{t("contacts.preferred")}</Tag>}
+                {!contact.verified && <Tag tone="warn">{t("contacts.unverified")}</Tag>}
               </div>
               <div className="text-xs text-slate-400">
                 {t("contacts.addedOn")}: {formatDateTime(contact.created)}
@@ -518,13 +514,21 @@ export function ContactList({
                   ...(onVerify && !contact.verified
                     ? [{ label: t("contacts.verify"), onSelect: () => onVerify(contact) }]
                     : []),
-                  ...(onPrefer
+                  // Only a confirmed address can be preferred — the server refuses the rest, so
+                  // the menu does not offer a click that can only end in an error.
+                  ...(onPrefer && contact.verified && !isPreferred
                     ? [
                         {
-                          label: isPreferred
-                            ? t("contacts.clearPreferred")
-                            : t("contacts.setPreferred"),
-                          onSelect: () => onPrefer(contact, !isPreferred),
+                          label: t("contacts.setPreferred"),
+                          onSelect: () => onPrefer(contact, true),
+                        },
+                      ]
+                    : []),
+                  ...(onPrefer && chosen === contact.address
+                    ? [
+                        {
+                          label: t("contacts.clearPreferred"),
+                          onSelect: () => onPrefer(contact, false),
                         },
                       ]
                     : []),
@@ -544,6 +548,33 @@ export function ContactList({
         );
       })}
     </ul>
+  );
+}
+
+/** A small status pill: "you", "locked", "preferred", "unconfirmed".
+ *
+ * Fixed palettes, not the brand token. These state a fact about the row — this is you, this address
+ * is unconfirmed — so rebranding must not repaint them, and the accent must not land on something
+ * merely informational. */
+export function Tag({
+  tone = "neutral",
+  children,
+}: {
+  tone?: "neutral" | "info" | "warn" | "danger";
+  children: string;
+}) {
+  const cls = {
+    info: "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300",
+    warn: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300",
+    danger: "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300",
+    neutral: "bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300",
+  }[tone];
+  return (
+    <span
+      className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium ${cls}`}
+    >
+      {children}
+    </span>
   );
 }
 

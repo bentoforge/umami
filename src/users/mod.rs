@@ -158,13 +158,13 @@ pub struct User {
     /// expressed a preference.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub notification_choices: std::collections::BTreeMap<String, String>,
-    /// The email address the user would rather be reached at (one of their
-    /// [`crate::contacts::Contact`] rows).
+    /// The address the user *chose* to be reached at (one of their [`crate::contacts::Contact`]
+    /// rows). Verified when it was set.
     ///
-    /// A statement of *intent*, deliberately not validated against verification state: a user may
-    /// prefer an address before it is verified. Resolution enforces the rest — a value naming an
-    /// address that no longer exists or is not verified counts as "no preference" and falls back to
-    /// the user's verified addresses. That makes a stale value harmless.
+    /// Not the answer to "where does mail go" — that is derived from this plus the user's current
+    /// addresses by [`crate::contacts::preference`], so a value gone stale since (address removed,
+    /// confirmation withdrawn by a bounce) costs nothing and needs no repair job. `None` simply
+    /// means the user never chose, not that they are unreachable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preferred_contact: Option<String>,
 }

@@ -620,10 +620,14 @@ export class UmamiClient {
       body: JSON.stringify({ address, label }),
     });
   }
-  /** Remove one of the caller's addresses. Clears the preference if it named this one. */
+  /** Remove one of the caller's addresses. Clears an explicit choice that named this one.
+   *
+   * The address travels in the body, not the path: it is personal data, and a URL is copied into
+   * every access log and tracing span on the way. */
   deleteContact(address: string): Promise<{ status: string }> {
-    return this.request<{ status: string }>(`/auth/me/contacts/${enc(address)}`, {
+    return this.request<{ status: string }>("/auth/me/contacts", {
       method: "DELETE",
+      body: JSON.stringify({ address }),
     });
   }
   /** Set (or clear, with `null`) the caller's preferred address. */
@@ -638,10 +642,10 @@ export class UmamiClient {
    * Idempotent and free for an already-verified address: nothing is sent. Capped per user by
    * `security.rateLimits.mailSend` — a 429 carries `Retry-After`. */
   startContactVerification(address: string): Promise<{ status: string }> {
-    return this.request<{ status: string }>(
-      `/auth/me/contacts/${enc(address)}/verify`,
-      { method: "POST" },
-    );
+    return this.request<{ status: string }>("/auth/me/contacts/verify", {
+      method: "POST",
+      body: JSON.stringify({ address }),
+    });
   }
   /** Finish a verification with the secret from the mailed link.
    *

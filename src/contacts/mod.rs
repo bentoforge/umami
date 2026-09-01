@@ -29,6 +29,7 @@
 //! answers "who holds this address" for the password-reset entry point, where no session — and
 //! therefore no tenant — exists yet.
 
+pub mod preference;
 pub mod repository;
 pub mod service;
 
