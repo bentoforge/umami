@@ -11,8 +11,6 @@ use serde::Serialize;
 use std::sync::Arc;
 use warp::Filter;
 use warp::filters::BoxedFilter;
-use warp::http::StatusCode;
-use wasabi::status_bail;
 use wasabi::web::auth::authenticator::Authenticator;
 use wasabi::web::auth::user::User as AuthUser;
 use wasabi::web::auth::{with_user, with_user_with_any_permission};
@@ -128,17 +126,6 @@ async fn custom_fields(config: Arc<dyn ConfigRepository>) -> anyhow::Result<Cust
 }
 
 async fn put_config(request: Config, config: Arc<dyn ConfigRepository>) -> anyhow::Result<Config> {
-    let current = config.current().await?;
-
-    if request.version != current.version {
-        status_bail!(
-            StatusCode::CONFLICT,
-            "Config version mismatch: expected {}, got {} — reload and re-apply",
-            current.version,
-            request.version
-        );
-    }
-
     // Validate before publishing. This is where the notification catalogue's typo protection lives
     // now that a cadence is a plain string: a duplicate code, a type nothing can fire, or a default
     // naming a cadence the type is never fired at would all otherwise fail invisibly, as an audience
@@ -149,9 +136,8 @@ async fn put_config(request: Config, config: Arc<dyn ConfigRepository>) -> anyho
     }
     crate::config::validate_mail(&request.mail)?;
 
-    let mut next = request;
-    next.version = current.version + 1;
-    config.save(next.clone()).await?;
-
-    Ok(next)
+    // The version guard is the store's, because only the store can compare against what is
+    // actually stored rather than against a cached read. A stale editor gets its `409` from there.
+    let expected_version = request.version;
+    config.save(request, expected_version).await
 }

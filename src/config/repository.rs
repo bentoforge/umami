@@ -12,8 +12,10 @@ use async_trait::async_trait;
 use std::env;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
+use warp::http::StatusCode;
 use wasabi::aws::s3::{BucketName, CachedObject, S3Client, VersionRetention};
+use wasabi::status_bail;
 
 /// The seam's name in the boot report.
 const SEAM: &str = "config store";
@@ -131,8 +133,15 @@ pub trait ConfigRepository: Send + Sync {
     /// Returns the current config (cached; may refresh internally).
     async fn current(&self) -> anyhow::Result<Arc<Config>>;
 
-    /// Persists the whole config document.
-    async fn save(&self, config: Config) -> anyhow::Result<()>;
+    /// Publishes the whole document if the stored one is still at `expected_version`, and returns it
+    /// as saved, with the version bumped. A mismatch is a `409`.
+    ///
+    /// The check belongs **here**, next to the write, and not in the route that calls it: the
+    /// version read by [`Self::current`] is a cached one, and comparing against a cached version is
+    /// how two editors both pass a guard and the second silently discards the first's document. An
+    /// implementation has to compare against what is actually stored, and has to keep nothing else
+    /// in between.
+    async fn save(&self, config: Config, expected_version: u64) -> anyhow::Result<Config>;
 }
 
 /// In-memory [`ConfigRepository`] serving a default (or last-saved) config. Non-persistent —
@@ -156,10 +165,29 @@ impl ConfigRepository for StaticConfigRepository {
         Ok(self.config.read().await.clone())
     }
 
-    async fn save(&self, config: Config) -> anyhow::Result<()> {
-        *self.config.write().await = Arc::new(config);
-        Ok(())
+    async fn save(&self, config: Config, expected_version: u64) -> anyhow::Result<Config> {
+        // The write lock spans the comparison and the swap, which is the whole compare-and-swap.
+        let mut stored = self.config.write().await;
+        let next = bump(config, stored.version, expected_version)?;
+        *stored = Arc::new(next.clone());
+        Ok(next)
     }
+}
+
+/// The document to store, with its version advanced past `stored_version` — or a `409` when the
+/// editor was working from a different one.
+fn bump(config: Config, stored_version: u64, expected_version: u64) -> anyhow::Result<Config> {
+    if stored_version != expected_version {
+        status_bail!(
+            StatusCode::CONFLICT,
+            "Config version mismatch: expected {stored_version}, got {expected_version} — reload \
+             and re-apply"
+        );
+    }
+    Ok(Config {
+        version: stored_version + 1,
+        ..config
+    })
 }
 
 /// S3-backed [`ConfigRepository`]: one `config.json` object, cached for reads, overwritten whole on
@@ -167,6 +195,10 @@ impl ConfigRepository for StaticConfigRepository {
 pub struct S3ConfigRepository {
     cached: Arc<dyn CachedObject>,
     client: S3Client,
+    /// Held across the read-compare-write of a save, so two concurrent editors on this instance
+    /// cannot both read the same stored version and both write. It does nothing for a *second*
+    /// instance — see [`ConfigRepository::save`] and `docs/CONFIG.md`.
+    writing: Mutex<()>,
     /// Bucket-name **prefix**; the effective bucket is `<prefix>.<S3_BUCKET_SUFFIX>` (wasabi's
     /// naming schema). Stored because [`BucketName`] isn't `Clone`, so we rebuild it per use.
     bucket_prefix: String,
@@ -222,7 +254,42 @@ impl S3ConfigRepository {
             client,
             bucket_prefix,
             key,
+            writing: Mutex::new(()),
         })
+    }
+
+    /// The stored document, read **past** the cache.
+    ///
+    /// Same fallback as [`ConfigRepository::current`] — deliberately, because a save has to be
+    /// checked against the version an editor was shown, and an unparseable document is shown as the
+    /// built-in default. Refusing instead would look safer and would lock out the very repair the
+    /// fallback exists to allow.
+    async fn authoritative(&self) -> anyhow::Result<Config> {
+        let bytes = self
+            .cached
+            .fetch()
+            .await
+            .context("Failed to fetch config.json from S3")?;
+        Ok(parse_or_default(&bytes))
+    }
+}
+
+/// The stored bytes as a [`Config`], or the built-in default when they do not parse.
+///
+/// Fail-safe: a stored config that no longer parses (corruption, or a schema change the document
+/// predates) must NOT take the whole service — including login — down. Fall back and log loudly; an
+/// admin can then repair and re-save via `PUT /config`.
+fn parse_or_default(bytes: &[u8]) -> Config {
+    match serde_json::from_slice(bytes) {
+        Ok(config) => config,
+        Err(err) => {
+            tracing::error!(
+                "stored config.json failed to parse — serving the built-in DEFAULT config so the \
+                 service stays up; your saved settings are NOT applied until you fix and re-save \
+                 the document via PUT /config: {err:#}"
+            );
+            Config::default()
+        }
     }
 }
 
@@ -234,25 +301,19 @@ impl ConfigRepository for S3ConfigRepository {
             .fetch_cached()
             .await
             .context("Failed to fetch config.json from S3")?;
-        // Fail-safe: a stored config that no longer parses (corruption, or a schema change the
-        // document predates) must NOT take the whole service — including login — down. Fall back to
-        // the built-in default and log loudly; an admin can then repair and re-save via PUT /config.
-        let config: Config = match serde_json::from_slice(&bytes) {
-            Ok(config) => config,
-            Err(err) => {
-                tracing::error!(
-                    "stored config.json failed to parse — serving the built-in DEFAULT config so \
-                     the service stays up; your saved settings are NOT applied until you fix and \
-                     re-save the document via PUT /config: {err:#}"
-                );
-                Config::default()
-            }
-        };
-        Ok(Arc::new(config))
+        Ok(Arc::new(parse_or_default(&bytes)))
     }
 
-    async fn save(&self, config: Config) -> anyhow::Result<()> {
-        let bytes = serde_json::to_vec_pretty(&config).context("Failed to serialize config")?;
+    async fn save(&self, config: Config, expected_version: u64) -> anyhow::Result<Config> {
+        let _writing = self.writing.lock().await;
+
+        // Uncached, every time. `current()` may be serving a document up to CONFIG_CACHE_TTL old,
+        // and a guard that compares against that lets a second editor pass it with a version that
+        // was already superseded — overwriting the first edit with no error anywhere.
+        let stored = self.authoritative().await?;
+        let next = bump(config, stored.version, expected_version)?;
+
+        let bytes = serde_json::to_vec_pretty(&next).context("Failed to serialize config")?;
         self.client
             .put_object(
                 &BucketName::Prefix(self.bucket_prefix.clone()),
@@ -267,6 +328,66 @@ impl ConfigRepository for S3ConfigRepository {
             .fetch_with_flush(true)
             .await
             .context("Failed to refresh config cache after save")?;
-        Ok(())
+        Ok(next)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The version a `409` reports, since a stale editor has to be told what to reload to.
+    fn conflict_message(result: anyhow::Result<Config>) -> String {
+        format!("{:#}", result.expect_err("expected a conflict"))
+    }
+
+    #[test]
+    fn a_matching_version_advances_by_one() {
+        let saved = bump(Config::default(), 7, 7).expect("should save");
+        assert_eq!(saved.version, 8);
+    }
+
+    #[test]
+    fn a_stale_editor_is_refused_and_told_the_stored_version() {
+        // The case the cached read used to wave through: the editor holds 7, the store is at 8
+        // because somebody else already saved.
+        let message = conflict_message(bump(Config::default(), 8, 7));
+        assert!(message.contains("expected 8"), "{message}");
+        assert!(message.contains("got 7"), "{message}");
+    }
+
+    #[test]
+    fn a_version_from_the_future_is_refused_too() {
+        // Not symmetric for its own sake: a body claiming a version nothing ever stored is either a
+        // hand-edited document or a different deployment's, and overwriting on it would be worse
+        // than the stale case — there is no edit to reload.
+        assert!(bump(Config::default(), 3, 9).is_err());
+    }
+
+    #[tokio::test]
+    async fn the_in_memory_store_enforces_the_same_rule() {
+        let store = StaticConfigRepository::with_default();
+        let seeded = store.current().await.expect("seeded").version;
+
+        let saved = store
+            .save(Config::default(), seeded)
+            .await
+            .expect("should save");
+        assert_eq!(saved.version, seeded + 1);
+        assert_eq!(store.current().await.expect("stored").version, seeded + 1);
+
+        // The same body a second time is now stale, and must not go through.
+        assert!(store.save(Config::default(), seeded).await.is_err());
+        assert_eq!(store.current().await.expect("stored").version, seeded + 1);
+    }
+
+    #[test]
+    fn an_unparseable_document_reads_as_the_default() {
+        // So that `save` compares against the version an editor was actually shown, and the repair
+        // path stays open.
+        assert_eq!(
+            parse_or_default(b"{ not json").version,
+            Config::default().version
+        );
     }
 }

@@ -22,6 +22,30 @@ For the permission-string DSL and the mint algorithm in depth, see [PERMISSIONS.
 New fields are added with `#[serde(default)]`, so an older stored document keeps loading after an
 upgrade (missing keys fall back to defaults).
 
+### Two editors, one document
+
+`PUT /config` carries the `version` the editor loaded, and the save goes through only if the stored
+document is still at that version — otherwise `409`, reload and re-apply. The whole document is
+written at once, so without that check the second of two overlapping edits would silently discard
+the first.
+
+The check is made **against S3, not against the cache**. Reads are cached for 15 minutes, and a
+version from a cached read is exactly what a superseded editor would match against: with two service
+instances (or one, inside the TTL), both would pass the guard and the later write would win with no
+error anywhere. So a save always re-reads the object first, and the read-compare-write is serialized
+per instance.
+
+**One window is left open.** Between that fresh read and the `PutObject` there is a round trip, and
+S3 has no conditional write here, so two instances saving in the same handful of milliseconds can
+still lose one edit. Closing it needs `PutObject` with `If-Match: <etag>` — an addition to wasabi's
+S3 client, which currently returns no ETag and takes no precondition.
+
+Until then the mitigation is bucket versioning, which umami enables at boot **where the deployment
+grants `s3:PutBucketVersioning`**: the overwritten document is then still there as a prior object
+version. Enabling it is best-effort, so a missing grant does not fail the boot — it logs a warning,
+and there a lost edit is final. Config edits are rare, deliberate admin actions, which is why this
+is documented rather than worked around.
+
 Relevant environment variables:
 
 | Env | Effect |
