@@ -26,6 +26,7 @@ use crate::auth::secretbox::SecretBox;
 use crate::auth::session::repository::SessionRepository;
 use crate::auth::tokens::TokenIssuer;
 use crate::config::repository::ConfigRepository;
+use crate::storage::Repositories;
 use crate::tenants::repository::TenantRepository;
 use crate::users::repository::UserRepository;
 use std::env;
@@ -62,37 +63,33 @@ pub struct AuthContext {
 }
 
 impl AuthContext {
-    /// Assembles the context from its repositories/issuer/config/mfa plus `UMAMI_COOKIE_DOMAIN`.
-    /// Access/refresh lifetimes come from the config `security` settings, not env.
-    #[allow(clippy::too_many_arguments)]
+    /// Assembles the context from the storage bundle plus the services and policy the auth routes
+    /// need. Takes all of [`Repositories`] rather than the five ports it uses: the alternative is
+    /// five more positional arguments of near-identical shape at the one call site that must get
+    /// them right. Access/refresh lifetimes come from the config `security` settings, not env; the
+    /// cookie attributes come from `UMAMI_COOKIE_DOMAIN`/`_SECURE`/`_SAMESITE`.
     pub fn from_env(
-        users: Arc<dyn UserRepository>,
-        tenants: Arc<dyn TenantRepository>,
-        contacts: Arc<dyn crate::contacts::repository::ContactRepository>,
-        sessions: Arc<dyn SessionRepository>,
+        repos: &Repositories,
         tokens: Arc<TokenIssuer>,
         config: Arc<dyn ConfigRepository>,
         mfa: Arc<SecretBox>,
-        audit: Arc<dyn AuditRepository>,
         rate_limiter: Arc<RateLimiter>,
+        system_tenant_id: Option<String>,
     ) -> anyhow::Result<Self> {
         let cookie_domain = env::var("UMAMI_COOKIE_DOMAIN")
             .ok()
             .filter(|d| !d.is_empty());
         let cookie_policy = crate::auth::cookies::CookiePolicy::from_env()?;
-        let system_tenant_id = env::var("UMAMI_SYSTEM_TENANT_ID")
-            .ok()
-            .filter(|id| !id.is_empty());
 
         Ok(Self {
-            users,
-            tenants,
-            contacts,
-            sessions,
+            users: repos.users.clone(),
+            tenants: repos.tenants.clone(),
+            contacts: repos.contacts.clone(),
+            sessions: repos.sessions.clone(),
             tokens,
             config,
             mfa,
-            audit,
+            audit: repos.audit.clone(),
             rate_limiter,
             system_tenant_id,
             cookie_domain,

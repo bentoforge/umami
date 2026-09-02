@@ -44,6 +44,10 @@ aws-sdk-dynamodb = { version = "1.98", default-features = false, features = ["de
 aws-sdk-sqs = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio"] }
 # Same version/feature set wasabi-core uses, so the AWS config layer resolves once.
 aws-config = { version = "1.8", features = ["behavior-version-latest"] }
+# One call — sts:GetCallerIdentity — answers "is AWS usable here?" at boot, which is what decides
+# whether an AWS-backed provider may auto-select (see src/boot/aws.rs). It needs no IAM permission,
+# so probing cannot lock out a least-privilege deployment. Feature flags as above.
+aws-sdk-sts = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio"] }
 
 # ── auth core ─────────────────────────────────────────────────────────────────
 argon2 = "0.5"                 # password hashing (argon2id)

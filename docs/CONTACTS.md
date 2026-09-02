@@ -115,7 +115,7 @@ somebody saying "do not mail me here" is at least as good a reason to stop.
 Its own permission and its own scope, separate from `notifications:send`: the worker and the app
 asking for a send are different principals, and the worker has no business resolving an audience.
 
-Unset `UMAMI_MAIL_QUEUE_URL` and outbound mail is off: `GET /auth/me/contacts` reports
+Unset `UMAMI_MAIL_SQS_QUEUE_URL` and outbound mail is off: `GET /auth/me/contacts` reports
 `verificationAvailable: false`, the UI hides the action, and the endpoint answers `503` instead of
 accepting a request that goes nowhere.
 

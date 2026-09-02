@@ -95,6 +95,60 @@ refresh cookie work at all. `VITE_UMAMI_PROXY` moves the proxy target; `VITE_UMA
 different thing entirely — it makes the client call absolute URLs, which means cross-origin and
 CORS with credentials. Reach for the first one.
 
+## Wiring: where dependencies come from
+
+- `src/storage/` — the storage seam. `Repositories` bundles all ten repository ports; one backend
+  answers for all of them (`storage::dynamodb` today). A new backend implements the traits and
+  returns a `Repositories`, so the compiler lists what it still owes.
+- `src/boot/` — `Platform` holds every resolved dependency, `Platform::boot()` builds it from the
+  environment, `boot::auto_init` does the first-run bootstrap.
+- `src/api/` — the HTTP surface. One submodule per domain (`api::users`, `api::contacts`, …), each
+  with `pub fn routes(&Platform) -> BoxedFilter<(impl Reply + use<>,)>`; `api::serve` composes them,
+  mounts the token exchange under its own CORS policy and runs the server. `api::cors` holds both
+  CORS policies. `src/main.rs` is the entry point and nothing else.
+
+  A new route joins its domain's group — never `api::serve` directly. Keep the groups small: one
+  81-entry `routes![…]` needed `#![recursion_limit = "512"]` to type-check, a dozen shallow ones do
+  not. The `use<>` in the signature is load-bearing (edition 2024 would otherwise capture the
+  `&Platform` lifetime and the filter could not escape the function).
+
+**`&Platform` belongs to `src/api/` and `src/boot/` — nothing else.** Those two are the wiring
+layer: `api::serve`, the per-domain `api::*::routes`, `Platform`'s own `*_deps()` builders and
+`boot::auto_init` all take it. Nothing in a domain module (`users`, `contacts`, `auth`, …) ever
+does: route builders there take explicit parameters, which is what keeps them independent of the
+HTTP stack and testable with `warp::test` plus `mockall` doubles. A `&Platform` in a domain
+signature turns the struct into a service locator; that is the failure mode this layout exists to
+prevent.
+
+`Platform` is deliberately a plain struct, not a `TypeId → Arc<dyn Any>` registry: `Any`
+downcasting requires `Sized`, so trait objects would each need a newtype wrapper, and a missing
+dependency would panic at boot instead of failing to compile.
+
+### Selectable backends
+
+Four seams are picked at runtime, one variable each — `UMAMI_STORAGE`, `UMAMI_CONFIG_STORE`,
+`UMAMI_KEY_STORE`, `UMAMI_MAIL_TRANSPORT`. Each is resolved by a `from_env()` in the module that
+owns the implementations (`storage`, `config::repository`, `auth::tokens`, `notify`), returns its
+provider plus a `boot::seam::Selection`, and `boot()` logs the whole set as one block.
+
+The rules live in `boot::seam` and are the same for every seam: **explicit wins and is strict**
+(a named backend with a missing prerequisite fails the boot), **unset means auto-detect**, **an
+unknown value never falls back**.
+
+An AWS-backed provider must additionally clear `boot::aws::Aws` — one cached
+`sts:GetCallerIdentity` at boot, which is the only way to know a credential chain actually produces
+credentials. Explicit AWS providers call `aws.require()` (boot fails with the probe's reason);
+auto-detecting ones call `aws.is_usable()` and step aside when it is false. Never probe with a
+service call that needs an IAM permission — that would fail the boot on a legitimate
+least-privilege policy.
+
+Naming: a seam's selector is named after the seam (`UMAMI_MAIL_TRANSPORT`), a provider's own
+settings after the provider (`UMAMI_MAIL_SQS_QUEUE_URL`) — so two providers of one seam cannot
+collide over a variable, and adding SMTP renames nothing. `UMAMI_CONFIG_KEY` and
+`UMAMI_CONFIG_VERSIONS_*` predate this and keep their names (released; renaming breaks deployments). A new seam follows that shape; do not add a "production mode"
+switch — strictness is derived from explicitness. A failed boot exits **1**, never 0. Full
+reference: [docs/SEAMS.md](docs/SEAMS.md).
+
 ## Key conventions (non-negotiable — from wasabi/dbx-core)
 
 - **Curly braces on every `if`**, even single-line bodies (global user preference).

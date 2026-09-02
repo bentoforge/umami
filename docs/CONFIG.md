@@ -31,7 +31,7 @@ Relevant environment variables:
 | `UMAMI_SYSTEM_TENANT_ID` | Tenant whose members get the `is:system-tenant` marker (⇒ `manage:tenants` + `switch:tenant`). |
 | `UMAMI_AUTO_INIT=true` | Bootstrap a first tenant + owner when zero tenants exist. |
 | `UMAMI_UI_DIR` | Directory of the built management SPA to serve under `/app` (default `clients/ui/dist`; absent index.html ⇒ API-only). |
-| `UMAMI_MAIL_QUEUE_URL` | SQS queue umami hands outbound transactional mail to. Unset ⇒ mail disabled, and confirming an address is refused up front. Links in those mails are built from `UMAMI_ISSUER`. |
+| `UMAMI_MAIL_SQS_QUEUE_URL` | SQS queue umami hands outbound transactional mail to. Unset ⇒ mail disabled, and confirming an address is refused up front. Links in those mails are built from `UMAMI_ISSUER`. |
 
 ---
 

@@ -9,6 +9,7 @@
 //! [`EnvKeyRepository`] loads the active signing key from `UMAMI_SIGNING_KEY` and, for a rollover,
 //! any retired public keys from `UMAMI_PREVIOUS_KEYS` (kept in the JWKS until their tokens expire).
 
+use crate::boot::seam::{self, Selection};
 use anyhow::Context;
 use async_trait::async_trait;
 use chrono::Utc;
@@ -33,6 +34,34 @@ pub struct KeySet {
     pub encoding_key: EncodingKey,
     /// The public JWKS document served at `/.well-known/jwks.json` (`{"keys":[...]}`).
     pub jwks: Value,
+}
+
+/// The seam's name in the boot report.
+const KEY_SEAM: &str = "signing keys";
+/// The variable that names the key store.
+pub const KEY_VARIABLE: &str = "UMAMI_KEY_STORE";
+/// Keys read from the environment.
+const KEY_STORE_ENV: &str = "env";
+/// Every key store this build accepts.
+const KEY_PROVIDERS: &[&str] = &[KEY_STORE_ENV];
+
+/// Resolves where signing keys come from.
+///
+/// One provider today, and the seam exists so that adding KMS or Secrets Manager touches this
+/// function rather than the issuer and the JWKS route.
+pub fn key_repository_from_env() -> anyhow::Result<(Arc<dyn KeyRepository>, Selection)> {
+    let selection = match seam::requested(KEY_VARIABLE) {
+        Some(name) if name == KEY_STORE_ENV => {
+            Selection::explicit(KEY_SEAM, KEY_VARIABLE, KEY_STORE_ENV)
+        }
+        Some(other) => {
+            return Err(seam::unknown_provider(KEY_VARIABLE, &other, KEY_PROVIDERS));
+        }
+        None => Selection::default_for(KEY_SEAM, KEY_VARIABLE, KEY_STORE_ENV),
+    };
+
+    let keys: Arc<dyn KeyRepository> = Arc::new(EnvKeyRepository::from_env()?);
+    Ok((keys, selection))
 }
 
 /// Source of signing key material. Pluggable so the key can come from the environment, a secret

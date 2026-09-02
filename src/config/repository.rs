@@ -4,6 +4,8 @@
 //! built-in default (dev/tests/no-S3), [`S3ConfigRepository`] keeps the document in S3 with a
 //! cached, periodically-refreshed read path and a whole-document write path.
 
+use crate::boot::aws::Aws;
+use crate::boot::seam::{self, Selection};
 use crate::config::Config;
 use anyhow::Context;
 use async_trait::async_trait;
@@ -12,6 +14,83 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 use wasabi::aws::s3::{BucketName, CachedObject, S3Client, VersionRetention};
+
+/// The seam's name in the boot report.
+const SEAM: &str = "config store";
+/// The variable that names the config store.
+pub const VARIABLE: &str = "UMAMI_CONFIG_STORE";
+/// The config document lives in S3, versioned and cached.
+const S3: &str = "s3";
+/// The built-in default, in memory, lost on restart.
+const MEMORY: &str = "memory";
+/// Every store name this build accepts.
+const PROVIDERS: &[&str] = &[S3, MEMORY];
+
+/// What an operator loses by running without a persistent config store. Logged as a `WARN` on the
+/// auto-detected path, because there it is a surprise rather than a decision.
+const NOT_PERSISTED: &str = "config edits (features, custom fields, PUT /config) are NOT persisted \
+                             and are lost on restart";
+
+/// Resolves the config store.
+///
+/// Explicit `s3` with no reachable S3 client — no bucket configured, or an AWS client that does not
+/// work — fails the boot: a deployment that asked for a persistent catalog and silently got the
+/// in-memory one would look healthy and reset every config edit on the next restart, so the failure
+/// would surface days later, as data loss.
+///
+/// With nothing configured, S3 is only eligible when AWS actually works. That is what makes the
+/// in-memory fallback correct rather than lucky: a developer with no credentials gets the memory
+/// store immediately, instead of an S3 store that constructs fine and fails on the first read.
+pub async fn from_env(aws: &Aws) -> anyhow::Result<(Arc<dyn ConfigRepository>, Selection)> {
+    match seam::requested(VARIABLE).as_deref() {
+        Some(name) if name == S3 => {
+            aws.require()
+                .await
+                .with_context(|| format!("{VARIABLE}={S3} needs a usable AWS client"))?;
+            let client = S3Client::from_env().await.with_context(|| {
+                format!(
+                    "{VARIABLE}={S3} but no S3 client could be built — is S3_BUCKET_SUFFIX set? \
+                     Leave {VARIABLE} unset to fall back to the in-memory store instead."
+                )
+            })?;
+            let repository = Arc::new(S3ConfigRepository::from_env(client).await?);
+            Ok((repository, Selection::explicit(SEAM, VARIABLE, S3)))
+        }
+        Some(name) if name == MEMORY => Ok((
+            Arc::new(StaticConfigRepository::with_default()),
+            Selection::explicit(SEAM, VARIABLE, MEMORY).with_note(NOT_PERSISTED),
+        )),
+        Some(other) => Err(seam::unknown_provider(VARIABLE, other, PROVIDERS)),
+        // Unset: persist in S3 when AWS works and a bucket is available the wasabi way (i.e.
+        // S3_BUCKET_SUFFIX is set), otherwise run in memory. This is the local-dev path.
+        None => detect(aws).await,
+    }
+}
+
+/// Auto-detection: S3 when it can actually be reached, else the in-memory default.
+async fn detect(aws: &Aws) -> anyhow::Result<(Arc<dyn ConfigRepository>, Selection)> {
+    let unusable = match aws.require().await {
+        Ok(_) => match S3Client::from_env().await {
+            Ok(client) => {
+                let repository = Arc::new(S3ConfigRepository::from_env(client).await?);
+                return Ok((repository, Selection::detected(SEAM, VARIABLE, S3)));
+            }
+            Err(err) => format!("{err:#}"),
+        },
+        Err(err) => format!("{err:#}"),
+    };
+
+    tracing::warn!(
+        "no S3 config store ({unusable}) — using the in-memory config repository. \
+         {NOT_PERSISTED} (reset to the built-in default). Set S3_BUCKET_SUFFIX (wasabi S3 naming) \
+         with working AWS credentials to persist config in S3, or {VARIABLE}={MEMORY} to say this \
+         was intended."
+    );
+    Ok((
+        Arc::new(StaticConfigRepository::with_default()),
+        Selection::detected(SEAM, VARIABLE, MEMORY).with_note(NOT_PERSISTED),
+    ))
+}
 
 /// Minimum time the S3 config bytes stay cached before a refresh is attempted.
 const CONFIG_CACHE_TTL: Duration = Duration::from_secs(900);

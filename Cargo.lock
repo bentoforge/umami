@@ -4295,6 +4295,7 @@ dependencies = [
  "aws-config",
  "aws-sdk-dynamodb",
  "aws-sdk-sqs",
+ "aws-sdk-sts",
  "base64 0.22.1",
  "chrono",
  "cookie",

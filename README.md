@@ -271,6 +271,7 @@ Full reference: **[docs/CONFIG.md](docs/CONFIG.md)**.
 | [docs/API-KEYS.md](docs/API-KEYS.md) | Service keys vs. personal access tokens. |
 | [docs/CONTACTS.md](docs/CONTACTS.md) | Email contacts: the list, verification, and why a user record has no email field. |
 | [docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md) | Notification types, cadences, and who a firing reaches. |
+| [docs/SEAMS.md](docs/SEAMS.md) | Selectable backends (storage, config store, keys, mail) and how umami picks one. |
 
 The identity/tenancy data model lives in the code: the entity structs (`User`, `Tenant`, `Session`,
 …) are the schema, and the model's design rationale is the module doc on
