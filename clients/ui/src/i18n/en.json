@@ -224,6 +224,7 @@
     "clearPreferred": "Stop preferring",
     "unverified": "Not confirmed",
     "verify": "Send confirmation link",
+    "addedWithoutMail": "Address saved. The confirmation link could not be sent — try again with \"Confirm\".",
     "verifySent": "Confirmation link sent to {{address}}.",
     "alreadyVerified": "That address is already confirmed.",
     "delete": "Delete",
@@ -236,8 +237,7 @@
     "ok": "{{address}} is confirmed. We can reach you at it from now on.",
     "missingToken": "This link is incomplete — it carries no confirmation token.",
     "retryHint": "Request a fresh link from your profile.",
-    "toProfile": "To my profile",
-    "toSignIn": "To sign-in"
+    "continue": "Continue"
   },
   "messaging": {
     "intro": "Chat accounts this account can be reached on. Linking happens in the application itself; here you can disconnect one.",

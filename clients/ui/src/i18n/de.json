@@ -224,6 +224,7 @@
     "clearPreferred": "Nicht mehr bevorzugen",
     "unverified": "Nicht bestätigt",
     "verify": "Bestätigungslink senden",
+    "addedWithoutMail": "Adresse gespeichert. Der Bestätigungslink konnte nicht gesendet werden — versuchen Sie es über „Bestätigen“ erneut.",
     "verifySent": "Bestätigungslink an {{address}} gesendet.",
     "alreadyVerified": "Diese Adresse ist bereits bestätigt.",
     "delete": "Löschen",
@@ -236,8 +237,7 @@
     "ok": "{{address}} ist bestätigt. Wir können Sie ab jetzt darüber erreichen.",
     "missingToken": "Dieser Link ist unvollständig — er enthält kein Bestätigungs-Token.",
     "retryHint": "Fordern Sie in Ihrem Profil einen neuen Link an.",
-    "toProfile": "Zu meinem Profil",
-    "toSignIn": "Zur Anmeldung"
+    "continue": "Weiter"
   },
   "messaging": {
     "intro": "Chat-Konten, über die dieses Benutzerkonto erreichbar ist. Verknüpft wird in der jeweiligen Anwendung; hier lässt sich eine Verknüpfung wieder lösen.",

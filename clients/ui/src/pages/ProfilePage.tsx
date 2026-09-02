@@ -304,11 +304,19 @@ function ContactsPanel() {
     if (!address.trim()) return;
     setBusy(true);
     setError(null);
+    setNotice(null);
     try {
-      await client.addContact(address.trim(), label.trim() || undefined);
+      const added = await client.addContact(address.trim(), label.trim() || undefined);
       setAddress("");
       setLabel("");
       setAdding(false);
+      // The confirmation goes out with the add, so say so — an address that silently sits
+      // unconfirmed is the state this whole panel exists to get people out of.
+      setNotice(
+        added.verificationSent
+          ? t("contacts.verifySent", { address: added.address })
+          : t("contacts.addedWithoutMail"),
+      );
       await load();
     } catch (err) {
       setError(errMsg(err));
@@ -374,7 +382,7 @@ function ContactsPanel() {
 
       {adding && (
         <div className="space-y-4">
-          <div className="flex flex-wrap items-end gap-2">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <Field label={t("contacts.addressLabel")}>
               <input
                 className={input}
@@ -385,7 +393,11 @@ function ContactsPanel() {
               />
             </Field>
             <Field label={t("contacts.labelField")}>
-              <input className={input} value={label} onChange={(e) => setLabel(e.target.value)} />
+              <input
+                className={input}
+                value={label}
+                onChange={(e) => setLabel(e.target.value)}
+              />
             </Field>
           </div>
           <div className="flex gap-2">

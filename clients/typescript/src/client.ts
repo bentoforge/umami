@@ -18,6 +18,7 @@ import type {
   CreateUserRequest,
   CreateUserResponse,
   CustomFieldsSchema,
+  AddedContact,
   DeletedUserCounts,
   ExchangeResponse,
   LoginResponse,
@@ -626,9 +627,14 @@ export class UmamiClient {
   getContacts(): Promise<ContactsResponse> {
     return this.request<ContactsResponse>("/auth/me/contacts");
   }
-  /** Add an address. Starts unverified — only a verified address is ever sent to. */
-  addContact(address: string, label?: string): Promise<Contact> {
-    return this.request<Contact>("/auth/me/contacts", {
+  /** Add an address, and mail its confirmation link straight away.
+   *
+   * The two were never separate steps: an unverified row is an intention, and nothing is ever sent
+   * to one. `verificationSent` is `false` when the deployment cannot send mail or the caller is over
+   * the hourly cap — the address is stored either way, so offer "send again" rather than a retry of
+   * the add, which would be a 409. */
+  addContact(address: string, label?: string): Promise<AddedContact> {
+    return this.request<AddedContact>("/auth/me/contacts", {
       method: "POST",
       body: JSON.stringify({ address, label }),
     });

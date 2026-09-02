@@ -430,6 +430,11 @@ export interface BrandingConfig {
   title?: string;
 }
 
+/** A freshly added address, plus whether its confirmation mail went out. */
+export interface AddedContact extends Contact {
+  verificationSent: boolean;
+}
+
 /** What a user delete cleared out along with the user. */
 export interface DeletedUserCounts {
   contacts: number;

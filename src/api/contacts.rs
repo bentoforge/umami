@@ -20,7 +20,7 @@ pub fn routes(platform: &Platform) -> BoxedFilter<(impl warp::Reply + use<>,)> {
             platform.authenticator.clone()
         ),
         add_my_contact_route(
-            platform.repos.contacts.clone(),
+            platform.verify_deps(),
             platform.repos.audit.clone(),
             platform.authenticator.clone()
         ),

@@ -64,6 +64,13 @@ Four properties worth knowing, each there for a reason:
 - **One message for invalid, used and expired alike.** Telling a holder of a stale link which of the
   three it is helps nobody legitimate.
 
+**Adding and confirming are one step.** They were never really two: an unverified row is an
+intention, nothing is ever sent to one, and splitting them only produced addresses sitting
+unconfirmed because nobody noticed a second button. The mail is **best-effort** — the row exists
+either way, and turning a stored address into an error would invite a retry that answers `409`. What
+the caller gets instead is `verificationSent`, so the screen can say which of the two happened.
+`POST /auth/me/contacts/verify` stays, as the way to send again.
+
 Re-verifying an already-confirmed address is free and sends nothing. A challenge outliving its
 address — removed between the mail arriving and the link being clicked — is not an error; there is
 simply nothing left to confirm.
@@ -191,7 +198,7 @@ All gated on `manage:contacts`, which the default config grants in the **baselin
 | Method | Path | Notes |
 |--------|------|-------|
 | `GET` | `/auth/me/contacts` | the caller's addresses + the preferred one |
-| `POST` | `/auth/me/contacts` | `{address, label?}` → 201, unverified. A duplicate is a 409 |
+| `POST` | `/auth/me/contacts` | `{address, label?}` → 201, unverified — **and the confirmation goes out with it**. `verificationSent: false` when the deployment cannot mail or the caller is over the cap; the address is stored either way. A duplicate is a 409 |
 | `DELETE` | `/auth/me/contacts` | `{address}` — also drops an explicit choice that named it |
 | `POST` | `/auth/me/contacts/verify` | `{address}` → mails a fresh confirmation link, 202. Free no-op when already confirmed; `503` with no mail path; `429` over the cap |
 | `PUT` | `/auth/me/preferred-contact` | `{address}`, or `null` to clear. `409` for an unconfirmed address |

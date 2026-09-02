@@ -1,7 +1,11 @@
 // Shared Tailwind class strings so the admin screens stay visually consistent.
 
+// `inline-block` is load-bearing, not decoration. On a <button> the UA stylesheet already supplies
+// it, but these classes are also worn by a <Link>, which renders an inline <a> — and an inline box
+// ignores vertical margin, so `space-y-*` on the surrounding stack silently does nothing and the
+// button ends up glued to the text above it.
 export const primaryButton =
-  "rounded-lg bg-primary hover:bg-primary-dark text-white text-sm font-medium px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed";
+  "inline-block rounded-lg bg-primary hover:bg-primary-dark text-white text-sm font-medium px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed";
 
 export const ghostButton =
   "rounded-lg border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 text-sm font-medium px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50";

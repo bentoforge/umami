@@ -14,7 +14,7 @@ import { card, primaryButton } from "../ui";
  * Renders standalone rather than inside the admin layout: a reader arriving from a mail has one
  * question ("did it work?"), and a full navigation chrome around the answer would only be noise. */
 export function VerifyContactPage() {
-  const { client, me } = useUmami();
+  const { client } = useUmami();
   const { t } = useTranslation();
   const [params] = useSearchParams();
   const token = params.get("token") ?? "";
@@ -60,9 +60,7 @@ export function VerifyContactPage() {
             <p className="text-sm text-slate-600 dark:text-slate-300">
               {t("verifyContact.ok", { address })}
             </p>
-            <Link className={primaryButton} to="/profile">
-              {t(me ? "verifyContact.toProfile" : "verifyContact.toSignIn")}
-            </Link>
+            <Continue />
           </>
         )}
 
@@ -70,12 +68,29 @@ export function VerifyContactPage() {
           <>
             <Banner tone="error">{error}</Banner>
             <p className="text-sm text-slate-500">{t("verifyContact.retryHint")}</p>
-            <Link className={primaryButton} to="/profile">
-              {t(me ? "verifyContact.toProfile" : "verifyContact.toSignIn")}
-            </Link>
+            <Continue />
           </>
         )}
       </section>
     </div>
+  );
+}
+
+/** How the page ends: onwards to `/app`, whatever the reader's state.
+ *
+ * Deliberately the app root rather than the profile screen. A reader arriving from a mail client is
+ * usually not a umami user at all — they use some product this umami serves — so a deep link into an
+ * identity service's profile is an answer to a question they did not ask. The root is where the way
+ * back to their own application belongs.
+ *
+ * Deliberately **not** a `window.close()` button either: a browser only lets a script close what a
+ * script opened, and a link from a mail client is not that. It would do nothing on click, which is
+ * the one outcome worse than no button. */
+function Continue() {
+  const { t } = useTranslation();
+  return (
+    <Link className={primaryButton} to="/">
+      {t("verifyContact.continue")}
+    </Link>
   );
 }

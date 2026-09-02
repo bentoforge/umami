@@ -82,6 +82,20 @@ struct AddressRequest {
     address: String,
 }
 
+/// A freshly added address, plus whether its confirmation mail went out.
+///
+/// Flattened, so the contact's own fields sit where every other endpoint puts them and a client that
+/// only wants the address is unaffected.
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct AddedContact {
+    #[serde(flatten)]
+    contact: Contact,
+    /// `false` when the deployment cannot send mail, or the caller is over the hourly cap. The
+    /// address is stored regardless; the screen offers "send again".
+    verification_sent: bool,
+}
+
 /// Request finishing a verification: the secret from the mailed link.
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -137,14 +151,14 @@ pub fn my_contacts_route(
 
 /// `POST /auth/me/contacts` — add an address (unverified).
 pub fn add_my_contact_route(
-    contacts: Arc<dyn ContactRepository>,
+    deps: VerifyDeps,
     audit: Arc<dyn AuditRepository>,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("auth" / "me" / "contacts")
         .and(warp::post())
         .and(with_body_as_json::<AddContactRequest>(MAX_TEXT_BODY_SIZE))
-        .and(with_cloneable(contacts))
+        .and(with_cloneable(deps))
         .and(with_cloneable(audit))
         .and(with_user_with_any_permission(authenticator, REQUIRE_SELF))
         .and_then(handle_add_my_contact_route)
@@ -254,11 +268,11 @@ async fn handle_my_contacts_route(
 #[tracing::instrument(level = "debug", name = "POST /auth/me/contacts", skip_all)]
 async fn handle_add_my_contact_route(
     request: AddContactRequest,
-    contacts: Arc<dyn ContactRepository>,
+    deps: VerifyDeps,
     audit: Arc<dyn AuditRepository>,
     caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response_with_status(add_my_contact(request, contacts, audit, caller).await)
+    into_response_with_status(add_my_contact(request, deps, audit, caller).await)
 }
 
 #[tracing::instrument(level = "debug", name = "DELETE /auth/me/contacts/{address}", skip_all)]
@@ -555,15 +569,16 @@ async fn finish_verification(
 
 async fn add_my_contact(
     request: AddContactRequest,
-    contacts: Arc<dyn ContactRepository>,
+    deps: VerifyDeps,
     audit: Arc<dyn AuditRepository>,
     caller: AuthUser,
-) -> anyhow::Result<(StatusCode, Contact)> {
+) -> anyhow::Result<(StatusCode, AddedContact)> {
     let user_id = caller.user_id()?;
     let tenant_id = caller.tenant_id()?;
     let address = normalize_email(&request.address)?;
 
-    let contact = contacts
+    let contact = deps
+        .contacts
         .add_contact(NewContact {
             user_id: user_id.to_owned(),
             tenant_id: tenant_id.to_owned(),
@@ -581,7 +596,37 @@ async fn add_my_contact(
     )
     .await;
 
-    Ok((StatusCode::CREATED, contact))
+    // The confirmation goes out with the add, because the two were never really separate steps: an
+    // unverified row is an intention, and nothing is ever sent to one. Splitting them only produced
+    // addresses that sat unconfirmed because somebody did not notice a second button.
+    //
+    // **Best-effort.** The row exists either way, and a deployment with no mail path, or a user over
+    // the hourly cap, must not turn a successful add into an error that invites a retry — the retry
+    // would be a `409`. The response says what happened instead, so the screen can be honest.
+    let verification_sent = match start_verification(
+        AddressRequest {
+            address: address.clone(),
+        },
+        deps,
+        audit,
+        caller,
+    )
+    .await
+    {
+        Ok(_) => true,
+        Err(err) => {
+            tracing::warn!("added a contact but could not mail its confirmation: {err:#}");
+            false
+        }
+    };
+
+    Ok((
+        StatusCode::CREATED,
+        AddedContact {
+            contact,
+            verification_sent,
+        },
+    ))
 }
 
 async fn delete_my_contact(
