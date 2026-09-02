@@ -393,11 +393,7 @@ function ContactsPanel() {
               />
             </Field>
             <Field label={t("contacts.labelField")}>
-              <input
-                className={input}
-                value={label}
-                onChange={(e) => setLabel(e.target.value)}
-              />
+              <input className={input} value={label} onChange={(e) => setLabel(e.target.value)} />
             </Field>
           </div>
           <div className="flex gap-2">

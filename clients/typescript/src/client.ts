@@ -1,5 +1,6 @@
 import type {
   AccessClaims,
+  AddedContact,
   ApiErrorBody,
   ApiKeyView,
   AudienceResponse,
@@ -18,7 +19,6 @@ import type {
   CreateUserRequest,
   CreateUserResponse,
   CustomFieldsSchema,
-  AddedContact,
   DeletedUserCounts,
   ExchangeResponse,
   LoginResponse,
