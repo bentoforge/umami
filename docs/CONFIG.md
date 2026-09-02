@@ -27,7 +27,7 @@ Relevant environment variables:
 | Env | Effect |
 |-----|--------|
 | `S3_BUCKET_SUFFIX` | When set, persist config in S3 (bucket `config.<suffix>`); unset ⇒ in-memory default (non-persistent). |
-| `UMAMI_CONFIG_KEY` | Optional object key for the config document (default `umami/config.json`). |
+| `UMAMI_CONFIG_S3_KEY` | Optional object key for the config document (default `umami/config.json`). |
 | `UMAMI_SYSTEM_TENANT_ID` | Tenant whose members get the `is:system-tenant` marker (⇒ `manage:tenants` + `switch:tenant`). |
 | `UMAMI_AUTO_INIT=true` | Bootstrap a first tenant + owner when zero tenants exist. |
 | `UMAMI_UI_DIR` | Directory of the built management SPA to serve under `/app` (default `clients/ui/dist`; absent index.html ⇒ API-only). |

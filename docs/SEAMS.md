@@ -21,10 +21,8 @@ settings** carry the provider's name (`UMAMI_MAIL_SQS_QUEUE_URL`), so it is read
 belongs to which backend and two providers of the same seam cannot collide over one variable — an
 SMTP transport would bring `UMAMI_MAIL_SMTP_HOST` and nothing has to be renamed for it.
 
-Two settings predate the convention and keep their names, because renaming them would break
-deployments that already use them: `UMAMI_CONFIG_KEY` and `UMAMI_CONFIG_VERSIONS_*` are S3-only but
-not S3-named. `S3_BUCKET_SUFFIX` and `DYNAMO_TABLE_PREFIX` are wasabi's, not umami's, and are named
-by wasabi's schema.
+The two exceptions are not umami's to name: `S3_BUCKET_SUFFIX` and `DYNAMO_TABLE_PREFIX` come from
+wasabi's naming schema, and every wasabi service reads them under those names.
 
 ## Is AWS usable? (the eligibility probe)
 

@@ -104,7 +104,7 @@ const DEFAULT_CONFIG_KEY: &str = "umami/config.json";
 const CONFIG_BUCKET_PREFIX: &str = "config";
 
 /// Reads the optional noncurrent-version retention for the config bucket from the environment:
-/// `UMAMI_CONFIG_VERSIONS_KEEP` (keep the newest N) and `UMAMI_CONFIG_VERSIONS_EXPIRE_DAYS`
+/// `UMAMI_CONFIG_S3_VERSIONS_KEEP` (keep the newest N) and `UMAMI_CONFIG_S3_VERSIONS_EXPIRE_DAYS`
 /// (expire noncurrent versions after N days). Both optional; unset → versioning without expiry.
 fn version_retention_from_env() -> anyhow::Result<VersionRetention> {
     fn parse_i32(name: &str) -> anyhow::Result<Option<i32>> {
@@ -119,8 +119,8 @@ fn version_retention_from_env() -> anyhow::Result<VersionRetention> {
     }
 
     Ok(VersionRetention {
-        keep_newest: parse_i32("UMAMI_CONFIG_VERSIONS_KEEP")?,
-        expire_after_days: parse_i32("UMAMI_CONFIG_VERSIONS_EXPIRE_DAYS")?,
+        keep_newest: parse_i32("UMAMI_CONFIG_S3_VERSIONS_KEEP")?,
+        expire_after_days: parse_i32("UMAMI_CONFIG_S3_VERSIONS_EXPIRE_DAYS")?,
     })
 }
 
@@ -176,13 +176,13 @@ pub struct S3ConfigRepository {
 impl S3ConfigRepository {
     /// Builds the repository for the fixed [`CONFIG_BUCKET_PREFIX`] bucket (effective name
     /// `config.<S3_BUCKET_SUFFIX>`, wasabi naming — analogous to how DynamoDB tables get a fixed
-    /// name plus the shared deployment prefix) plus optional `UMAMI_CONFIG_KEY`. Provisions the
+    /// name plus the shared deployment prefix) plus optional `UMAMI_CONFIG_S3_KEY`. Provisions the
     /// bucket if absent (mirroring how each repository auto-creates its DynamoDB table on boot),
     /// enables versioning so config edits are recoverable, and seeds a default document if none
     /// exists yet.
     pub async fn from_env(client: S3Client) -> anyhow::Result<Self> {
         let bucket_prefix = CONFIG_BUCKET_PREFIX.to_owned();
-        let key = env::var("UMAMI_CONFIG_KEY").unwrap_or_else(|_| DEFAULT_CONFIG_KEY.to_owned());
+        let key = env::var("UMAMI_CONFIG_S3_KEY").unwrap_or_else(|_| DEFAULT_CONFIG_KEY.to_owned());
         let bucket = BucketName::Prefix(bucket_prefix.clone());
         let effective = client.effective_name(&bucket);
 

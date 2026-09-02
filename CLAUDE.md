@@ -143,9 +143,10 @@ service call that needs an IAM permission — that would fail the boot on a legi
 least-privilege policy.
 
 Naming: a seam's selector is named after the seam (`UMAMI_MAIL_TRANSPORT`), a provider's own
-settings after the provider (`UMAMI_MAIL_SQS_QUEUE_URL`) — so two providers of one seam cannot
-collide over a variable, and adding SMTP renames nothing. `UMAMI_CONFIG_KEY` and
-`UMAMI_CONFIG_VERSIONS_*` predate this and keep their names (released; renaming breaks deployments). A new seam follows that shape; do not add a "production mode"
+settings after the provider (`UMAMI_MAIL_SQS_QUEUE_URL`, `UMAMI_CONFIG_S3_KEY`) — so two providers
+of one seam cannot collide over a variable, and adding SMTP or Postgres renames nothing. The only
+un-prefixed exceptions are `S3_BUCKET_SUFFIX` and `DYNAMO_TABLE_PREFIX`, which belong to wasabi's
+naming schema rather than to umami. A new seam follows that shape; do not add a "production mode"
 switch — strictness is derived from explicitness. A failed boot exits **1**, never 0. Full
 reference: [docs/SEAMS.md](docs/SEAMS.md).
 
@@ -183,7 +184,7 @@ reference: [docs/SEAMS.md](docs/SEAMS.md).
   clean `cargo audit`.
 - **JWKS validation** on the product side goes through the `jwks` crate → `DecodingKey`. `ES256`
   (P-256) is the confirmed-safe algorithm. **`EdDSA`/OKP is only allowed after an end-to-end
-  interop test proves the `jwks` + `aws_lc_rs` path accepts an Ed25519 JWK** (see ROADMAP Phase 2).
+  interop test proves the `jwks` + `aws_lc_rs` path accepts an Ed25519 JWK**.
 - **`iss` must exactly match** the issuer configured in product services, **trailing slash
   included** (`https://umami.example.com/`).
 - **AWS SDK feature flags**: `aws-sdk-dynamodb = { version = "1", default-features = false,
@@ -214,5 +215,15 @@ one active tenant**; `POST /auth/switch-tenant` re-issues with a different `tena
 
 ## CI/CD
 
-Mirror `dbx-core/.github`: PRs run format check, clippy `-D warnings`, build, test. (Set up in a
-later hardening phase.)
+In `.github/`, mirroring `dbx-core`:
+
+- **CI (Rust)** — `.github/workflows/ci-rust.yml` on PRs and pushes to `main` that touch `src/**` or
+  the manifests. It delegates to the `verify-rust` composite action, which runs `cargo fmt --check`,
+  `clippy -D warnings`, build, test and `cargo audit` in a pinned Rust container. Run the same four
+  locally before pushing and CI holds no surprises.
+- **CI (Web)** — `ci-web.yml` for the TS client library and the management UI.
+- **Release** — `release.yml` on a tag: verifies, builds the multi-arch Docker image and pushes the
+  manifest.
+
+`verify-rust` takes an `audit-ignore` input for advisory IDs — only for transitive, non-exploitable
+advisories waiting on an upstream fix, never to silence something in umami's own tree.
