@@ -331,8 +331,27 @@ export interface Config {
   notificationTypes?: NotificationTypeDef[];
   /** White-labeling for the management UI. */
   branding?: BrandingConfig;
+  /** What every outbound mail carries beyond its own text. */
+  mail?: MailConfig;
   /** The catalog of target APIs umami can mint tokens for. */
   apis: ApiDef[];
+}
+
+/** What every outbound mail carries beyond its own text.
+ *
+ * Deployment-specific, which is why it is config rather than part of umami's message catalogue. */
+export interface MailConfig {
+  /** Imprint or legal footer, keyed by locale (`de`, `en`, …).
+   *
+   * Appended to the plain-text body of every mail and carried as its own payload field. The lookup
+   * falls back the way the message catalogue does — `de-AT` finds `de` — and a locale with no entry
+   * gets no footer rather than somebody else's language. Locale keys must be lowercase. */
+  footer?: Record<string, string>;
+  /** Constants every mail carries for a worker's templates — base URLs, a support address.
+   *
+   * Kept separate from a message's own `context` on the wire, so a key in both cannot silently
+   * overwrite the other. Keys are `[A-Za-z0-9_-]`; the whole map is capped at 4 KB. */
+  globalContext?: Record<string, string>;
 }
 
 // ── API keys ──────────────────────────────────────────────────────────────────
@@ -551,7 +570,13 @@ export interface NotificationMessage {
   subject?: string;
   /** Plain-text body. Goes together with `subject`. */
   body?: string;
-  /** Your own name for a layout the worker renders. umami forwards it without interpreting it. */
+  /** Your own name for a layout the worker renders, **namespaced**: `wsc::new-content`, not
+   * `new-content`. umami forwards it without interpreting it.
+   *
+   * Every sender writes layout names into this one field, so the namespace is required and checked
+   * — an unnamespaced name is a 400, and so is anything under `umami::`, which is reserved for the
+   * mails umami sends itself. The namespace is lowercase letters, digits and `-`; the rest is
+   * yours. */
   template?: string;
   /** Opaque data for that layout, forwarded untouched. Capped at 4 KB serialized.
    *

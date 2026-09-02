@@ -250,26 +250,34 @@ async fn forgot_password(
         .await?;
 
     let locale = crate::i18n::resolve(&config, user.locale.as_deref(), None);
-    let greeting = user.display_names(&config.default_locale).addressable_name;
+    // One composition for both the greeting in the text and the parts a worker's template gets, so
+    // the two cannot address the same person differently.
+    let recipient = crate::notify::Recipient::of(&user, &locale);
     let link = format!(
         "{}app/reset-password?token={}",
         deps.public_base_url, secret
     );
+    // The link the body already carries, structured — so a worker can put it on a button without
+    // parsing it back out of the text, and so the text itself can name it.
+    let link_context = json!({ "link": link });
+    let vars = crate::notify::render::MailContext {
+        recipient: Some(&recipient),
+        context: Some(&link_context),
+        global_context: &config.mail.global_context,
+        notification: None,
+    };
     let mail = OutboundMail::new(
-        "password-reset",
         address.clone(),
-        crate::i18n::message(&locale, "auth.reset.subject"),
-        crate::i18n::message(&locale, "auth.reset.body")
-            .replace("%{name}", &greeting)
-            .replace("%{link}", &link),
+        crate::notify::render::message(&locale, "auth.reset.subject", &vars)?,
+        crate::notify::render::message(&locale, "auth.reset.body", &vars)?,
         locale,
         user.user_id.clone(),
         user.tenant_id.clone(),
     )
-    .with_recipient_name(&greeting)
-    // The link the body already carries, structured — so a worker can put it on a button without
-    // parsing it back out of the text. `kind` says which mail it belongs to.
-    .with_context(Some(json!({ "link": link })));
+    .with_template(Some(crate::notify::TEMPLATE_PASSWORD_RESET.to_owned()))
+    .with_recipient(recipient)
+    .with_context(Some(link_context))
+    .with_deployment(&config.mail, &deps.public_base_url)?;
     let message_id = mail.message_id.clone();
     deps.notifier.send(mail).await?;
 

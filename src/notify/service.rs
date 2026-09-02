@@ -35,7 +35,12 @@ use crate::contacts::repository::ContactRepository;
 use crate::notify::types::{
     CHOICE_OFF, CadenceDef, Delivery, NotificationTypeDef, normalize_cadence, resolve_delivery,
 };
-use crate::notify::{NotificationMeta, Notifier, OutboundMail};
+// Aliased: `Recipient` in this module is the audience response's, which carries no name parts and
+// deliberately no address.
+use crate::notify::{
+    NotificationMeta, Notifier, OutboundMail, Recipient as MailRecipient, TEMPLATE_NAMESPACE,
+    TEMPLATE_UMAMI_PREFIX, template_namespace,
+};
 use crate::tenants::repository::TenantRepository;
 use crate::users::User;
 use crate::users::repository::UserRepository;
@@ -84,6 +89,8 @@ pub struct NotifyDeps {
     pub notifier: Arc<dyn Notifier>,
     /// System tenant id, for the `is:system-tenant*` markers.
     pub system_tenant_id: Option<String>,
+    /// umami's own public base URL — every mail carries it in `globalContext`.
+    pub public_base_url: String,
 }
 
 /// One notification type as the profile screen sees it.
@@ -687,8 +694,8 @@ async fn send(
         };
 
         let locale = crate::i18n::resolve(&config, user.locale.as_deref(), None);
+        let recipient = MailRecipient::of(&user, &locale);
         let mut mail = OutboundMail::new(
-            "notification",
             address,
             message.subject.unwrap_or_default(),
             message.body.unwrap_or_default(),
@@ -696,12 +703,14 @@ async fn send(
             user.user_id.clone(),
             user.tenant_id.clone(),
         )
-        .with_recipient_name(user.display_names(&config.default_locale).addressable_name)
+        .with_recipient(recipient)
         .with_template(message.template)
         .with_context(message.context);
         if let Some(type_def) = type_def {
             mail = mail.with_notification(notification_meta(type_def, message.cadence.as_deref()));
         }
+        // Last, because it assembles the body out of everything above.
+        let mail = mail.with_deployment(&config.mail, &deps.public_base_url)?;
         let message_id = mail.message_id.clone();
         // One failure must not abandon the rest of the batch — partial success is the normal case,
         // and the caller is told per entry which is which.
@@ -778,6 +787,18 @@ fn check_messages(
                 "Message for '{user}' has only one of 'subject' and 'body' — they go together"
             ),
         }
+        if !template.is_empty() {
+            match template_namespace(template) {
+                Ok(namespace) if namespace == TEMPLATE_NAMESPACE => status_bail!(
+                    StatusCode::BAD_REQUEST,
+                    "Template '{template}' for '{user}' is in the '{TEMPLATE_UMAMI_PREFIX}' \
+                     namespace, which is reserved for the mails umami sends itself — a worker \
+                     keying off the name would render yours as one of those"
+                ),
+                Ok(_) => {}
+                Err(reason) => status_bail!(StatusCode::BAD_REQUEST, "{reason} (for '{user}')"),
+            }
+        }
         if subject.is_empty() && template.is_empty() {
             status_bail!(
                 StatusCode::BAD_REQUEST,
@@ -819,24 +840,11 @@ fn check_messages(
     Ok(())
 }
 
-/// What a worker is told about the notification a mail belongs to.
-///
-/// The cadence is looked up rather than echoed so its **label** travels too: a worker wording "your
-/// week" differently from "today" would otherwise need its own copy of the catalogue.
+/// What a worker is told about the notification a mail belongs to: the codes, normalized.
 fn notification_meta(type_def: &NotificationTypeDef, cadence: Option<&str>) -> NotificationMeta {
-    let cadence = cadence.map(normalize_cadence);
-    let cadence_name = cadence.as_ref().and_then(|code| {
-        type_def
-            .cadences
-            .iter()
-            .find(|declared| &declared.code == code)
-            .map(|declared| declared.name.clone())
-    });
     NotificationMeta {
         type_code: type_def.code.clone(),
-        type_name: type_def.name.clone(),
-        cadence,
-        cadence_name,
+        cadence: cadence.map(normalize_cadence),
     }
 }
 
@@ -987,13 +995,23 @@ mod tests {
         assert!(check_messages(&[with_text(message())], Some(&type_def)).is_ok());
 
         let mut templated = message();
-        templated.template = Some("new-content".to_owned());
+        templated.template = Some("wsc::new-content".to_owned());
         assert!(check_messages(&[templated], Some(&type_def)).is_ok());
 
         // Both is the robust combination: a worker that does not know the layout still has text.
         let mut both = with_text(message());
-        both.template = Some("new-content".to_owned());
+        both.template = Some("wsc::new-content".to_owned());
         assert!(check_messages(&[both], Some(&type_def)).is_ok());
+
+        // Every name is namespaced, and the rule is enforced — otherwise a worker keying off this
+        // one field would confuse two senders' layouts of the same name.
+        let mut unnamespaced = with_text(message());
+        unnamespaced.template = Some("new-content".to_owned());
+        assert!(check_messages(&[unnamespaced], Some(&type_def)).is_err());
+
+        let mut squatting = with_text(message());
+        squatting.template = Some("umami::password-reset".to_owned());
+        assert!(check_messages(&[squatting], Some(&type_def)).is_err());
 
         assert!(check_messages(&[message()], Some(&type_def)).is_err());
 
@@ -1057,20 +1075,16 @@ mod tests {
         assert!(check_messages(&[with_text(message())], None).is_ok());
     }
 
-    /// The cadence's label has to travel with it: a worker wording "your week" differently from
-    /// "today" would otherwise need its own copy of the catalogue.
+    /// The cadence reaches the worker normalized, so `Weekly` from a caller and `weekly` from the
+    /// catalogue cannot select two different layouts.
     #[test]
-    fn the_notification_meta_carries_both_labels() {
+    fn the_notification_meta_carries_normalized_codes() {
         let type_def = rhythmic();
 
         let meta = notification_meta(&type_def, Some(" Weekly "));
         assert_eq!(meta.type_code, "wsc-new-content");
-        assert_eq!(meta.type_name, "New content");
         assert_eq!(meta.cadence.as_deref(), Some("weekly"));
-        assert_eq!(meta.cadence_name.as_deref(), Some("Weekly"));
 
-        let meta = notification_meta(&type_def, None);
-        assert!(meta.cadence.is_none());
-        assert!(meta.cadence_name.is_none());
+        assert!(notification_meta(&type_def, None).cadence.is_none());
     }
 }

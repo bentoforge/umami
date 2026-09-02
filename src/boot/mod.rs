@@ -152,6 +152,7 @@ impl Platform {
             config: self.config.clone(),
             notifier: self.notifier.clone(),
             system_tenant_id: self.system_tenant_id.clone(),
+            public_base_url: self.public_base_url.clone(),
         }
     }
 

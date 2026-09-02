@@ -12,18 +12,19 @@ salutation.MADAM:
 
 # ── Password recovery ──────────────────────────────────────────────────────────
 # The link is account takeover in one click for whoever reads it, so the text says plainly what it
-# does and what to do if it was not requested. %{name} is the addressable name, %{link} the
-# single-use reset URL.
+# does and what to do if it was not requested. The template context is the mail payload's own
+# shape, so `recipient.addressableName` and `context.link` read the same here as in a worker's
+# own layout.
 auth.reset.subject:
   de: Passwort zurücksetzen
   en: Reset your password
 auth.reset.body:
   de: |
-    Hallo %{name},
+    Hallo {{ recipient.addressableName }},
 
     über den folgenden Link können Sie ein neues Passwort setzen:
 
-    %{link}
+    {{ context.link }}
 
     Der Link gilt einmalig und läuft bald ab. Sobald Sie ihn benutzen, werden alle bestehenden
     Anmeldungen beendet.
@@ -31,11 +32,11 @@ auth.reset.body:
     Wenn Sie das nicht angefordert haben, ignorieren Sie diese Nachricht — Ihr Passwort bleibt
     unverändert. Erhalten Sie solche Nachrichten unerwartet, wenden Sie sich an Ihre Administration.
   en: |
-    Hello %{name},
+    Hello {{ recipient.addressableName }},
 
     you can set a new password using the following link:
 
-    %{link}
+    {{ context.link }}
 
     The link works once and expires shortly. Using it ends every existing sign-in.
 
@@ -44,27 +45,28 @@ auth.reset.body:
 
 # ── Address verification ───────────────────────────────────────────────────────
 # The only mail umami renders itself. Plain text on purpose: it has to survive every client, and
-# there is nothing here that markup would clarify. %{name} is the server-composed addressable name
-# (may be empty when the user has no name parts), %{link} the single-use confirmation URL.
+# there is nothing here that markup would clarify. `recipient.addressableName` is server-composed
+# and may be empty when the user has no name parts; `context.link` is the single-use confirmation
+# URL.
 contact.verify.subject:
   de: Bitte bestätigen Sie Ihre E-Mail-Adresse
   en: Please confirm your email address
 contact.verify.body:
   de: |
-    Hallo %{name},
+    Hallo {{ recipient.addressableName }},
 
     bitte bestätigen Sie diese E-Mail-Adresse, damit wir Sie darüber erreichen können:
 
-    %{link}
+    {{ context.link }}
 
     Der Link gilt einmalig. Wenn Sie das nicht angefordert haben, ignorieren Sie diese Nachricht —
     ohne Bestätigung wird die Adresse nicht verwendet.
   en: |
-    Hello %{name},
+    Hello {{ recipient.addressableName }},
 
     please confirm this email address so we can reach you at it:
 
-    %{link}
+    {{ context.link }}
 
     The link works once. If you did not request this, ignore this message — without confirmation the
     address will not be used.

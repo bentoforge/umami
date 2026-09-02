@@ -83,11 +83,15 @@ umami renders the mail — subject and plain-text body, in the recipient's own l
 `locales/app.yml` — and hands it over as one SQS message. Delivery, retries, bounces and provider
 credentials belong to the worker; a dead-letter queue on the SQS side is the retry story.
 
-```json
-{ "messageId": "…", "kind": "contact-verification",
+```jsonc
+{ "messageId": "…", "template": "umami::contact-verification",
   "to": "jane@example.com", "subject": "…", "body": "…",
-  "addressableName": "Ms Doe",
+  "recipient": { "addressableName": "Frau Dr. Doe", "fullName": "Frau Dr. Jane Doe",
+                 "name": "Dr. Jane Doe", "salutation": "Frau", "salutationKey": "MADAM",
+                 "firstName": "Jane", "lastName": "Doe" },
   "context": { "link": "https://umami.example.com/app/verify-contact?token=…" },
+  "footer": "noonu GmbH · …",                       // from the config, already in `body` too
+  "globalContext": { "baseUrl": "https://noonu.dev" },
   "locale": "de", "userId": "…", "tenantId": "…" }
 ```
 
@@ -95,12 +99,36 @@ credentials belong to the worker; a dead-letter queue on the SQS side is the ret
 to recognise a message it already delivered. `userId`/`tenantId` are for the worker's own audit
 trail, never for addressing.
 
-`kind` is umami's own name for the mail (`contact-verification`, `password-reset`, `notification`)
-and is what a worker keys a layout off. `context` is the same link the body already carries, in
-structured form, so a worker building an HTML button does not have to parse it back out of the text
-— and `addressableName` is the greeting, so it does not have to ask umami for the user either. Both
-are conveniences: the plain `subject`/`body` are always filled in for umami's own mails, and a
-worker that just delivers them is correct and complete.
+`template` names the layout, and it is the **only** selector a worker switches on. umami puts its
+own names on its own mails — `umami::contact-verification` and `umami::password-reset` — and
+forwards whatever an app named its layout for anything sent through `/notifications/send`. It never
+interprets either; a worker that does not know a name falls back to `subject`/`body`, which is
+always filled in for umami's own mails.
+
+One field rather than one per sender, so there is one thing to switch on. What keeps them apart in
+it is that **every name carries its sender's namespace** — `umami::password-reset`,
+`wsc::new-content`, `abc::report-ready` — and that is a rule rather than a convention:
+`POST /notifications/send` refuses a template with no namespace, and refuses `umami::` outright.
+
+Both halves of that matter. Without the reservation a caller could have its notification rendered as
+a password reset by a worker doing exactly what it was told; without the requirement, two apps that
+both invent `digest` would silently share a layout. The namespace is lowercase letters, digits and
+`-`; what follows the `::` is the sender's own business.
+
+`notification` is what says which side a mail came from: present means it came through
+`/notifications/send`.
+
+The rest is there so a worker rendering its own layout never has to ask umami anything:
+
+| Field | What |
+|---|---|
+| `recipient` | every name form umami can compose, plus `salutationKey` (`""`/`SIR`/`MADAM`) — the **stable** code, because the `salutation` word beside it is already in the reader's language and useless in a condition |
+| `context` | the same single-use link the body carries, structured, so a button does not need it parsed back out of the text |
+| `footer` | the deployment's imprint in this mail's language, rendered, from config `mail.footer` |
+| `globalContext` | the deployment's template constants, plus umami's own `umamiBaseUrl` |
+
+All of it is a convenience. `subject`/`body` are always filled in for umami's own mails, the footer
+is already appended to that body, and a worker that just delivers the text is correct and complete.
 
 A mail from `POST /notifications/send` looks the same but carries the app's side of it — `template`,
 `context` and a `notification` block. See [NOTIFICATIONS.md](NOTIFICATIONS.md) §5.

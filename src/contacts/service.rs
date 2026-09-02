@@ -453,32 +453,48 @@ async fn start_verification(
         locale if !locale.trim().is_empty() => locale.to_owned(),
         _ => config.default_locale.clone(),
     };
-    let greeting = deps
-        .users
-        .get_user(user_id)
-        .await?
-        .map(|user| user.display_names(&config.default_locale).addressable_name)
-        .unwrap_or_default();
+    // One composition for both the greeting in the text and the parts a worker's template gets, so
+    // the two cannot address the same person differently. A user that vanished between the request
+    // and here still gets the mail — the address is what is being confirmed, not the name — and
+    // renders with every name part empty rather than failing.
+    let recipient = match deps.users.get_user(user_id).await? {
+        Some(user) => crate::notify::Recipient::of(&user, &locale),
+        None => crate::notify::Recipient::from_parts(
+            None,
+            crate::users::Salutation::Unspecified,
+            None,
+            None,
+            &locale,
+        ),
+    };
     let link = format!(
         "{}app/verify-contact?token={}",
         deps.public_base_url, secret
     );
+    // The link the body already carries, structured — so a worker can put it on a button without
+    // parsing it back out of the text, and so the text itself can name it.
+    let link_context = json!({ "link": link });
+    let vars = crate::notify::render::MailContext {
+        recipient: Some(&recipient),
+        context: Some(&link_context),
+        global_context: &config.mail.global_context,
+        notification: None,
+    };
 
     let mail = OutboundMail::new(
-        "contact-verification",
         address.clone(),
-        crate::i18n::message(&locale, "contact.verify.subject"),
-        crate::i18n::message(&locale, "contact.verify.body")
-            .replace("%{name}", &greeting)
-            .replace("%{link}", &link),
+        crate::notify::render::message(&locale, "contact.verify.subject", &vars)?,
+        crate::notify::render::message(&locale, "contact.verify.body", &vars)?,
         locale,
         user_id.to_owned(),
         tenant_id.to_owned(),
     )
-    .with_recipient_name(&greeting)
-    // The link the body already carries, structured — so a worker can put it on a button without
-    // parsing it back out of the text. `kind` says which mail it belongs to.
-    .with_context(Some(json!({ "link": link })));
+    .with_template(Some(
+        crate::notify::TEMPLATE_CONTACT_VERIFICATION.to_owned(),
+    ))
+    .with_recipient(recipient)
+    .with_context(Some(link_context))
+    .with_deployment(&config.mail, &deps.public_base_url)?;
     let message_id = mail.message_id.clone();
     deps.notifier.send(mail).await?;
 

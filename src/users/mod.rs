@@ -236,7 +236,7 @@ pub fn compose_display_names(
 }
 
 /// The word for a salutation in `locale`, from the message catalogue. `Unspecified` yields `None`.
-fn salutation_word(salutation: Salutation, locale: &str) -> Option<String> {
+pub fn salutation_word(salutation: Salutation, locale: &str) -> Option<String> {
     let code = match salutation {
         Salutation::Unspecified => return None,
         Salutation::Sir => "SIR",

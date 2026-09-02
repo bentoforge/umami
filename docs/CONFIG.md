@@ -384,6 +384,67 @@ See [PERMISSIONS.md](PERMISSIONS.md) for the DSL and mint flow, and the module d
 
 ---
 
+## 7a. What every mail carries: `mail`
+
+umami renders its own mails from `locales/app.yml`, which ships with umami and is the same in every
+installation. An imprint and a set of base URLs are not — they are one deployment's, so they live in
+the config:
+
+```jsonc
+"mail": {
+  "footer": {                                  // keyed by locale, and a template
+    "de": "noonu GmbH · Musterstraße 1 · 70173 Stuttgart\nFragen: {{ globalContext.supportMail }}",
+    "en": "noonu GmbH · Musterstraße 1 · 70173 Stuttgart, Germany"
+  },
+  "globalContext": {                           // constants for every mail and every template
+    "supportMail": "hilfe@noonu.dev"
+  }
+}
+```
+
+**`footer`** is appended to the plain-text body of every outbound mail — umami's own and an app's
+alike — separated by the RFC 3676 signature marker (`\n\n-- \n`), which mail clients recognise and
+fold away. It also travels as its own field on the payload, so a worker rendering HTML can place it
+in a footer block instead of finding it stuck to the end of a body it is not using. A message that
+carries only a `template` and no text gets the field but no appended body — otherwise the mail would
+be a lone imprint.
+
+Keyed by locale because it is appended to a mail written in the reader's language. The lookup falls
+back the way the message catalogue does (`de-AT` finds `de`), and a locale with no entry gets **no
+footer** rather than somebody else's language.
+
+The footer is a **template**, not a fixed string: it is rendered against `globalContext`, so an
+imprint can name the deployment's URLs without repeating them. It sees the constants and nothing
+else — deliberately no recipient, because a footer referencing `{{ recipient.firstName }}` would
+render fine at publish time and then fail on the first user who has no first name.
+
+**`globalContext`** is forwarded with every mail as a string map, and is what the footer renders
+from. It is kept **separate** from a message's own `context` on the wire rather than merged into it,
+so a key present in both cannot silently overwrite the other — the worker decides precedence. Values
+are strings on purpose: this is the deployment's set of constants, not a place to model data.
+Something that wants to be a number or an object belongs in the per-message `context`, which the
+sender owns.
+
+umami adds one key of its own, **`umamiBaseUrl`** — its public URL, the same `UMAMI_ISSUER` every
+link in every mail is built from, **without** a trailing slash: write
+`{{ globalContext.umamiBaseUrl }}/app/`. In a template the author can see the separator they are
+writing, and a base URL that brings its own is the one that ends up doubled. It is *reserved*: a
+config that sets it is refused, because umami already knows the value and a second copy is a second
+thing to keep in step.
+
+`PUT /config` refuses what would fail invisibly: an entry with an empty or non-lowercase locale (the
+lookup normalizes, so an uppercase key is never found), an empty footer (a separator with nothing
+under it), a `globalContext` key outside `[A-Za-z0-9_-]` or the reserved `umamiBaseUrl`, a
+`globalContext` over 4 KB — and **a footer that does not render**. That last one is the point of
+templating it at all: the footer is the one mail text nobody else checks, so it is rendered once at
+publish time against the values it will actually have. `{{ globalContext.supprtMail }}` is a `400`
+naming the locale, rather than a placeholder in every mail or a password reset that fails to send.
+
+The default config ships both empty. A placeholder imprint would go out in real mail until somebody
+noticed.
+
+---
+
 ## 8. Rate limiting
 
 `security.rateLimits` bounds the unauthenticated auth endpoints. It is a **layered** design (all

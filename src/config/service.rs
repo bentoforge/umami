@@ -147,6 +147,7 @@ async fn put_config(request: Config, config: Arc<dyn ConfigRepository>) -> anyho
     for api in &request.apis {
         crate::config::validate_claims(&api.code, &api.claims)?;
     }
+    crate::config::validate_mail(&request.mail)?;
 
     let mut next = request;
     next.version = current.version + 1;

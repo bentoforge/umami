@@ -193,11 +193,17 @@ A message may hand over finished text, name a layout the worker renders, or both
   "messages": [
     { "userId": "…",
       "subject": "…", "body": "…",     // optional when `template` is given
-      "template": "new-content-html",  // the app's own name for a layout; umami forwards it
+      "template": "wsc::new-content",  // your namespaced layout name; umami forwards it
       "context": { "pages": 3 },       // opaque data for that layout
       "cadence": "weekly" }            // which cadence this recipient matched
   ] }
 ```
+
+**Every template name is namespaced**, and that is checked: `wsc::new-content`, not
+`new-content`. A worker keys its layout off this one field and every sender writes into it, so an
+unnamespaced name is refused (two apps inventing `digest` would share a layout) and so is anything
+under `umami::`, which is reserved for the mails umami sends itself. The namespace is lowercase
+letters, digits and `-`; what follows the `::` is yours.
 
 **One of the two is always required.** A message with neither is a `400`, and so is half the text —
 `subject` without `body` is a caller that lost the other half, never a deliberate hand-over. Sending
@@ -211,14 +217,10 @@ umami adds what only it has, so a worker rendering its own layout does not need 
 
 | Field | What |
 |---|---|
-| `notification.type` / `.typeName` | the type's code and its label **from the catalogue** |
-| `notification.cadence` / `.cadenceName` | the matched cadence and its label |
-| `addressableName` | the greeting, the same string `/audience` returns |
+| `notification.type` / `.cadence` | the codes, normalized. **Codes only** — the catalogue's labels are one string each in the deployment's own language, so sending them along would look like a translation without being one, and a layout wants the stable code anyway |
+| `recipient` | every name form umami can compose, plus `salutationKey` for a template that branches |
 | `locale` | the recipient's resolved language |
-
-The labels are the catalogue's, in whatever language the deployment wrote them — the same strings
-the profile screen shows, deliberately not per-recipient translations. A deployment invents these
-codes, so nothing in umami could know what `on-publish` reads as in Portuguese.
+| `footer` / `globalContext` | the deployment's imprint and template constants, from the config `mail` block |
 
 `cadence` is passed back by the caller rather than re-derived, because `send` never re-reads a
 preference — but it is checked against the type all the same. A cadence the type is never fired at
@@ -263,9 +265,10 @@ through the single rule in [CONTACTS.md](CONTACTS.md) §5, the same one the prof
 A user with no confirmed address at all is left out of the audience and answered `no-address` by
 `send`.
 
-Delivery itself is one write per message with `kind: "notification"` — to a queue, or straight to
-SES in a deployment small enough to skip the worker ([SEAMS.md](SEAMS.md)). The payload and the
-worker's contract are documented in [CONTACTS.md](CONTACTS.md) §3.
+Delivery itself is one write per message — to a queue, or straight to SES in a deployment small
+enough to skip the worker ([SEAMS.md](SEAMS.md)). Such a mail carries the app's own `template` name
+and a `notification` block; the payload and the worker's contract are documented in
+[CONTACTS.md](CONTACTS.md) §3.
 
 ---
 

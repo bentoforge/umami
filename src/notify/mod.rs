@@ -28,6 +28,7 @@
 //! accepting a request that silently goes nowhere. Callers check
 //! [`Notifier::is_configured`] to decide.
 
+pub mod render;
 pub mod service;
 pub mod types;
 
@@ -41,27 +42,86 @@ use std::sync::Arc;
 use std::time::Duration;
 use wasabi::aws::dynamodb::generate_id;
 
-/// What a worker needs to word a notification itself, when it would rather render than forward.
+/// Which notification a mail is, for a worker that renders its own layout.
 ///
-/// Present exactly when the mail came through `POST /notifications/send` naming a type. The names
-/// are the **catalogue's** labels, in whatever language the deployment wrote them — the same strings
-/// the profile screen shows. They are deliberately not per-recipient translations: a deployment
-/// invents these codes, so nothing in umami could know what `on-publish` reads as in Portuguese.
+/// Present exactly when the mail came through `POST /notifications/send` naming a type. **Codes
+/// only.** The catalogue's labels are one string each, in whatever language the deployment wrote
+/// them — sending them along would look like a translation without being one, and a worker picking
+/// a layout wants the stable code anyway.
 #[derive(Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct NotificationMeta {
     /// The type's stable code, as the app fired it.
     #[serde(rename = "type")]
     pub type_code: String,
-    /// The type's label from the catalogue.
-    pub type_name: String,
     /// Which cadence this recipient matched, absent for a type with no rhythm.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cadence: Option<String>,
-    /// That cadence's label from the catalogue — what lets a worker word "your week" differently
-    /// from "today" without a table of its own.
+}
+
+/// Who the mail is for, in the parts a template addresses them by.
+///
+/// Every form umami can compose, because which one a layout wants is the layout's business: a
+/// formal letter opens with `addressableName`, a friendly one with `firstName`, and one that
+/// branches on gender needs `salutationKey` — the stable code — rather than the word, which is
+/// already translated into the reader's language and therefore useless in a condition.
+#[derive(Serialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Recipient {
+    /// `salutation title lastname` — how you would address them ("Frau Dr. Doe").
+    pub addressable_name: String,
+    /// `salutation title firstname lastname` ("Frau Dr. Jane Doe").
+    pub full_name: String,
+    /// `title firstname lastname`, with **no** salutation — what a layout prepends its own word to.
+    pub name: String,
+    /// The salutation word in the reader's language ("Frau", "Ms"). Absent when unset.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub cadence_name: Option<String>,
+    pub salutation: Option<String>,
+    /// The stable salutation code — `""`, `SIR` or `MADAM`. **This** is what a condition compares
+    /// against; the word above changes with the language.
+    pub salutation_key: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_name: Option<String>,
+}
+
+impl Recipient {
+    /// Composes every name form for `user`, in the language the mail is written in.
+    ///
+    /// `locale` is the mail's, not the deployment's: the salutation word has to match the text it
+    /// stands in front of.
+    pub fn of(user: &crate::users::User, locale: &str) -> Self {
+        Recipient::from_parts(
+            user.title.as_deref(),
+            user.salutation,
+            user.firstname.as_deref(),
+            user.lastname.as_deref(),
+            locale,
+        )
+    }
+
+    /// The same from loose name parts, so this type does not have to know the user record — the
+    /// split [`crate::users::compose_display_names`] already makes, for the same reason.
+    pub fn from_parts(
+        title: Option<&str>,
+        salutation: crate::users::Salutation,
+        firstname: Option<&str>,
+        lastname: Option<&str>,
+        locale: &str,
+    ) -> Self {
+        let names =
+            crate::users::compose_display_names(title, salutation, firstname, lastname, locale);
+        Recipient {
+            addressable_name: names.addressable_name,
+            full_name: names.full_name,
+            name: names.name,
+            salutation: crate::users::salutation_word(salutation, locale),
+            salutation_key: salutation.code(),
+            first_name: firstname.map(str::to_owned),
+            last_name: lastname.map(str::to_owned),
+        }
+    }
 }
 
 /// A finished transactional mail, ready to send. Rendered by umami — the worker only delivers.
@@ -71,9 +131,6 @@ pub struct OutboundMail {
     /// Idempotency key. SQS is at-least-once, so a worker that retries must be able to recognise a
     /// message it already delivered; it is also the handle for "did that reset mail go out?".
     pub message_id: String,
-    /// What this mail is (`contact-verification`, `password-reset`). Lets a worker route or
-    /// rate-limit by kind without parsing the body.
-    pub kind: &'static str,
     /// The recipient address.
     pub to: String,
     /// Subject line. Empty only when [`OutboundMail::template`] names something to render instead.
@@ -81,12 +138,18 @@ pub struct OutboundMail {
     /// Plain-text body. Empty only when [`OutboundMail::template`] names something to render
     /// instead.
     pub body: String,
-    /// What the **app** wants rendered, when it would rather template than hand over finished text.
+    /// Which layout renders this mail — the single selector a worker keys off.
     ///
-    /// umami never interprets it — it is the app's own name for one of its layouts, the way
-    /// [`OutboundMail::kind`] is umami's name for one of its own mails. A worker that does not know
-    /// the name falls back to `subject`/`body`, which is why a caller is allowed to send both and
-    /// why one of the two is always required.
+    /// umami fills it with its own name for its own mails ([`TEMPLATE_CONTACT_VERIFICATION`],
+    /// [`TEMPLATE_PASSWORD_RESET`]) and forwards the app's name for anything sent through
+    /// `/notifications/send`. It never interprets either: a worker that does not know the name falls
+    /// back to `subject`/`body`, which is why a caller may send both and why one of the two is
+    /// always required.
+    ///
+    /// One field rather than one per sender, so a worker has one thing to switch on. What keeps
+    /// them apart in it is a **namespace on every name** — `umami::`, `wsc::`, `abc::` — checked by
+    /// [`template_namespace`]. [`OutboundMail::notification`] says which side a mail came from, when
+    /// a worker needs to know more than the name.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub template: Option<String>,
     /// Opaque data for that template, straight from the caller.
@@ -98,10 +161,23 @@ pub struct OutboundMail {
     /// Which notification this is, for a mail that came through `/notifications/send` with a type.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notification: Option<NotificationMeta>,
-    /// How to address the recipient ("Ms Doe") — the same string `/notifications/audience` returns,
-    /// so a worker templating a greeting does not have to ask umami for the user.
+    /// Who the mail is for, so a worker templating a greeting does not have to ask umami for the
+    /// user — and could not be told an address by asking.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub addressable_name: Option<String>,
+    pub recipient: Option<Recipient>,
+    /// The deployment's imprint in the mail's language.
+    ///
+    /// Already appended to `body`, so a worker that only delivers is complete. It travels as its own
+    /// field for the one that renders: a layout wants it in a footer block, not stuck to the end of
+    /// a text it is not using.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub footer: Option<String>,
+    /// The deployment's constants for a worker's templates — base URLs, a support address.
+    ///
+    /// Separate from [`OutboundMail::context`] rather than merged into it, so a key in both cannot
+    /// silently overwrite the other.
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub global_context: std::collections::BTreeMap<String, String>,
     /// The recipient's resolved language (BCP-47) — a worker may need it for a sender identity or a
     /// footer it owns.
     pub locale: String,
@@ -111,10 +187,72 @@ pub struct OutboundMail {
     pub tenant_id: String,
 }
 
+/// The namespace umami's own layouts live in. Reserved — no caller may send under it.
+pub const TEMPLATE_NAMESPACE: &str = "umami";
+
+/// What separates a template's namespace from the rest of its name.
+pub const TEMPLATE_SEPARATOR: &str = "::";
+
+/// Checks that a template name is namespaced, and that the namespace is the caller's to use.
+///
+/// One field carries every sender's layout names — umami's own and each app's — so they need a way
+/// not to collide. Every name therefore starts with a namespace: `umami::password-reset`,
+/// `wsc::new-content`, `abc::report-ready`. The rule is enforced rather than documented, because a
+/// worker keys its layout off this field alone: an unnamespaced `password-reset` from an app would
+/// otherwise be rendered as umami's, and two apps that both invent `digest` would silently share a
+/// layout.
+///
+/// What follows the separator is the sender's own business — this only requires that there is
+/// something and that it is one token. Returns the namespace on success and the reason on failure,
+/// as plain text rather than an HTTP error: the rule belongs here, the status code to the route.
+pub fn template_namespace(template: &str) -> Result<&str, String> {
+    let Some((namespace, rest)) = template.split_once(TEMPLATE_SEPARATOR) else {
+        return Err(format!(
+            "Template '{template}' has no namespace — write '<yours>{TEMPLATE_SEPARATOR}{template}'              (for example 'wsc{TEMPLATE_SEPARATOR}{template}'), so a worker cannot confuse it with              another sender's layout of the same name"
+        ));
+    };
+    if namespace.is_empty()
+        || !namespace
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
+        return Err(format!(
+            "Template '{template}' has the namespace '{namespace}', which has to be lowercase              letters, digits or '-' — it names a sender, so it stays as short and stable as one"
+        ));
+    }
+    if rest.trim().is_empty() || rest.chars().any(char::is_whitespace) {
+        return Err(format!(
+            "Template '{template}' has nothing usable after the namespace"
+        ));
+    }
+    Ok(namespace)
+}
+
+/// The layout name umami puts on its own address-confirmation mail.
+pub const TEMPLATE_CONTACT_VERIFICATION: &str = "umami::contact-verification";
+
+/// The layout name umami puts on its own password-reset mail.
+pub const TEMPLATE_PASSWORD_RESET: &str = "umami::password-reset";
+
+/// The namespace umami's own layouts live in, with its separator — what a caller is refused.
+pub const TEMPLATE_UMAMI_PREFIX: &str = "umami::";
+
+/// The `globalContext` key umami fills in itself: its own public base URL, **without** a trailing
+/// slash — `https://iam.example.com`, so a template writes `{{ globalContext.umamiBaseUrl }}/app/`.
+///
+/// The slash is dropped here and only here. [`public_base_url`] keeps it, because every link umami
+/// builds is a concatenation where a missing slash silently yields the wrong URL. A template is the
+/// opposite case: the author can see the separator they are writing, and a base URL that brings its
+/// own is the one that ends up doubled.
+///
+/// Reserved — [`crate::config::validate_mail`] refuses a config that sets it. umami already knows
+/// this value (it is `UMAMI_ISSUER`, the same string every link in every mail is built from), and a
+/// deployment typing it a second time into the config is a second place for it to be wrong.
+pub const GLOBAL_CONTEXT_BASE_URL: &str = "umamiBaseUrl";
+
 impl OutboundMail {
     /// Builds a mail with a fresh idempotency key.
     pub fn new(
-        kind: &'static str,
         to: String,
         subject: String,
         body: String,
@@ -124,28 +262,70 @@ impl OutboundMail {
     ) -> Self {
         OutboundMail {
             message_id: generate_id(),
-            kind,
             to,
             subject,
             body,
             template: None,
             context: None,
             notification: None,
-            addressable_name: None,
+            recipient: None,
+            footer: None,
+            global_context: std::collections::BTreeMap::new(),
             locale,
             user_id,
             tenant_id,
         }
     }
 
-    /// Adds the name to greet the recipient by.
+    /// Adds every name form a template might greet the reader by.
     #[must_use]
-    pub fn with_recipient_name(mut self, name: impl Into<String>) -> Self {
-        self.addressable_name = Some(name.into());
+    pub fn with_recipient(mut self, recipient: Recipient) -> Self {
+        self.recipient = Some(recipient);
         self
     }
 
-    /// Names the app-side layout a worker may render instead of the finished text.
+    /// Folds in what the deployment adds to every mail: the imprint for this mail's language, and
+    /// the global template constants — umami's own base URL among them.
+    ///
+    /// The footer is a **template**, rendered here against those constants, so an imprint can name
+    /// the deployment's URLs without repeating them. It is only ever the deployment's own text, and
+    /// [`crate::config::validate_mail`] has already rendered it once at publish time, so a failure
+    /// here is not something a caller can cause.
+    ///
+    /// It is **appended to the body** as well as carried as a field — but only when there is a body
+    /// to append it to, so a template-only message does not go out as a lone imprint. The separator
+    /// is the RFC 3676 signature marker, which mail clients recognise and fold away.
+    ///
+    /// **Call this last.** It is what assembles the body, so anything that sets the body has to have
+    /// run already.
+    pub fn with_deployment(
+        mut self,
+        mail: &crate::config::MailConfig,
+        public_base_url: &str,
+    ) -> anyhow::Result<Self> {
+        self.global_context = mail.global_context.clone();
+        let _ = self.global_context.insert(
+            GLOBAL_CONTEXT_BASE_URL.to_owned(),
+            public_base_url.trim_end_matches('/').to_owned(),
+        );
+
+        if let Some(footer) = mail.footer_for(&self.locale) {
+            let footer = render::render(
+                footer,
+                &render::MailContext {
+                    global_context: &self.global_context,
+                    ..render::MailContext::default()
+                },
+            )?;
+            if !self.body.trim().is_empty() {
+                self.body = format!("{}\n\n-- \n{footer}", self.body.trim_end());
+            }
+            self.footer = Some(footer);
+        }
+        Ok(self)
+    }
+
+    /// Names the layout a worker may render instead of the finished text.
     #[must_use]
     pub fn with_template(mut self, template: Option<String>) -> Self {
         self.template = template;
@@ -513,8 +693,8 @@ impl Notifier for NoopNotifier {
         // Never log the body: a verification or reset body contains a single-use secret, and a log
         // line is the wrong place for one.
         tracing::warn!(
-            "outbound mail dropped (no transport configured): kind={} messageId={}",
-            mail.kind,
+            "outbound mail dropped (no transport configured): template={} messageId={}",
+            mail.template.as_deref().unwrap_or("<none>"),
             mail.message_id
         );
         Ok(())
@@ -556,7 +736,7 @@ impl Notifier for StdoutNotifier {
         // that has to survive a copy-paste out of a terminal.
         tracing::info!(
             "\n──────── outbound mail (printed, not sent) ────────\n\
-             kind      : {}\n\
+             template  : {}\n\
              to        : {}\n\
              subject   : {}\n\
              locale    : {}\n\
@@ -564,7 +744,7 @@ impl Notifier for StdoutNotifier {
              ─────────────────────────────────────────────────\n\
              {}\n\
              ─────────────────────────────────────────────────",
-            mail.kind,
+            mail.template.as_deref().unwrap_or("<none>"),
             mail.to,
             mail.subject,
             mail.locale,
@@ -766,7 +946,6 @@ mod tests {
     /// A mail to hand a notifier, when what is under test is the notifier rather than the mail.
     fn a_mail() -> OutboundMail {
         OutboundMail::new(
-            "contact-verification",
             "jane@example.com".to_owned(),
             "subject".to_owned(),
             "body".to_owned(),
@@ -774,6 +953,60 @@ mod tests {
             "user-1".to_owned(),
             "tenant-1".to_owned(),
         )
+        .with_template(Some(TEMPLATE_CONTACT_VERIFICATION.to_owned()))
+    }
+
+    /// A recipient with every name part filled in.
+    fn a_recipient() -> Recipient {
+        Recipient::from_parts(
+            Some("Dr."),
+            crate::users::Salutation::Madam,
+            Some("Jane"),
+            Some("Doe"),
+            "de",
+        )
+    }
+
+    /// umami's own names have to satisfy the rule it enforces on everybody else — a reserved
+    /// namespace that its own constants did not use would be a rule with no example.
+    #[test]
+    fn umamis_own_templates_are_in_its_own_namespace() {
+        for template in [TEMPLATE_CONTACT_VERIFICATION, TEMPLATE_PASSWORD_RESET] {
+            assert_eq!(template_namespace(template), Ok(TEMPLATE_NAMESPACE));
+            assert!(template.starts_with(TEMPLATE_UMAMI_PREFIX));
+        }
+    }
+
+    /// Every layout name carries a sender's namespace, because one field holds all of them: two
+    /// senders inventing `digest` would otherwise silently share a layout.
+    #[test]
+    fn a_template_without_a_usable_namespace_is_refused() {
+        assert_eq!(template_namespace("wsc::new-content"), Ok("wsc"));
+        assert_eq!(template_namespace("abc-2::report.ready"), Ok("abc-2"));
+        // Only the first separator splits; what follows is the sender's own business.
+        assert_eq!(template_namespace("wsc::mail::footer"), Ok("wsc"));
+
+        assert!(template_namespace("new-content").is_err());
+        assert!(template_namespace("::new-content").is_err());
+        assert!(template_namespace("WSC::new-content").is_err());
+        assert!(template_namespace("my app::new-content").is_err());
+        assert!(template_namespace("wsc::").is_err());
+        assert!(template_namespace("wsc::new content").is_err());
+    }
+
+    /// umami's own public base URL, as `UMAMI_ISSUER` yields it — trailing slash included.
+    const BASE_URL: &str = "https://iam.noonu.dev/";
+
+    /// A deployment that has filled in both halves of the mail block.
+    fn a_mail_config() -> crate::config::MailConfig {
+        let mut config = crate::config::MailConfig::default();
+        let _ = config
+            .footer
+            .insert("de".to_owned(), "noonu GmbH · Stuttgart".to_owned());
+        let _ = config
+            .global_context
+            .insert("supportMail".to_owned(), "hilfe@noonu.dev".to_owned());
+        config
     }
 
     /// A queue *name* or ARN pasted where a URL belongs is the common mistake, and it otherwise
@@ -827,29 +1060,135 @@ mod tests {
     #[test]
     fn the_optional_fields_are_absent_rather_than_null() {
         let json = serde_json::to_value(a_mail()).unwrap();
-        for field in ["template", "context", "notification", "addressableName"] {
+        for field in [
+            "context",
+            "notification",
+            "recipient",
+            "footer",
+            "globalContext",
+        ] {
             assert!(
                 json.get(field).is_none(),
                 "{field} should not be serialized"
             );
         }
+        // umami's own mails name their layout in the same field an app's do; `notification` is what
+        // says which side a mail came from.
+        assert_eq!(json["template"], TEMPLATE_CONTACT_VERIFICATION);
 
         let enriched = a_mail()
-            .with_recipient_name("Ms Doe")
+            .with_recipient(a_recipient())
             .with_context(Some(serde_json::json!({ "link": "https://example.com/x" })))
             .with_notification(NotificationMeta {
                 type_code: "wsc-new-content".to_owned(),
-                type_name: "Neue Inhalte".to_owned(),
                 cadence: Some("weekly".to_owned()),
-                cadence_name: Some("Wöchentlich".to_owned()),
             });
         let json = serde_json::to_value(enriched).unwrap();
-        assert_eq!(json["addressableName"], "Ms Doe");
+        assert_eq!(json["recipient"]["addressableName"], "Frau Dr. Doe");
         assert_eq!(json["context"]["link"], "https://example.com/x");
         // The type travels as `type`, which is what the catalogue and the firing both call it.
         assert_eq!(json["notification"]["type"], "wsc-new-content");
-        assert_eq!(json["notification"]["cadenceName"], "Wöchentlich");
-        assert!(json["notification"].get("template").is_none());
+    }
+
+    /// A template branching on gender needs the stable code; the word beside it is already in the
+    /// reader's language and would make every condition locale-dependent.
+    #[test]
+    fn a_recipient_carries_every_name_form_and_a_stable_salutation_key() {
+        let json = serde_json::to_value(a_recipient()).unwrap();
+        assert_eq!(json["addressableName"], "Frau Dr. Doe");
+        assert_eq!(json["fullName"], "Frau Dr. Jane Doe");
+        // `name` is the one without the salutation, for a layout that prepends its own word.
+        assert_eq!(json["name"], "Dr. Jane Doe");
+        assert_eq!(json["salutation"], "Frau");
+        assert_eq!(json["salutationKey"], "MADAM");
+        assert_eq!(json["firstName"], "Jane");
+        assert_eq!(json["lastName"], "Doe");
+    }
+
+    /// The imprint has to reach a plain-text mail too, or a worker that only delivers sends one
+    /// without it. `de-AT` finds the `de` entry, the way the message catalogue resolves.
+    #[test]
+    fn the_footer_lands_in_the_body_and_beside_it() {
+        let mail = a_mail()
+            .with_deployment(&a_mail_config(), BASE_URL)
+            .unwrap();
+        assert_eq!(mail.body, "body\n\n-- \nnoonu GmbH · Stuttgart");
+        assert_eq!(mail.footer.as_deref(), Some("noonu GmbH · Stuttgart"));
+
+        // A template-only message has no body to append to, and must not go out as a lone imprint.
+        let mut templated = a_mail();
+        templated.body = String::new();
+        let templated = templated
+            .with_deployment(&a_mail_config(), BASE_URL)
+            .unwrap();
+        assert!(templated.body.is_empty());
+        assert_eq!(templated.footer.as_deref(), Some("noonu GmbH · Stuttgart"));
+    }
+
+    /// A footer is a template like any other, and the values it renders from are the ones the
+    /// payload carries — so an imprint can name a URL the deployment configured once.
+    #[test]
+    fn the_footer_renders_against_the_global_context() {
+        let mut config = a_mail_config();
+        let _ = config.footer.insert(
+            "de".to_owned(),
+            "noonu GmbH · {{ globalContext.supportMail }} · {{ globalContext.umamiBaseUrl }}/app/"
+                .to_owned(),
+        );
+
+        let mail = a_mail().with_deployment(&config, BASE_URL).unwrap();
+        assert_eq!(
+            mail.footer.as_deref(),
+            Some("noonu GmbH · hilfe@noonu.dev · https://iam.noonu.dev/app/")
+        );
+    }
+
+    /// umami knows its own public URL; a deployment typing it into the config a second time is a
+    /// second thing to keep in step, so umami fills it in instead — and without the trailing slash
+    /// the issuer carries, so a template writes the separator it can see.
+    #[test]
+    fn every_mail_carries_umamis_own_base_url() {
+        let mail = a_mail()
+            .with_deployment(&a_mail_config(), BASE_URL)
+            .unwrap();
+        assert_eq!(
+            mail.global_context
+                .get(GLOBAL_CONTEXT_BASE_URL)
+                .map(String::as_str),
+            Some("https://iam.noonu.dev")
+        );
+        // What the deployment configured is still there beside it.
+        assert_eq!(
+            mail.global_context.get("supportMail").map(String::as_str),
+            Some("hilfe@noonu.dev")
+        );
+    }
+
+    /// The point of the engine: a typo has to be an error, not an empty string in a mail nobody
+    /// re-reads. `validate_mail` runs this same render at publish time, so it never reaches a send.
+    #[test]
+    fn an_unknown_placeholder_fails_rather_than_rendering_empty() {
+        let mut config = a_mail_config();
+        let _ = config.footer.insert(
+            "de".to_owned(),
+            "noonu GmbH · {{ globalContext.supprtMail }}".to_owned(),
+        );
+        assert!(a_mail().with_deployment(&config, BASE_URL).is_err());
+    }
+
+    /// A locale with no entry gets no footer — an imprint in a language the reader did not ask for
+    /// is worse than none.
+    #[test]
+    fn a_footer_is_never_borrowed_from_another_language() {
+        let mut config = crate::config::MailConfig::default();
+        let _ = config
+            .footer
+            .insert("de".to_owned(), "Impressum".to_owned());
+
+        assert_eq!(config.footer_for("de-AT"), Some("Impressum"));
+        assert_eq!(config.footer_for("DE"), Some("Impressum"));
+        assert_eq!(config.footer_for("en"), None);
+        assert_eq!(crate::config::MailConfig::default().footer_for("de"), None);
     }
 
     /// The console transport must never become the default in a release build: a reset link in a
@@ -905,7 +1244,6 @@ mod tests {
     fn each_mail_gets_its_own_idempotency_key() {
         let build = || {
             OutboundMail::new(
-                "password-reset",
                 "jane@example.com".to_owned(),
                 "s".to_owned(),
                 "b".to_owned(),

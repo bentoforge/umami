@@ -24,6 +24,7 @@ use crate::constants::{
     VIEW_AUDIT_PERMISSION, VIEW_RATELIMITS_PERMISSION,
 };
 use crate::notify::types::NotificationTypeDef;
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -225,6 +226,134 @@ const CLAIM_REFERENCES: [&str; 16] = [
 ///
 /// A deliberate literal is still fine — the check only fires on a value that names a known reference
 /// or starts with a known prefix while missing its `$`.
+/// What every outbound mail carries beyond its own text.
+///
+/// Deployment-specific and therefore config rather than `locales/app.yml`: the message catalogue
+/// ships with umami and is the same in every installation, while an imprint and a set of base URLs
+/// are one deployment's. Both reach the worker on the payload as well as being folded into the
+/// plain-text body, so a worker rendering its own layout can place them instead of finding them
+/// stuck to the end of a body it is not using.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct MailConfig {
+    /// Imprint or legal footer, keyed by locale (`de`, `en`, …).
+    ///
+    /// Per locale because it is appended to a mail written in the reader's language, and a German
+    /// paragraph under an English mail reads as a mistake. The lookup falls back the way the message
+    /// catalogue does — `de-AT` finds the `de` entry — and a locale with no entry gets no footer
+    /// rather than somebody else's language.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub footer: BTreeMap<String, String>,
+    /// Values every mail carries, for a worker's templates — base URLs, a support address, whatever
+    /// a layout needs and umami has no opinion about.
+    ///
+    /// umami adds [`crate::notify::GLOBAL_CONTEXT_BASE_URL`] to whatever is configured here, and
+    /// refuses a config that sets it: it already knows its own public URL, and a second place to
+    /// type it is a second place for it to be wrong.
+    ///
+    /// Strings on purpose. This is the deployment's set of constants, not a place to model data; a
+    /// value that wants to be a number or an object belongs in the per-message `context`, which the
+    /// sender owns. Kept **separate** from that `context` on the wire rather than merged into it, so
+    /// a key present in both cannot silently overwrite the other — the worker decides precedence.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub global_context: BTreeMap<String, String>,
+}
+
+impl MailConfig {
+    /// The footer for `locale`, falling back to the primary subtag. `None` when nothing matches —
+    /// no footer beats one in a language the reader did not ask for.
+    pub fn footer_for(&self, locale: &str) -> Option<&str> {
+        let tag = locale.trim().to_ascii_lowercase();
+        let primary = tag.split(['-', '_']).next().unwrap_or_default();
+        self.footer
+            .get(&tag)
+            .or_else(|| self.footer.get(primary))
+            .map(String::as_str)
+            .filter(|footer| !footer.trim().is_empty())
+    }
+}
+
+/// Largest `globalContext`, serialized. It is a handful of constants — a cap this generous only
+/// catches somebody mistaking it for storage, which is exactly what it is there for.
+const MAX_GLOBAL_CONTEXT_BYTES: usize = 4096;
+
+/// Refuses a mail block that would fail invisibly.
+///
+/// Each of these is silent at runtime: an empty footer entry renders as a separator with nothing
+/// under it, and a key a template engine cannot address is simply never substituted — the mail goes
+/// out with a placeholder in it, and only the recipient sees that.
+pub fn validate_mail(mail: &MailConfig) -> anyhow::Result<()> {
+    for (locale, footer) in &mail.footer {
+        if locale.trim().is_empty() {
+            client_bail!("The mail footer has an entry with no locale");
+        }
+        if locale != &locale.to_ascii_lowercase() {
+            client_bail!(
+                "Mail footer locale '{locale}' must be lowercase — the lookup normalizes the \
+                 reader's tag, so an uppercase entry would never be found (write '{}')",
+                locale.to_ascii_lowercase()
+            );
+        }
+        if footer.trim().is_empty() {
+            client_bail!(
+                "The mail footer for '{locale}' is empty — remove the entry rather than appending \
+                 a separator with nothing under it"
+            );
+        }
+    }
+
+    for key in mail.global_context.keys() {
+        if key.is_empty()
+            || !key
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        {
+            client_bail!(
+                "Global mail context key '{key}' has to be letters, digits, '_' or '-' — anything \
+                 else is a key a template cannot address"
+            );
+        }
+        if key == crate::notify::GLOBAL_CONTEXT_BASE_URL {
+            client_bail!(
+                "Global mail context key '{key}' is umami's own — it fills that in from its issuer, \
+                 and a second copy here is a second thing to keep in step"
+            );
+        }
+    }
+
+    let size = serde_json::to_vec(&mail.global_context)
+        .context("Failed to measure the global mail context")?
+        .len();
+    if size > MAX_GLOBAL_CONTEXT_BYTES {
+        client_bail!(
+            "The global mail context is {size} bytes, over the {MAX_GLOBAL_CONTEXT_BYTES}-byte cap \
+             — it holds a deployment's constants, not its data"
+        );
+    }
+
+    // Render every footer once, here, against the constants it will actually have. A footer is the
+    // one mail text nobody else checks, and a typo in it is otherwise invisible until it has gone
+    // out — either as `{{ globalContext.baseUrl }}` in every mail, or as a failed password reset.
+    // Rendering at publish time is exact rather than approximate: the values are already known.
+    let mut globals = mail.global_context.clone();
+    let _ = globals.insert(
+        crate::notify::GLOBAL_CONTEXT_BASE_URL.to_owned(),
+        "https://umami.example.com".to_owned(),
+    );
+    for (locale, footer) in &mail.footer {
+        if let Err(err) = crate::notify::render::render(
+            footer,
+            &crate::notify::render::MailContext {
+                global_context: &globals,
+                ..crate::notify::render::MailContext::default()
+            },
+        ) {
+            client_bail!("The mail footer for '{locale}' does not render: {err:#}");
+        }
+    }
+    Ok(())
+}
+
 pub fn validate_claims(api_code: &str, claims: &BTreeMap<String, String>) -> anyhow::Result<()> {
     for (name, source) in claims {
         match source.strip_prefix('$') {
@@ -601,6 +730,9 @@ pub struct Config {
     /// White-labeling for the management UI (accent CSS, logo, favicon).
     #[serde(default)]
     pub branding: BrandingConfig,
+    /// What every outbound mail carries beyond its own text — see [`MailConfig`].
+    #[serde(default)]
+    pub mail: MailConfig,
     /// Target APIs (audiences) umami can mint tokens for — see [`ApiDef`] and `docs/AUDIENCES.md`.
     #[serde(default)]
     pub apis: Vec<ApiDef>,
@@ -898,6 +1030,9 @@ impl Default for Config {
             // would put an unasked-for switch in everybody's profile.
             notification_types: Vec::new(),
             branding: BrandingConfig::default(),
+            // Empty on purpose: an imprint and a set of base URLs are a deployment's own, and a
+            // placeholder shipped as a default would go out in real mail until somebody noticed.
+            mail: MailConfig::default(),
             // The umami admin API. This is a deliberately MINIMAL, bootstrap-only mapping: it grants
             // the system-tenant owner enough to log in and administer (so they can then write the
             // real config), maps the cross-tenant + messaging + readonly markers, and stops there.
@@ -983,6 +1118,74 @@ impl Default for Config {
 
 #[cfg(test)]
 mod tests {
+    /// Every one of these fails silently at runtime: an empty footer renders as a separator with
+    /// nothing under it, an uppercase locale is simply never found, and a key a template cannot
+    /// address leaves a placeholder in a mail only the recipient sees.
+    #[test]
+    fn the_mail_gate_refuses_what_would_fail_invisibly() {
+        let with_footer = |locale: &str, text: &str| {
+            let mut mail = super::MailConfig::default();
+            let _ = mail.footer.insert(locale.to_owned(), text.to_owned());
+            mail
+        };
+        assert!(super::validate_mail(&with_footer("de", "noonu GmbH")).is_ok());
+        assert!(super::validate_mail(&with_footer("de-at", "noonu GmbH")).is_ok());
+
+        assert!(super::validate_mail(&with_footer("de", "  ")).is_err());
+        assert!(super::validate_mail(&with_footer("DE", "noonu GmbH")).is_err());
+        assert!(super::validate_mail(&with_footer("", "noonu GmbH")).is_err());
+
+        let with_key = |key: &str| {
+            let mut mail = super::MailConfig::default();
+            let _ = mail
+                .global_context
+                .insert(key.to_owned(), "https://noonu.dev".to_owned());
+            mail
+        };
+        assert!(super::validate_mail(&with_key("baseUrl")).is_ok());
+        assert!(super::validate_mail(&with_key("support_mail")).is_ok());
+
+        assert!(super::validate_mail(&with_key("base url")).is_err());
+        assert!(super::validate_mail(&with_key("base.url")).is_err());
+        assert!(super::validate_mail(&with_key("")).is_err());
+
+        let mut oversized = super::MailConfig::default();
+        let _ = oversized.global_context.insert(
+            "blob".to_owned(),
+            "x".repeat(super::MAX_GLOBAL_CONTEXT_BYTES),
+        );
+        assert!(super::validate_mail(&oversized).is_err());
+
+        // umami fills its own base URL in; a second copy here is a second thing to keep in step.
+        assert!(super::validate_mail(&with_key(crate::notify::GLOBAL_CONTEXT_BASE_URL)).is_err());
+    }
+
+    /// A footer is a template, and it is the one mail text nobody else checks. Rendering it at
+    /// publish time — against the values it will actually have — turns a typo into a `400` instead
+    /// of `{{ globalContext.baseUrl }}` in every mail, or a password reset that fails to render.
+    #[test]
+    fn a_footer_that_cannot_render_is_refused_at_publish_time() {
+        let footer = |text: &str| {
+            let mut mail = super::MailConfig::default();
+            let _ = mail
+                .global_context
+                .insert("supportMail".to_owned(), "hilfe@noonu.dev".to_owned());
+            let _ = mail.footer.insert("de".to_owned(), text.to_owned());
+            mail
+        };
+
+        assert!(super::validate_mail(&footer("noonu GmbH · Stuttgart")).is_ok());
+        assert!(super::validate_mail(&footer("Fragen: {{ globalContext.supportMail }}")).is_ok());
+        // umami's own key is available to a footer even though it cannot be configured.
+        assert!(super::validate_mail(&footer("{{ globalContext.umamiBaseUrl }}")).is_ok());
+
+        assert!(super::validate_mail(&footer("Fragen: {{ globalContext.supprtMail }}")).is_err());
+        assert!(super::validate_mail(&footer("{{ unclosed ")).is_err());
+        // A footer sees the deployment's constants and nothing else — so there is no way to write
+        // one that renders here and then fails on a user with no first name.
+        assert!(super::validate_mail(&footer("{{ recipient.firstName }}")).is_err());
+    }
+
     /// The lookup costs a read, so it only happens for a deployment that asked. This is the check
     /// that decides.
     #[test]
