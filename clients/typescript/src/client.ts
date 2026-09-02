@@ -2,8 +2,14 @@ import type {
   AccessClaims,
   ApiErrorBody,
   ApiKeyView,
+  AudienceResponse,
   AuditPage,
+  Cadence,
+  Capabilities,
+  Choice,
   Config,
+  Contact,
+  ContactsResponse,
   CreateApiKeyRequest,
   CreateApiKeyResponse,
   CreatePatRequest,
@@ -15,18 +21,12 @@ import type {
   ExchangeResponse,
   LoginResponse,
   MeResponse,
-  AudienceResponse,
-  Cadence,
-  Capabilities,
-  Choice,
-  Contact,
-  ContactsResponse,
-  MyNotificationsResponse,
-  NotificationSendResult,
   MessagingCodeResponse,
   MessagingLink,
   MfaStatus,
+  MyNotificationsResponse,
   NameInput,
+  NotificationSendResult,
   PatchUserRequest,
   RateLimitBlockPage,
   RateLimitState,
@@ -514,17 +514,16 @@ export class UmamiClient {
    * To go back to *unset* — follow whatever the deployment decides, now and later — use
    * {@link UmamiClient.clearNotificationChoice}. Unset and `"off"` are different states. */
   setNotificationChoice(code: string, choice: Choice): Promise<{ code: string; choice?: Choice }> {
-    return this.request<{ code: string; choice?: Choice }>(
-      `/auth/me/notifications/${enc(code)}`,
-      { method: "PUT", body: JSON.stringify({ choice }) },
-    );
+    return this.request<{ code: string; choice?: Choice }>(`/auth/me/notifications/${enc(code)}`, {
+      method: "PUT",
+      body: JSON.stringify({ choice }),
+    });
   }
   /** Clear the caller's choice back to *unset*, so the configured default applies again. */
   clearNotificationChoice(code: string): Promise<{ code: string; choice?: Choice }> {
-    return this.request<{ code: string; choice?: Choice }>(
-      `/auth/me/notifications/${enc(code)}`,
-      { method: "DELETE" },
-    );
+    return this.request<{ code: string; choice?: Choice }>(`/auth/me/notifications/${enc(code)}`, {
+      method: "DELETE",
+    });
   }
   /** Who hears about one firing (`notifications:audience`).
    *
