@@ -42,6 +42,9 @@ aws-sdk-dynamodb = { version = "1.98", default-features = false, features = ["de
 # Outbound transactional mail leaves umami as a single SQS write — a worker owns the actual sending.
 # Same feature flags as the DynamoDB client so cargo unions to one crypto/TLS stack (see CLAUDE.md).
 aws-sdk-sqs = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio"] }
+# The direct transport: umami calls SES itself, for a deployment too small to be worth a worker.
+# Feature flags as above.
+aws-sdk-sesv2 = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio"] }
 # Same version/feature set wasabi-core uses, so the AWS config layer resolves once.
 aws-config = { version = "1.8", features = ["behavior-version-latest"] }
 # One call — sts:GetCallerIdentity — answers "is AWS usable here?" at boot, which is what decides

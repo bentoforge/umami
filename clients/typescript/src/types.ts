@@ -540,6 +540,30 @@ export interface AudienceResponse {
   truncated: boolean;
 }
 
+/** One message for one recipient — finished text, something for the worker to render, or both.
+ *
+ * At least one of the two is required: a message with neither `subject`/`body` nor `template` is a
+ * 400, and so is `subject` without `body`. Sending both is the robust combination — a worker that
+ * does not know the layout name still has something to deliver. */
+export interface NotificationMessage {
+  userId: string;
+  /** Subject line. Goes together with `body`; omit both only when `template` is given. */
+  subject?: string;
+  /** Plain-text body. Goes together with `subject`. */
+  body?: string;
+  /** Your own name for a layout the worker renders. umami forwards it without interpreting it. */
+  template?: string;
+  /** Opaque data for that layout, forwarded untouched. Capped at 4 KB serialized.
+   *
+   * Keep personal data out of it beyond what the mail itself says: it travels into the queue and
+   * through the worker's logs, places with no retention policy and no erasure story. */
+  context?: Record<string, unknown>;
+  /** Which cadence this recipient matched, straight from the audience. Checked against the type —
+   * one it is never fired at is a 400, because that means your schedule and the catalogue
+   * disagree. */
+  cadence?: Cadence;
+}
+
 /** Per-recipient outcome of a send. Partial success is the normal case. */
 export interface NotificationSendResult {
   userId: string;

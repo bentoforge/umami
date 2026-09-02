@@ -8,7 +8,7 @@ infrastructure. Four of those seams are selectable at runtime, one environment v
 | Storage (all repositories) | `UMAMI_STORAGE` | `dynamodb` | `dynamodb` |
 | Config catalog | `UMAMI_CONFIG_STORE` | `s3`, `memory` | `s3` when AWS works and a bucket is available, else `memory` |
 | Signing keys | `UMAMI_KEY_STORE` | `env` | `env` |
-| Outbound mail | `UMAMI_MAIL_TRANSPORT` | `sqs`, `stdout`, `none` | `sqs` when a queue is set and AWS works; else `stdout` in a debug build, `none` in a release build |
+| Outbound mail | `UMAMI_MAIL_TRANSPORT` | `sqs`, `ses`, `stdout`, `none` | `sqs` when a queue is set and AWS works, else `ses` when a sender is set and AWS works; else `stdout` in a debug build, `none` in a release build |
 
 Today most seams have one implementation. The variables exist anyway, because they are what makes
 the *strict* behaviour below possible — and because a deployment that has written down which backend
@@ -60,6 +60,7 @@ UMAMI_CONFIG_STORE=s3    without S3_BUCKET_SUFFIX      → boot fails
 UMAMI_CONFIG_STORE=s3    with AWS unusable             → boot fails
 UMAMI_MAIL_TRANSPORT=sqs without UMAMI_MAIL_SQS_QUEUE_URL  → boot fails
 UMAMI_MAIL_TRANSPORT=sqs with AWS unusable             → boot fails
+UMAMI_MAIL_TRANSPORT=ses without UMAMI_MAIL_SES_FROM   → boot fails
 ```
 
 Falling back instead would produce a service that answers every health check and quietly does the
@@ -89,6 +90,39 @@ about one seam and lax about the next.
 `memory`, `stdout` and `none` are real, nameable choices, not just what you get when something is
 missing. Setting one says "this deployment has no S3 / no mail queue, and that is intended": the
 boot report still shows what it costs, but the `WARN` about *stumbling into* it is gone.
+
+## Mail without a worker: `ses`
+
+`UMAMI_MAIL_TRANSPORT=ses` with `UMAMI_MAIL_SES_FROM` set makes umami call SES itself. No queue, no
+worker, no infrastructure beyond a verified sender identity — the right shape for a deployment where
+a worker is more machinery than the mail is worth.
+
+It costs three things, and all three are properties of *not having a worker* rather than of SES:
+
+- **Nothing retries.** `sqs` hands the mail to a queue whose redrive policy owns the retry. Here a
+  failed `SendEmail` is a failed request, and the user is told to try again.
+- **The request waits on SES.** Bounded by the same tight client timeouts the SQS transport uses, so
+  a bad day at SES surfaces as a failed verification rather than a stalled request handler — but it
+  is not free the way a queue write is.
+- **An asynchronous bounce is never learned.** SES accepts the message and reports the failure
+  minutes later, to an event destination this setup does not have. So a dead address stays
+  `verified` and umami goes on sending reset links into nothing — the exact failure
+  `POST /notifications/undeliverable` exists to prevent. A *synchronous* rejection is logged with
+  the recipient, which is the one hard signal this transport gets.
+
+Every mail carries `umamiMessageId` and `umamiUserId` as SES message tags, so a deployment that
+later adds `UMAMI_MAIL_SES_CONFIGURATION_SET` and an event destination can correlate a bounce back
+to a user — and report it — without umami changing.
+
+Prerequisites are SES's, not umami's: the sender must be a verified identity in the account's
+region, and the account must be out of the SES sandbox to reach anyone who has not verified
+themselves. umami checks only the shape of the address, because proving the identity is verified
+would need `ses:GetEmailIdentity` — which a policy granting only `ses:SendEmail` legitimately
+withholds.
+
+With **both** `UMAMI_MAIL_SQS_QUEUE_URL` and `UMAMI_MAIL_SES_FROM` set, auto-detection takes the
+queue and logs a `WARN` saying so. Not because it is better, but because the answer has to be fixed
+and the queue is the one with a way back for a bounce. Name the transport to decide it.
 
 ## Mail in development: `stdout`
 

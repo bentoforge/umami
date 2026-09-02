@@ -41,6 +41,29 @@ use std::sync::Arc;
 use std::time::Duration;
 use wasabi::aws::dynamodb::generate_id;
 
+/// What a worker needs to word a notification itself, when it would rather render than forward.
+///
+/// Present exactly when the mail came through `POST /notifications/send` naming a type. The names
+/// are the **catalogue's** labels, in whatever language the deployment wrote them — the same strings
+/// the profile screen shows. They are deliberately not per-recipient translations: a deployment
+/// invents these codes, so nothing in umami could know what `on-publish` reads as in Portuguese.
+#[derive(Serialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct NotificationMeta {
+    /// The type's stable code, as the app fired it.
+    #[serde(rename = "type")]
+    pub type_code: String,
+    /// The type's label from the catalogue.
+    pub type_name: String,
+    /// Which cadence this recipient matched, absent for a type with no rhythm.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cadence: Option<String>,
+    /// That cadence's label from the catalogue — what lets a worker word "your week" differently
+    /// from "today" without a table of its own.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cadence_name: Option<String>,
+}
+
 /// A finished transactional mail, ready to send. Rendered by umami — the worker only delivers.
 #[derive(Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -53,10 +76,32 @@ pub struct OutboundMail {
     pub kind: &'static str,
     /// The recipient address.
     pub to: String,
-    /// Subject line.
+    /// Subject line. Empty only when [`OutboundMail::template`] names something to render instead.
     pub subject: String,
-    /// Plain-text body.
+    /// Plain-text body. Empty only when [`OutboundMail::template`] names something to render
+    /// instead.
     pub body: String,
+    /// What the **app** wants rendered, when it would rather template than hand over finished text.
+    ///
+    /// umami never interprets it — it is the app's own name for one of its layouts, the way
+    /// [`OutboundMail::kind`] is umami's name for one of its own mails. A worker that does not know
+    /// the name falls back to `subject`/`body`, which is why a caller is allowed to send both and
+    /// why one of the two is always required.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub template: Option<String>,
+    /// Opaque data for that template, straight from the caller.
+    ///
+    /// **Never log this.** For umami's own mails it carries the single-use link the body already
+    /// contains, and for an app's it carries whatever the app put there.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<serde_json::Value>,
+    /// Which notification this is, for a mail that came through `/notifications/send` with a type.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notification: Option<NotificationMeta>,
+    /// How to address the recipient ("Ms Doe") — the same string `/notifications/audience` returns,
+    /// so a worker templating a greeting does not have to ask umami for the user.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub addressable_name: Option<String>,
     /// The recipient's resolved language (BCP-47) — a worker may need it for a sender identity or a
     /// footer it owns.
     pub locale: String,
@@ -83,10 +128,42 @@ impl OutboundMail {
             to,
             subject,
             body,
+            template: None,
+            context: None,
+            notification: None,
+            addressable_name: None,
             locale,
             user_id,
             tenant_id,
         }
+    }
+
+    /// Adds the name to greet the recipient by.
+    #[must_use]
+    pub fn with_recipient_name(mut self, name: impl Into<String>) -> Self {
+        self.addressable_name = Some(name.into());
+        self
+    }
+
+    /// Names the app-side layout a worker may render instead of the finished text.
+    #[must_use]
+    pub fn with_template(mut self, template: Option<String>) -> Self {
+        self.template = template;
+        self
+    }
+
+    /// Attaches the data that layout renders from.
+    #[must_use]
+    pub fn with_context(mut self, context: Option<serde_json::Value>) -> Self {
+        self.context = context;
+        self
+    }
+
+    /// Marks the mail as one notification of a declared type.
+    #[must_use]
+    pub fn with_notification(mut self, notification: NotificationMeta) -> Self {
+        self.notification = Some(notification);
+        self
     }
 }
 
@@ -109,16 +186,22 @@ const SEAM: &str = "mail transport";
 pub const VARIABLE: &str = "UMAMI_MAIL_TRANSPORT";
 /// One SQS message per mail; a worker delivers.
 const SQS: &str = "sqs";
+/// Straight to Amazon SES, no worker in between.
+const SES: &str = "ses";
 /// Print each mail to the log instead of sending it. Local development.
 const STDOUT: &str = "stdout";
 /// No transport — mail is dropped and the routes that need it refuse.
 const NONE: &str = "none";
 /// Every transport this build accepts.
-const PROVIDERS: &[&str] = &[SQS, STDOUT, NONE];
+const PROVIDERS: &[&str] = &[SQS, SES, STDOUT, NONE];
 
 /// What running without a transport costs.
 const MAIL_DISABLED: &str = "outbound mail is DISABLED: address verification and password \
                              recovery refuse requests";
+
+/// What the direct transport costs. Short form for the boot report; [`SesNotifier`] spells it out.
+const MAIL_WITHOUT_A_WAY_BACK: &str = "no worker, so an asynchronous bounce is never reported and \
+                                       a dead address stays confirmed";
 
 /// What the console transport costs. Short form for the boot report; the `WARN` in
 /// [`StdoutNotifier::announce`] spells it out.
@@ -127,14 +210,15 @@ const MAIL_TO_LOG: &str = "mail is printed to the log, single-use links included
 
 /// Resolves the outbound mail transport.
 ///
-/// Explicit `sqs` is strict in both directions: without a queue URL, and with AWS unusable, the
-/// boot fails. A deployment that configured mail and silently got a different transport is the bad
-/// outcome — it does not reject anything, it just stops being able to verify an address or recover
-/// a password, and nobody notices until a user reports it.
+/// Explicit `sqs` and `ses` are strict in both directions: without their own setting, and with AWS
+/// unusable, the boot fails. A deployment that configured mail and silently got a different
+/// transport is the bad outcome — it does not reject anything, it just stops being able to verify
+/// an address or recover a password, and nobody notices until a user reports it.
 ///
 /// With nothing configured the transport follows what is actually available: a queue plus working
-/// AWS gives `sqs`, and otherwise a **debug build** prints to the console while a **release build**
-/// disables mail. That split is deliberate — see [`default_transport`].
+/// AWS gives `sqs`, a sender address plus working AWS gives `ses`, and otherwise a **debug build**
+/// prints to the console while a **release build** disables mail. That split is deliberate — see
+/// [`default_transport`].
 pub async fn from_env(aws: &Aws) -> anyhow::Result<(Arc<dyn Notifier>, Selection)> {
     match seam::requested(VARIABLE).as_deref() {
         Some(name) if name == SQS => {
@@ -148,6 +232,19 @@ pub async fn from_env(aws: &Aws) -> anyhow::Result<(Arc<dyn Notifier>, Selection
             Ok((
                 sqs_notifier(url).await,
                 Selection::explicit(SEAM, VARIABLE, SQS),
+            ))
+        }
+        Some(name) if name == SES => {
+            let from = ses_from().with_context(|| {
+                format!("{VARIABLE}={SES} requires UMAMI_MAIL_SES_FROM to be set")
+            })?;
+            check_from_address(&from)?;
+            aws.require()
+                .await
+                .with_context(|| format!("{VARIABLE}={SES} needs a usable AWS client"))?;
+            Ok((
+                ses_notifier(from).await,
+                Selection::explicit(SEAM, VARIABLE, SES).with_note(MAIL_WITHOUT_A_WAY_BACK),
             ))
         }
         Some(name) if name == STDOUT => Ok((
@@ -165,22 +262,49 @@ pub async fn from_env(aws: &Aws) -> anyhow::Result<(Arc<dyn Notifier>, Selection
     }
 }
 
-/// Auto-detection: a queue umami can actually reach, else the build's default.
+/// Auto-detection: an AWS transport umami can actually reach, else the build's default.
+///
+/// The queue wins over SES when both are configured. Not because it is better, but because it has
+/// to be *some* fixed answer and the queue is the one with a way back for a bounce — an operator who
+/// meant the other one is told, and says so with [`VARIABLE`].
 async fn detect(aws: &Aws) -> anyhow::Result<(Arc<dyn Notifier>, Selection)> {
-    if let Some(url) = queue_url() {
-        // A malformed URL is a typo, not an absence — it fails the boot here rather than making
-        // umami fall back to a transport nobody asked for.
-        check_queue_url(&url)?;
-        if aws.is_usable().await {
-            return Ok((
-                sqs_notifier(url).await,
-                Selection::detected(SEAM, VARIABLE, SQS),
-            ));
+    let queue = queue_url();
+    let from = ses_from();
+    // A malformed setting is a typo, not an absence — it fails the boot here rather than making
+    // umami fall back to a transport nobody asked for.
+    if let Some(url) = &queue {
+        check_queue_url(url)?;
+    }
+    if let Some(address) = &from {
+        check_from_address(address)?;
+    }
+
+    if queue.is_some() || from.is_some() {
+        if queue.is_some() && from.is_some() {
+            tracing::warn!(
+                "both UMAMI_MAIL_SQS_QUEUE_URL and UMAMI_MAIL_SES_FROM are set — auto-detection \
+                 takes the queue. Set {VARIABLE}={SQS} or {VARIABLE}={SES} to say which one you \
+                 mean."
+            );
         }
-        // A queue is configured, so mail was clearly meant to work — but with AWS unusable it
-        // cannot. Loud, because this is the one auto-detected outcome an operator did not ask for.
+        if aws.is_usable().await {
+            if let Some(url) = queue {
+                return Ok((
+                    sqs_notifier(url).await,
+                    Selection::detected(SEAM, VARIABLE, SQS),
+                ));
+            }
+            if let Some(address) = from {
+                return Ok((
+                    ses_notifier(address).await,
+                    Selection::detected(SEAM, VARIABLE, SES).with_note(MAIL_WITHOUT_A_WAY_BACK),
+                ));
+            }
+        }
+        // Mail was clearly meant to work — but with AWS unusable it cannot. Loud, because this is
+        // the one auto-detected outcome an operator did not ask for.
         tracing::warn!(
-            "UMAMI_MAIL_SQS_QUEUE_URL is set but AWS is not usable — falling back. Fix the AWS \
+            "a mail transport is configured but AWS is not usable — falling back. Fix the AWS \
              credentials, or set {VARIABLE} explicitly to say which transport you want."
         );
     }
@@ -193,8 +317,8 @@ async fn detect(aws: &Aws) -> anyhow::Result<(Arc<dyn Notifier>, Selection)> {
         _ => {
             tracing::warn!(
                 "no mail transport configured — {MAIL_DISABLED}. Set \
-                 UMAMI_MAIL_SQS_QUEUE_URL, or {VARIABLE}={STDOUT} to print mail to the log, or \
-                 {VARIABLE}={NONE} to say this was intended."
+                 UMAMI_MAIL_SQS_QUEUE_URL or UMAMI_MAIL_SES_FROM, or {VARIABLE}={STDOUT} to print \
+                 mail to the log, or {VARIABLE}={NONE} to say this was intended."
             );
             Ok((
                 Arc::new(NoopNotifier),
@@ -260,6 +384,96 @@ fn check_queue_url(url: &str) -> anyhow::Result<()> {
         );
     }
     Ok(())
+}
+
+/// The configured SES sender, trimmed; `None` when unset or empty.
+fn ses_from() -> Option<String> {
+    env::var("UMAMI_MAIL_SES_FROM")
+        .ok()
+        .map(|from| from.trim().to_owned())
+        .filter(|from| !from.is_empty())
+}
+
+/// The configuration set to send under, if the deployment has one.
+fn ses_configuration_set() -> Option<String> {
+    env::var("UMAMI_MAIL_SES_CONFIGURATION_SET")
+        .ok()
+        .map(|name| name.trim().to_owned())
+        .filter(|name| !name.is_empty())
+}
+
+/// Builds the SES notifier and says who mail comes from.
+async fn ses_notifier(from: String) -> Arc<dyn Notifier> {
+    let notifier = SesNotifier::new(from).await;
+    match &notifier.configuration_set {
+        Some(name) => tracing::info!(
+            "outbound mail goes straight to SES as {} (configuration set {name})",
+            notifier.from
+        ),
+        None => tracing::info!("outbound mail goes straight to SES as {}", notifier.from),
+    }
+    Arc::new(notifier)
+}
+
+/// Rejects a sender address that cannot be one.
+///
+/// Only the shape, and for the same reason as [`check_queue_url`]: proving the identity is verified
+/// would take `ses:GetEmailIdentity`, which a least-privilege policy granting only `ses:SendEmail`
+/// legitimately withholds. What this catches is the paste error — a bare domain, a display name with
+/// no address — which otherwise surfaces on the first password reset.
+///
+/// Both RFC 5322 forms are accepted, because both are what people write into a deployment manifest:
+/// `no-reply@example.com` and `umami <no-reply@example.com>`.
+fn check_from_address(raw: &str) -> anyhow::Result<()> {
+    let complain = |why: &str| {
+        anyhow::anyhow!(
+            "UMAMI_MAIL_SES_FROM must be a sender address \
+             (no-reply@example.com, or 'umami <no-reply@example.com>'), got '{raw}' — {why}"
+        )
+    };
+    let address = match (raw.find('<'), raw.rfind('>')) {
+        (Some(open), Some(close)) if close > open => raw
+            .get(open + 1..close)
+            .ok_or_else(|| complain("the angle brackets do not enclose an address"))?
+            .trim(),
+        (None, None) => raw,
+        _ => return Err(complain("the angle brackets are unbalanced")),
+    };
+
+    let (local, domain) = address
+        .split_once('@')
+        .ok_or_else(|| complain("there is no '@'"))?;
+    if local.is_empty() || domain.is_empty() {
+        return Err(complain("there is nothing on one side of the '@'"));
+    }
+    if domain.contains('@') {
+        return Err(complain("there is more than one '@'"));
+    }
+    if !domain.contains('.') {
+        return Err(complain("the domain has no dot"));
+    }
+    if address.chars().any(char::is_whitespace) {
+        return Err(complain("the address itself contains whitespace"));
+    }
+    Ok(())
+}
+
+/// The client configuration both AWS transports use.
+///
+/// The timeouts are tight on purpose, and they are what makes the claim in the module docs true: a
+/// single fast call only stays one if a stuck request cannot sit there. A queue or a mail provider
+/// having a bad day must surface as a failed verification, never as a stalled request handler in the
+/// one service the whole fleet logs in through. Same bounds wasabi puts on DynamoDB.
+async fn aws_client_config() -> aws_config::SdkConfig {
+    let timeout_config = aws_config::timeout::TimeoutConfig::builder()
+        .connect_timeout(Duration::from_secs(3))
+        .operation_attempt_timeout(Duration::from_secs(5))
+        .operation_timeout(Duration::from_secs(10))
+        .build();
+    aws_config::defaults(aws_config::BehaviorVersion::latest())
+        .timeout_config(timeout_config)
+        .load()
+        .await
 }
 
 /// Builds the console transport, warning once about what it does.
@@ -373,23 +587,9 @@ pub struct SqsNotifier {
 
 impl SqsNotifier {
     /// Builds the client from the ambient AWS environment (region, credentials).
-    ///
-    /// The timeouts are tight on purpose, and they are what makes the claim in the module docs true:
-    /// "an SQS write is a single fast call" only holds if a stuck request cannot sit there. A queue
-    /// having a bad day must surface as a failed verification, never as a stalled request handler in
-    /// the one service the whole fleet logs in through. Same bounds wasabi puts on DynamoDB.
     pub async fn new(queue_url: String) -> Self {
-        let timeout_config = aws_config::timeout::TimeoutConfig::builder()
-            .connect_timeout(Duration::from_secs(3))
-            .operation_attempt_timeout(Duration::from_secs(5))
-            .operation_timeout(Duration::from_secs(10))
-            .build();
-        let config = aws_config::defaults(aws_config::BehaviorVersion::latest())
-            .timeout_config(timeout_config)
-            .load()
-            .await;
         SqsNotifier {
-            client: aws_sdk_sqs::Client::new(&config),
+            client: aws_sdk_sqs::Client::new(&aws_client_config().await),
             queue_url,
         }
     }
@@ -415,6 +615,147 @@ impl Notifier for SqsNotifier {
 
     fn is_configured(&self) -> bool {
         true
+    }
+}
+
+/// Calls SES directly — no queue, no worker, no way back.
+///
+/// The transport for a deployment small enough that a worker is more machinery than the mail is
+/// worth. It costs three things, and an operator choosing it should know all three:
+///
+/// - **Nothing retries.** The SQS transport hands a mail to a queue whose redrive policy owns the
+///   retry; here a failed `SendEmail` is a failed request, and the user is told to try again.
+/// - **An asynchronous bounce is never learned.** SES accepts the message and reports the failure
+///   minutes later, to an event destination that does not exist in this setup. So a dead address
+///   stays `verified` and umami goes on sending reset links into nothing — the exact failure
+///   [`crate::notify::service`]'s `POST /notifications/undeliverable` exists to prevent.
+/// - **The login path waits on SES.** Bounded by [`aws_client_config`], but non-zero.
+///
+/// A synchronous rejection *is* visible, and logged with the recipient — it is the one hard signal
+/// this transport gets, and reading it is currently a human's job. Wiring it to withdraw the
+/// address's confirmation would mean handing a contact repository to a transport, which is the
+/// dependency this seam exists to avoid; the worker reports through the API instead.
+///
+/// Message tags carry `messageId` and `userId` into SES's event stream, so a deployment that later
+/// adds a configuration set and an event destination can correlate a bounce back to a user without
+/// umami changing.
+pub struct SesNotifier {
+    client: aws_sdk_sesv2::Client,
+    from: String,
+    configuration_set: Option<String>,
+}
+
+impl SesNotifier {
+    /// Builds the client from the ambient AWS environment (region, credentials).
+    pub async fn new(from: String) -> Self {
+        SesNotifier {
+            client: aws_sdk_sesv2::Client::new(&aws_client_config().await),
+            from,
+            configuration_set: ses_configuration_set(),
+        }
+    }
+
+    /// Builds one UTF-8 text part.
+    ///
+    /// The charset is load-bearing rather than decorative: without it SES encodes as 7-bit ASCII and
+    /// every umlaut in a German subject line arrives as a replacement character.
+    fn utf8(data: &str) -> anyhow::Result<aws_sdk_sesv2::types::Content> {
+        Ok(aws_sdk_sesv2::types::Content::builder()
+            .data(data)
+            .charset("UTF-8")
+            .build()?)
+    }
+
+    /// One message tag, or `None` when the value is not one SES accepts.
+    ///
+    /// SES allows `[A-Za-z0-9_-]` in a tag value and rejects the **whole send** over a stray
+    /// character. Every id umami mints is safe, so this never fires today — but a tag is a
+    /// convenience and a mail is not, so an id from some later source drops the tag rather than the
+    /// message.
+    fn tag(name: &'static str, value: &str) -> Option<aws_sdk_sesv2::types::MessageTag> {
+        if value.is_empty()
+            || !value
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        {
+            tracing::debug!("dropping SES message tag {name}: value is not tag-safe");
+            return None;
+        }
+        aws_sdk_sesv2::types::MessageTag::builder()
+            .name(name)
+            .value(value)
+            .build()
+            .ok()
+    }
+}
+
+#[async_trait]
+impl Notifier for SesNotifier {
+    #[tracing::instrument(level = "debug", skip(self, mail), err(Display))]
+    async fn send(&self, mail: OutboundMail) -> anyhow::Result<()> {
+        let body = aws_sdk_sesv2::types::Body::builder()
+            .text(SesNotifier::utf8(&mail.body)?)
+            .build();
+        let message = aws_sdk_sesv2::types::Message::builder()
+            .subject(SesNotifier::utf8(&mail.subject)?)
+            .body(body)
+            .build();
+        let content = aws_sdk_sesv2::types::EmailContent::builder()
+            .simple(message)
+            .build();
+
+        let mut request = self
+            .client
+            .send_email()
+            .from_email_address(&self.from)
+            .destination(
+                aws_sdk_sesv2::types::Destination::builder()
+                    .to_addresses(&mail.to)
+                    .build(),
+            )
+            .content(content)
+            .set_configuration_set_name(self.configuration_set.clone());
+        for tag in [
+            SesNotifier::tag("umamiMessageId", &mail.message_id),
+            SesNotifier::tag("umamiUserId", &mail.user_id),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            request = request.email_tags(tag);
+        }
+
+        match request.send().await {
+            Ok(_) => Ok(()),
+            Err(err) => {
+                // The one hard signal this transport gets. Loud and with the address, because
+                // nothing else in the deployment will ever mention it — see the type's docs.
+                tracing::warn!(
+                    "SES refused mail {} to {}: {}",
+                    mail.message_id,
+                    mail.to,
+                    aws_error(&err)
+                );
+                Err(anyhow::Error::new(err)
+                    .context(format!("Failed to send mail {} via SES", mail.message_id)))
+            }
+        }
+    }
+
+    fn is_configured(&self) -> bool {
+        true
+    }
+}
+
+/// The service's own message for an SDK error, which is the half worth reading. Falls back to the
+/// SDK's rendering when the failure never reached the service (a timeout, a bad credential chain).
+fn aws_error<E, R>(err: &aws_sdk_sesv2::error::SdkError<E, R>) -> String
+where
+    E: std::error::Error,
+{
+    match err.as_service_error() {
+        Some(service) => service.to_string(),
+        None => err.to_string(),
     }
 }
 
@@ -450,6 +791,65 @@ mod tests {
         assert!(check_queue_url("arn:aws:sqs:eu-central-1:123456789012:umami-mail").is_err());
         assert!(check_queue_url("https://sqs.eu-central-1.amazonaws.com").is_err());
         assert!(check_queue_url("https://sqs.eu-central-1.amazonaws.com/").is_err());
+    }
+
+    /// A sender address is the one SES setting a deployment types by hand, and getting it wrong
+    /// otherwise surfaces on the first password reset rather than at boot.
+    #[test]
+    fn a_sender_address_that_cannot_be_one_is_refused() {
+        assert!(check_from_address("no-reply@example.com").is_ok());
+        assert!(check_from_address("umami <no-reply@example.com>").is_ok());
+        assert!(check_from_address("umami IAM <no-reply@mail.example.co.uk>").is_ok());
+
+        assert!(check_from_address("example.com").is_err());
+        assert!(check_from_address("no-reply@localhost").is_err());
+        assert!(check_from_address("umami <no-reply@example.com").is_err());
+        assert!(check_from_address("@example.com").is_err());
+        assert!(check_from_address("no-reply@").is_err());
+        assert!(check_from_address("a@b@example.com").is_err());
+        assert!(check_from_address("no reply@example.com").is_err());
+    }
+
+    /// A tag value SES would reject takes the whole send with it, so an unsafe one has to drop the
+    /// tag instead. Every id umami mints is already safe — this guards the next source of ids.
+    #[test]
+    fn an_unsafe_message_tag_is_dropped_rather_than_sent() {
+        assert!(SesNotifier::tag("umamiMessageId", &generate_id()).is_some());
+        assert!(SesNotifier::tag("umamiUserId", "user-1_A").is_some());
+
+        assert!(SesNotifier::tag("umamiUserId", "user 1").is_none());
+        assert!(SesNotifier::tag("umamiUserId", "jane@example.com").is_none());
+        assert!(SesNotifier::tag("umamiUserId", "").is_none());
+    }
+
+    /// The optional half of a mail must not appear in the payload at all when it is absent — a
+    /// worker branching on presence should not have to tell `null` from missing.
+    #[test]
+    fn the_optional_fields_are_absent_rather_than_null() {
+        let json = serde_json::to_value(a_mail()).unwrap();
+        for field in ["template", "context", "notification", "addressableName"] {
+            assert!(
+                json.get(field).is_none(),
+                "{field} should not be serialized"
+            );
+        }
+
+        let enriched = a_mail()
+            .with_recipient_name("Ms Doe")
+            .with_context(Some(serde_json::json!({ "link": "https://example.com/x" })))
+            .with_notification(NotificationMeta {
+                type_code: "wsc-new-content".to_owned(),
+                type_name: "Neue Inhalte".to_owned(),
+                cadence: Some("weekly".to_owned()),
+                cadence_name: Some("Wöchentlich".to_owned()),
+            });
+        let json = serde_json::to_value(enriched).unwrap();
+        assert_eq!(json["addressableName"], "Ms Doe");
+        assert_eq!(json["context"]["link"], "https://example.com/x");
+        // The type travels as `type`, which is what the catalogue and the firing both call it.
+        assert_eq!(json["notification"]["type"], "wsc-new-content");
+        assert_eq!(json["notification"]["cadenceName"], "Wöchentlich");
+        assert!(json["notification"].get("template").is_none());
     }
 
     /// The console transport must never become the default in a release build: a reset link in a

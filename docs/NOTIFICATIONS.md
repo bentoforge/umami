@@ -184,6 +184,52 @@ POST /notifications/send
 → { "results": [ { "userId": "…", "status": "queued", "messageId": "…" } ] }
 ```
 
+### Finished text, or something for the worker to render
+
+A message may hand over finished text, name a layout the worker renders, or both:
+
+```jsonc
+{ "type": "wsc-new-content",
+  "messages": [
+    { "userId": "…",
+      "subject": "…", "body": "…",     // optional when `template` is given
+      "template": "new-content-html",  // the app's own name for a layout; umami forwards it
+      "context": { "pages": 3 },       // opaque data for that layout
+      "cadence": "weekly" }            // which cadence this recipient matched
+  ] }
+```
+
+**One of the two is always required.** A message with neither is a `400`, and so is half the text —
+`subject` without `body` is a caller that lost the other half, never a deliberate hand-over. Sending
+**both** is the robust combination: a worker that does not know the layout name still has something
+to deliver.
+
+The batch is validated as a whole, before the first message goes out. A batch rejected halfway would
+leave the earlier half delivered and answer with a `400` that says nothing about which half.
+
+umami adds what only it has, so a worker rendering its own layout does not need to ask:
+
+| Field | What |
+|---|---|
+| `notification.type` / `.typeName` | the type's code and its label **from the catalogue** |
+| `notification.cadence` / `.cadenceName` | the matched cadence and its label |
+| `addressableName` | the greeting, the same string `/audience` returns |
+| `locale` | the recipient's resolved language |
+
+The labels are the catalogue's, in whatever language the deployment wrote them — the same strings
+the profile screen shows, deliberately not per-recipient translations. A deployment invents these
+codes, so nothing in umami could know what `on-publish` reads as in Portuguese.
+
+`cadence` is passed back by the caller rather than re-derived, because `send` never re-reads a
+preference — but it is checked against the type all the same. A cadence the type is never fired at
+means the caller and the catalogue disagree, and the mail would otherwise go out worded for a rhythm
+nobody chose.
+
+**Keep personal data out of `context`** beyond what the mail itself says, and never log it. It
+travels into the queue and through the worker's logs — places with no retention policy and no
+erasure story, which is the same reason no address ever appears in a umami URL. It is capped at
+**4 KB** per message: it renders a template, it does not carry a payload.
+
 `send` **never re-checks a preference.** The caller is trusted to have resolved an audience, and
 `notifications:send` is the control on that trust — which is also why it is a separate permission
 from `notifications:audience`.
@@ -217,7 +263,8 @@ through the single rule in [CONTACTS.md](CONTACTS.md) §5, the same one the prof
 A user with no confirmed address at all is left out of the audience and answered `no-address` by
 `send`.
 
-Delivery itself is one SQS write per message with `kind: "notification"`; the payload and the
+Delivery itself is one write per message with `kind: "notification"` — to a queue, or straight to
+SES in a deployment small enough to skip the worker ([SEAMS.md](SEAMS.md)). The payload and the
 worker's contract are documented in [CONTACTS.md](CONTACTS.md) §3.
 
 ---
@@ -228,5 +275,6 @@ worker's contract are documented in [CONTACTS.md](CONTACTS.md) §3.
   it holds the content anyway.
 - **Per-type channel choice.** There is one channel (email) and one preferred address per user. A
   matrix of type × channel is a form nobody fills in.
-- **Digest wording per cadence.** The matched cadence comes back with each recipient, but nothing
-  helps an app word "your week" differently from "today" — that is its own templating.
+- **Templates.** umami forwards a `template` name and its `context`; it does not store, render or
+  validate one. Which layouts exist is between the app and its worker, and a name umami does not
+  know is not an error here — the worker falls back to the text.

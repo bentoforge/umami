@@ -26,6 +26,7 @@ import type {
   MfaStatus,
   MyNotificationsResponse,
   NameInput,
+  NotificationMessage,
   NotificationSendResult,
   PatchUserRequest,
   RateLimitBlockPage,
@@ -547,10 +548,15 @@ export class UmamiClient {
    * message, which has one recipient and one reason and never consulted the catalogue.
    *
    * This endpoint never re-checks a preference — the caller is trusted to have resolved an audience,
-   * and the permission is the control on that trust. */
+   * and the permission is the control on that trust.
+   *
+   * Each message hands over finished text, a `template` name for the worker to render, or both.
+   * umami adds what only it has — the type's and cadence's catalogue labels, the greeting, the
+   * recipient's language — so a worker rendering its own layout does not have to ask. The batch is
+   * validated as a whole before anything is sent. */
   sendNotifications(
     type: string | null,
-    messages: { userId: string; subject: string; body: string }[],
+    messages: NotificationMessage[],
   ): Promise<{ results: NotificationSendResult[] }> {
     return this.request<{ results: NotificationSendResult[] }>("/notifications/send", {
       method: "POST",

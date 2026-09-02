@@ -474,7 +474,11 @@ async fn start_verification(
         locale,
         user_id.to_owned(),
         tenant_id.to_owned(),
-    );
+    )
+    .with_recipient_name(&greeting)
+    // The link the body already carries, structured — so a worker can put it on a button without
+    // parsing it back out of the text. `kind` says which mail it belongs to.
+    .with_context(Some(json!({ "link": link })));
     let message_id = mail.message_id.clone();
     deps.notifier.send(mail).await?;
 

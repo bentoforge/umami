@@ -86,12 +86,27 @@ credentials belong to the worker; a dead-letter queue on the SQS side is the ret
 ```json
 { "messageId": "…", "kind": "contact-verification",
   "to": "jane@example.com", "subject": "…", "body": "…",
+  "addressableName": "Ms Doe",
+  "context": { "link": "https://umami.example.com/app/verify-contact?token=…" },
   "locale": "de", "userId": "…", "tenantId": "…" }
 ```
 
 `messageId` is the **idempotency key** — SQS is at-least-once, so a worker that retries must be able
 to recognise a message it already delivered. `userId`/`tenantId` are for the worker's own audit
 trail, never for addressing.
+
+`kind` is umami's own name for the mail (`contact-verification`, `password-reset`, `notification`)
+and is what a worker keys a layout off. `context` is the same link the body already carries, in
+structured form, so a worker building an HTML button does not have to parse it back out of the text
+— and `addressableName` is the greeting, so it does not have to ask umami for the user either. Both
+are conveniences: the plain `subject`/`body` are always filled in for umami's own mails, and a
+worker that just delivers them is correct and complete.
+
+A mail from `POST /notifications/send` looks the same but carries the app's side of it — `template`,
+`context` and a `notification` block. See [NOTIFICATIONS.md](NOTIFICATIONS.md) §5.
+
+**Never log `context`.** For umami's own mails it holds a single-use link; for an app's, whatever
+the app put there.
 
 ### The way back: a bounce
 
@@ -115,9 +130,11 @@ somebody saying "do not mail me here" is at least as good a reason to stop.
 Its own permission and its own scope, separate from `notifications:send`: the worker and the app
 asking for a send are different principals, and the worker has no business resolving an audience.
 
-Unset `UMAMI_MAIL_SQS_QUEUE_URL` and outbound mail is off: `GET /auth/me/contacts` reports
+With no mail transport configured, outbound mail is off: `GET /auth/me/contacts` reports
 `verificationAvailable: false`, the UI hides the action, and the endpoint answers `503` instead of
-accepting a request that goes nowhere.
+accepting a request that goes nowhere. Which transports there are, and what each costs, is
+[SEAMS.md](SEAMS.md) — a deployment too small for a worker can have umami call SES directly, at the
+price of never learning about the bounce this section describes.
 
 ---
 

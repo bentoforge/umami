@@ -35,10 +35,11 @@ use crate::contacts::repository::ContactRepository;
 use crate::notify::types::{
     CHOICE_OFF, CadenceDef, Delivery, NotificationTypeDef, normalize_cadence, resolve_delivery,
 };
-use crate::notify::{Notifier, OutboundMail};
+use crate::notify::{NotificationMeta, Notifier, OutboundMail};
 use crate::tenants::repository::TenantRepository;
 use crate::users::User;
 use crate::users::repository::UserRepository;
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
@@ -55,6 +56,13 @@ use wasabi::web::warp::{into_response, with_body_as_json, with_cloneable};
 /// Cap on one send batch. High enough for a tenant-wide firing, low enough that one request cannot
 /// turn into unbounded work — the app already holds the audience, so it can page.
 const MAX_BATCH: usize = 500;
+
+/// Cap on one message's `context`, serialized.
+///
+/// Generous for what the field is for — the handful of values a layout renders — and small enough
+/// that a batch of 500 cannot be used to push a payload through umami into a queue. It is also a
+/// reminder of what `context` is: data for a template, not a place to move an object.
+const MAX_CONTEXT_BYTES: usize = 4096;
 
 const REQUIRE_SELF: &[&str] = &[MANAGE_CONTACTS_PERMISSION];
 const REQUIRE_AUDIENCE: &[&str] = &[NOTIFICATIONS_AUDIENCE_PERMISSION];
@@ -144,18 +152,49 @@ struct Recipient {
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct SendRequest {
-    #[serde(rename = "type")]
-    type_code: String,
+    /// The notification type this send follows. **Omitted** for a transactional message — one
+    /// person, one reason, and the catalogue was never consulted (see [`crate::notify::types`]).
+    ///
+    /// Optional rather than required so that case has a way to say so. The cost is that a typo in
+    /// the field name reads as "transactional" instead of failing; what stops that from turning
+    /// into an empty mail is [`check_messages`], which every send passes either way.
+    #[serde(default, rename = "type")]
+    type_code: Option<String>,
     messages: Vec<SendMessage>,
 }
 
-/// One finished message for one recipient.
+/// One message for one recipient — finished text, something for the worker to render, or both.
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct SendMessage {
     user_id: String,
-    subject: String,
-    body: String,
+    /// Subject line. Goes together with `body`, and may be omitted only when `template` is given.
+    #[serde(default)]
+    subject: Option<String>,
+    /// Plain-text body. Goes together with `subject`.
+    #[serde(default)]
+    body: Option<String>,
+    /// The app's own name for a layout the worker should render instead.
+    ///
+    /// umami neither knows nor validates these names — it forwards them. Sending a template
+    /// **and** finished text is the robust combination: a worker that does not know the name still
+    /// has something to deliver.
+    #[serde(default)]
+    template: Option<String>,
+    /// Opaque data for that layout, forwarded untouched.
+    ///
+    /// Keep personal data out of it beyond what the mail itself says. It travels into the queue and
+    /// through the worker's logs — places with no retention policy and no erasure story, which is
+    /// the same reason no address ever appears in a umami URL.
+    #[serde(default)]
+    context: Option<Value>,
+    /// Which cadence this recipient matched, straight from the audience.
+    ///
+    /// The caller passes it back rather than umami re-deriving it: `send` deliberately never
+    /// re-reads a preference. It is checked against the type all the same, because a cadence the
+    /// type is never fired at means the caller and the catalogue disagree.
+    #[serde(default)]
+    cadence: Option<String>,
 }
 
 /// What the mail worker reports back about a message it could not deliver.
@@ -603,7 +642,10 @@ async fn send(
     audit: Arc<dyn AuditRepository>,
 ) -> anyhow::Result<Value> {
     let config = deps.config.current().await?;
-    let type_def = notification_type(&config, &request.type_code)?;
+    let type_def = match request.type_code.as_deref() {
+        Some(code) => Some(notification_type(&config, code)?),
+        None => None,
+    };
     if request.messages.is_empty() {
         status_bail!(StatusCode::BAD_REQUEST, "'messages' must not be empty");
     }
@@ -620,6 +662,7 @@ async fn send(
             "This deployment cannot send mail"
         );
     }
+    check_messages(&request.messages, type_def)?;
 
     let mut results: Vec<SendResult> = Vec::with_capacity(request.messages.len());
     for message in request.messages {
@@ -644,15 +687,21 @@ async fn send(
         };
 
         let locale = crate::i18n::resolve(&config, user.locale.as_deref(), None);
-        let mail = OutboundMail::new(
+        let mut mail = OutboundMail::new(
             "notification",
             address,
-            message.subject,
-            message.body,
+            message.subject.unwrap_or_default(),
+            message.body.unwrap_or_default(),
             locale,
             user.user_id.clone(),
             user.tenant_id.clone(),
-        );
+        )
+        .with_recipient_name(user.display_names(&config.default_locale).addressable_name)
+        .with_template(message.template)
+        .with_context(message.context);
+        if let Some(type_def) = type_def {
+            mail = mail.with_notification(notification_meta(type_def, message.cadence.as_deref()));
+        }
         let message_id = mail.message_id.clone();
         // One failure must not abandon the rest of the batch — partial success is the normal case,
         // and the caller is told per entry which is which.
@@ -683,16 +732,112 @@ async fn send(
             AuditSeverity::Neutral,
             None,
             None,
-            format!(
-                "Notification '{}' queued for {queued} of {} recipient(s)",
-                type_def.code,
-                results.len()
-            ),
+            match type_def {
+                Some(type_def) => format!(
+                    "Notification '{}' queued for {queued} of {} recipient(s)",
+                    type_def.code,
+                    results.len()
+                ),
+                None => format!(
+                    "Transactional message queued for {queued} of {} recipient(s)",
+                    results.len()
+                ),
+            },
         ),
     )
     .await;
 
     Ok(json!({ "results": results }))
+}
+
+/// Refuses a batch that would put an unrenderable mail in front of somebody.
+///
+/// Up front, before the first message goes out, because the alternative is worse than a strict
+/// check: a batch rejected halfway leaves the earlier half delivered and answers the caller with a
+/// `400` that says nothing about which half that was.
+///
+/// The rule is that **something** has to be renderable — finished text, a template name, or both.
+/// Allowing an empty message and trusting the worker to have a layout for it would move the failure
+/// to the one place nobody is watching, which is the recipient's inbox.
+fn check_messages(
+    messages: &[SendMessage],
+    type_def: Option<&NotificationTypeDef>,
+) -> anyhow::Result<()> {
+    for message in messages {
+        let user = &message.user_id;
+        let subject = message.subject.as_deref().unwrap_or_default().trim();
+        let body = message.body.as_deref().unwrap_or_default().trim();
+        let template = message.template.as_deref().unwrap_or_default().trim();
+
+        match (subject.is_empty(), body.is_empty()) {
+            (false, false) | (true, true) => {}
+            // One without the other is a caller that meant to send text and lost half of it — never
+            // a deliberate "let the worker do it", which omits both.
+            _ => status_bail!(
+                StatusCode::BAD_REQUEST,
+                "Message for '{user}' has only one of 'subject' and 'body' — they go together"
+            ),
+        }
+        if subject.is_empty() && template.is_empty() {
+            status_bail!(
+                StatusCode::BAD_REQUEST,
+                "Message for '{user}' has neither 'subject'/'body' nor 'template' — there would be \
+                 nothing to deliver"
+            );
+        }
+
+        if let Some(context) = &message.context {
+            let size = serde_json::to_vec(context)
+                .context("Failed to measure a message's 'context'")?
+                .len();
+            if size > MAX_CONTEXT_BYTES {
+                status_bail!(
+                    StatusCode::BAD_REQUEST,
+                    "The 'context' for '{user}' is {size} bytes, over the {MAX_CONTEXT_BYTES}-byte \
+                     cap — it renders a template, it does not carry a payload"
+                );
+            }
+        }
+
+        if let Some(cadence) = &message.cadence {
+            let cadence = normalize_cadence(cadence);
+            match type_def {
+                Some(type_def) if type_def.fires_at(&cadence) => {}
+                Some(type_def) => status_bail!(
+                    StatusCode::BAD_REQUEST,
+                    "'{}' is never fired at cadence '{cadence}'",
+                    type_def.code
+                ),
+                None => status_bail!(
+                    StatusCode::BAD_REQUEST,
+                    "Message for '{user}' names a cadence, but the send names no type — a \
+                     transactional message has no rhythm"
+                ),
+            }
+        }
+    }
+    Ok(())
+}
+
+/// What a worker is told about the notification a mail belongs to.
+///
+/// The cadence is looked up rather than echoed so its **label** travels too: a worker wording "your
+/// week" differently from "today" would otherwise need its own copy of the catalogue.
+fn notification_meta(type_def: &NotificationTypeDef, cadence: Option<&str>) -> NotificationMeta {
+    let cadence = cadence.map(normalize_cadence);
+    let cadence_name = cadence.as_ref().and_then(|code| {
+        type_def
+            .cadences
+            .iter()
+            .find(|declared| &declared.code == code)
+            .map(|declared| declared.name.clone())
+    });
+    NotificationMeta {
+        type_code: type_def.code.clone(),
+        type_name: type_def.name.clone(),
+        cadence,
+        cadence_name,
+    }
 }
 
 /// Withdraws an address's confirmation after a hard delivery failure.
@@ -788,4 +933,144 @@ fn parse_firing(raw: &[String], type_def: &NotificationTypeDef) -> anyhow::Resul
         firing.push(cadence);
     }
     Ok(firing)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::notify::types::CadenceDef;
+
+    /// A type with a rhythm, to check a send against.
+    fn rhythmic() -> NotificationTypeDef {
+        NotificationTypeDef {
+            code: "wsc-new-content".to_owned(),
+            name: "New content".to_owned(),
+            description: None,
+            cadences: vec![
+                CadenceDef {
+                    code: "daily".to_owned(),
+                    name: "Daily".to_owned(),
+                },
+                CadenceDef {
+                    code: "weekly".to_owned(),
+                    name: "Weekly".to_owned(),
+                },
+            ],
+            default: None,
+            eligible_if: None,
+        }
+    }
+
+    /// A message with nothing filled in, for a test to fill in one field of.
+    fn message() -> SendMessage {
+        SendMessage {
+            user_id: "user-1".to_owned(),
+            subject: None,
+            body: None,
+            template: None,
+            context: None,
+            cadence: None,
+        }
+    }
+
+    fn with_text(mut message: SendMessage) -> SendMessage {
+        message.subject = Some("Subject".to_owned());
+        message.body = Some("Body".to_owned());
+        message
+    }
+
+    /// The three renderable shapes, and the two that would arrive empty.
+    #[test]
+    fn a_message_has_to_carry_something_to_deliver() {
+        let type_def = rhythmic();
+
+        assert!(check_messages(&[with_text(message())], Some(&type_def)).is_ok());
+
+        let mut templated = message();
+        templated.template = Some("new-content".to_owned());
+        assert!(check_messages(&[templated], Some(&type_def)).is_ok());
+
+        // Both is the robust combination: a worker that does not know the layout still has text.
+        let mut both = with_text(message());
+        both.template = Some("new-content".to_owned());
+        assert!(check_messages(&[both], Some(&type_def)).is_ok());
+
+        assert!(check_messages(&[message()], Some(&type_def)).is_err());
+
+        // Half the text is a caller that lost the other half, never a deliberate hand-over.
+        let mut half = message();
+        half.subject = Some("Subject".to_owned());
+        assert!(check_messages(&[half], Some(&type_def)).is_err());
+
+        // Whitespace is not content — it would render as an empty mail all the same.
+        let mut blank = message();
+        blank.subject = Some("   ".to_owned());
+        blank.body = Some("\n".to_owned());
+        assert!(check_messages(&[blank], Some(&type_def)).is_err());
+    }
+
+    /// A batch is refused as a whole, so nothing is delivered before the caller hears about it.
+    #[test]
+    fn one_bad_message_refuses_the_whole_batch() {
+        let type_def = rhythmic();
+        let batch = [with_text(message()), message(), with_text(message())];
+        assert!(check_messages(&batch, Some(&type_def)).is_err());
+    }
+
+    /// `context` renders a template; it is not a way to move a payload through umami into a queue.
+    #[test]
+    fn an_oversized_context_is_refused() {
+        let type_def = rhythmic();
+
+        let mut fits = with_text(message());
+        fits.context = Some(json!({ "pages": 3, "since": "2026-09-01" }));
+        assert!(check_messages(&[fits], Some(&type_def)).is_ok());
+
+        let mut oversized = with_text(message());
+        oversized.context = Some(json!({ "blob": "x".repeat(MAX_CONTEXT_BYTES) }));
+        assert!(check_messages(&[oversized], Some(&type_def)).is_err());
+    }
+
+    /// A cadence the type is never fired at means the caller and the catalogue disagree, and the
+    /// disagreement is otherwise invisible — the mail goes out worded for a rhythm nobody chose.
+    #[test]
+    fn a_cadence_is_checked_against_the_type() {
+        let type_def = rhythmic();
+
+        let mut weekly = with_text(message());
+        weekly.cadence = Some("Weekly".to_owned());
+        assert!(check_messages(&[weekly], Some(&type_def)).is_ok());
+
+        let mut quarterly = with_text(message());
+        quarterly.cadence = Some("quarterly".to_owned());
+        assert!(check_messages(&[quarterly], Some(&type_def)).is_err());
+
+        // A transactional send has no type, and therefore no rhythm to name.
+        let mut untyped = with_text(message());
+        untyped.cadence = Some("weekly".to_owned());
+        assert!(check_messages(&[untyped], None).is_err());
+    }
+
+    /// A transactional send names no type at all, which is what the endpoint's contract promises.
+    #[test]
+    fn a_send_without_a_type_is_accepted() {
+        assert!(check_messages(&[with_text(message())], None).is_ok());
+    }
+
+    /// The cadence's label has to travel with it: a worker wording "your week" differently from
+    /// "today" would otherwise need its own copy of the catalogue.
+    #[test]
+    fn the_notification_meta_carries_both_labels() {
+        let type_def = rhythmic();
+
+        let meta = notification_meta(&type_def, Some(" Weekly "));
+        assert_eq!(meta.type_code, "wsc-new-content");
+        assert_eq!(meta.type_name, "New content");
+        assert_eq!(meta.cadence.as_deref(), Some("weekly"));
+        assert_eq!(meta.cadence_name.as_deref(), Some("Weekly"));
+
+        let meta = notification_meta(&type_def, None);
+        assert!(meta.cadence.is_none());
+        assert!(meta.cadence_name.is_none());
+    }
 }
