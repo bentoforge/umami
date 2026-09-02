@@ -65,6 +65,7 @@ pub struct StoredCeremony {
 
 /// Persistence for passkeys + ceremony state.
 #[async_trait]
+#[cfg_attr(test, mockall::automock)]
 pub trait WebauthnRepository: Send + Sync {
     /// Stores (or overwrites) a passkey for a user.
     async fn put_credential(
@@ -92,6 +93,14 @@ pub trait WebauthnRepository: Send + Sync {
 
     /// Atomically consumes (get + delete) a ceremony. `None` if unknown/expired.
     async fn take_ceremony(&self, ceremony_id: &str) -> anyhow::Result<Option<StoredCeremony>>;
+
+    /// Deletes every credential a user registered, returning how many there were.
+    ///
+    /// For deleting the user. In-flight ceremonies are deliberately left: they are keyed on the
+    /// ceremony id with a TTL of minutes, there is no way to find a user's without an index nobody
+    /// else needs, and one that outlives its user finishes into a `find_user_by_credential` that no
+    /// longer resolves.
+    async fn delete_all_for_user(&self, user_id: &str) -> anyhow::Result<usize>;
 }
 
 /// DynamoDB-backed implementation of [`WebauthnRepository`].
@@ -172,6 +181,34 @@ impl WebauthnRepository for DynamoWebauthnRepository {
             .await
             .context("Error listing 'webauthn-credentials'")?;
         Ok(records.into_iter().map(|record| record.passkey).collect())
+    }
+
+    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    async fn delete_all_for_user(&self, user_id: &str) -> anyhow::Result<usize> {
+        // Its own query rather than `list_passkeys`, which yields the serialized passkeys; what a
+        // delete needs is the range key.
+        let query = self
+            .client
+            .query(TABLE_CREDENTIALS)
+            .key_condition_expression("#userId = :userId")
+            .expression_attribute_names("#userId", FIELD_USER_ID)
+            .expression_attribute_values(":userId", str(user_id));
+        let records: Vec<CredentialRecord> = find_all(query)
+            .await
+            .context("Error listing a departing user's 'webauthn-credentials'")?;
+
+        let count = records.len();
+        for record in records {
+            let _ = self
+                .client
+                .delete_item(TABLE_CREDENTIALS)
+                .key(FIELD_USER_ID, str(&record.user_id))
+                .key(FIELD_CREDENTIAL_ID, str(&record.credential_id))
+                .send()
+                .await
+                .context("Error deleting a departing user's passkey")?;
+        }
+        Ok(count)
     }
 
     #[tracing::instrument(level = "debug", skip(self), err(Display))]

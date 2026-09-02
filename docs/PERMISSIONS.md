@@ -31,7 +31,6 @@ policy evolves in config.
 - **Synthetic markers** (`is:*`) are computed by the mint layer at token-issue time and are
   **not grantable/revocable**. Current markers:
   - `is:system-tenant` — the token's tenant equals `UMAMI_SYSTEM_TENANT_ID`.
-  - `is:messaging-configured` — the deployment has a Telegram bot and/or WhatsApp number set.
   - `is:passkey` — the session authenticated with a passkey (WebAuthn).
   - `is:totp` — the session authenticated with a TOTP second factor.
   - `is:2fa` — either strong second factor was used (passkey **or** TOTP); gate on this to require

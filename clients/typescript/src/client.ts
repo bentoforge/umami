@@ -22,6 +22,7 @@ import type {
   LoginResponse,
   MeResponse,
   MessagingCodeResponse,
+  DeletedUserCounts,
   MessagingLink,
   MfaStatus,
   MyNotificationsResponse,
@@ -460,9 +461,16 @@ export class UmamiClient {
       body: JSON.stringify(body),
     });
   }
-  /** Hard-delete a user in the caller's tenant (cannot delete your own account). */
-  deleteUser(userId: string): Promise<{ status: string }> {
-    return this.request<{ status: string }>(`/users/${enc(userId)}`, { method: "DELETE" });
+  /** Hard-delete a user in the caller's tenant (cannot delete your own account).
+   *
+   * Takes everything only that user can reach with it — contacts, messaging links and their pending
+   * link code, refresh sessions, passkeys, and their personal access tokens. **Not** the tenant's
+   * service keys: those carry no `userId` and outlive whoever created them. The counts come back so
+   * a caller can log what actually went. */
+  deleteUser(userId: string): Promise<{ status: string; deleted: DeletedUserCounts }> {
+    return this.request<{ status: string; deleted: DeletedUserCounts }>(`/users/${enc(userId)}`, {
+      method: "DELETE",
+    });
   }
   /** Admin reset of a user's password. Omit `newPassword` to have a temporary one generated and
    * returned once. Invalidates the user's existing sessions/tokens. */
@@ -699,7 +707,12 @@ export class UmamiClient {
     );
     return data.links;
   }
-  /** Machine (`messaging:link`): claim a `(platform, externalId)` mapping from a link code. */
+  /** Machine (`messaging:link`): claim a `(platform, externalId)` mapping from a link code.
+   *
+   * A claim **takes the identity over** from whoever held it. It carries a single-use code the new
+   * user just generated, and whoever holds the chat account is the only one who can present it, so
+   * the takeover is their own act. Refusing instead would freeze a mistyped link forever — nothing
+   * releases one but its owner, and there is no admin who can. Both users get an audit entry. */
   createMessagingLink(
     code: string,
     platform: string,

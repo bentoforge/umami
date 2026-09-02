@@ -118,6 +118,7 @@ pub struct NewApiKey {
 
 /// Persistence for API keys.
 #[async_trait]
+#[cfg_attr(test, mockall::automock)]
 pub trait ApiKeyRepository: Send + Sync {
     /// Stores a new key.
     async fn create(&self, new_key: NewApiKey) -> anyhow::Result<()>;
@@ -130,6 +131,12 @@ pub trait ApiKeyRepository: Send + Sync {
 
     /// Deletes (revokes) a key.
     async fn delete(&self, key_id: &str) -> anyhow::Result<()>;
+
+    /// Deletes a user's **personal access tokens** in `tenant_id`, returning how many there were.
+    ///
+    /// For deleting the user. Only rows whose `userId` is theirs: a service key carries `None` there
+    /// and belongs to the tenant, so it survives the person who happened to create it.
+    async fn delete_all_for_user(&self, tenant_id: &str, user_id: &str) -> anyhow::Result<usize>;
 
     /// Best-effort `lastUsedAt` bump after a successful exchange.
     async fn touch_last_used(&self, key_id: &str) -> anyhow::Result<()>;
@@ -237,6 +244,24 @@ impl ApiKeyRepository for DynamoApiKeyRepository {
     }
 
     #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    async fn delete_all_for_user(&self, tenant_id: &str, user_id: &str) -> anyhow::Result<usize> {
+        // Listing by tenant and filtering beats a `ByUser` index nothing else would read: a tenant's
+        // key list is small, and the filter is the same one that decides PAT versus service key.
+        let keys: Vec<ApiKey> = self
+            .list_by_tenant(tenant_id)
+            .await?
+            .into_iter()
+            .filter(|key| key.user_id.as_deref() == Some(user_id))
+            .collect();
+
+        let count = keys.len();
+        for key in keys {
+            self.delete(&key.key_id).await?;
+        }
+        Ok(count)
+    }
+
     async fn delete(&self, key_id: &str) -> anyhow::Result<()> {
         let _ = self
             .client

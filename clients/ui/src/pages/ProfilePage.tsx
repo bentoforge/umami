@@ -4,7 +4,6 @@ import type {
   Contact,
   ContactsResponse,
   CustomFieldDef,
-  MessagingCodeResponse,
   MessagingLink,
   MyNotificationsResponse,
   RoleDef,
@@ -430,21 +429,22 @@ function ContactsPanel() {
   );
 }
 
-/** Messaging links: show the user's link code (regenerable) and their connected identities. */
+/** Messaging links: the identities connected to this account, and the way to disconnect one.
+ *
+ * Read-and-unlink only. Connecting is the app's flow — it runs the bot, so it owns the code and the
+ * deep link — but disconnecting has to live here: a link is keyed on the identity alone, so claiming
+ * one that another account holds takes it over, and the previous owner needs somewhere to let go of
+ * an identity that is no longer theirs. */
 function MessagingPanel() {
   const { client } = useUmami();
   const { t } = useTranslation();
-  const [code, setCode] = useState<MessagingCodeResponse | null>(null);
   const [links, setLinks] = useState<MessagingLink[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     setError(null);
     try {
-      const [c, l] = await Promise.all([client.getMessagingCode(), client.listMessagingLinks()]);
-      setCode(c);
-      setLinks(l.links);
+      setLinks((await client.listMessagingLinks()).links);
     } catch (err) {
       setError(errMsg(err));
     }
@@ -453,19 +453,6 @@ function MessagingPanel() {
   useEffect(() => {
     void load();
   }, [load]);
-
-  const regenerate = async () => {
-    if (!window.confirm("Generate a new code? The old one stops working immediately.")) return;
-    setBusy(true);
-    setError(null);
-    try {
-      setCode(await client.regenerateMessagingCode());
-    } catch (err) {
-      setError(errMsg(err));
-    } finally {
-      setBusy(false);
-    }
-  };
 
   const unlink = async (link: MessagingLink) => {
     if (
@@ -488,32 +475,10 @@ function MessagingPanel() {
     <section className={`${card} space-y-4`}>
       <div>
         <h2 className="font-medium text-slate-800 dark:text-slate-200">Messaging</h2>
-        <p className="text-sm text-slate-500">
-          Give this code to the Telegram/WhatsApp bot (deep link or first message) to connect your
-          account. It stays valid and can link several chats.
-        </p>
+        <p className="text-sm text-slate-500">{t("messaging.intro")}</p>
       </div>
 
       <Banner tone="error">{error}</Banner>
-
-      <div className="flex flex-wrap items-center gap-3">
-        <code className="rounded-lg bg-slate-100 dark:bg-slate-900 px-3 py-2 text-lg font-mono tracking-widest text-slate-900 dark:text-white">
-          {code?.code ?? "…"}
-        </code>
-        <button className={ghostButton} disabled={busy} onClick={() => void regenerate()}>
-          Regenerate
-        </button>
-        {code?.telegramUrl && (
-          <a className={ghostButton} href={code.telegramUrl} target="_blank" rel="noreferrer">
-            Open in Telegram
-          </a>
-        )}
-        {code?.whatsappUrl && (
-          <a className={ghostButton} href={code.whatsappUrl} target="_blank" rel="noreferrer">
-            Open in WhatsApp
-          </a>
-        )}
-      </div>
 
       <div>
         <div className="text-xs text-slate-500 mb-1">{t("messaging.linksTitle")}</div>

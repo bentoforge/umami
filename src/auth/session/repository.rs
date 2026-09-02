@@ -62,6 +62,7 @@ pub struct NewSession {
 
 /// Persistence interface for login sessions.
 #[async_trait]
+#[cfg_attr(test, mockall::automock)]
 pub trait SessionRepository: Send + Sync {
     /// Creates a session from the given parameters, returning the stored row.
     async fn create_session(&self, new_session: NewSession) -> anyhow::Result<Session>;
@@ -91,6 +92,9 @@ pub trait SessionRepository: Send + Sync {
 
     /// Deletes a session (single-device logout, or reuse-detection response).
     async fn delete_session(&self, session_id: &str) -> anyhow::Result<()>;
+
+    /// Deletes every session a user holds, returning how many there were. For deleting the user.
+    async fn delete_all_for_user(&self, user_id: &str) -> anyhow::Result<usize>;
 }
 
 /// DynamoDB-backed implementation of [`SessionRepository`].
@@ -292,6 +296,16 @@ impl SessionRepository for DynamoSessionRepository {
     }
 
     #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    async fn delete_all_for_user(&self, user_id: &str) -> anyhow::Result<usize> {
+        let sessions = self.list_by_user(user_id).await?;
+        let count = sessions.len();
+        for session in sessions {
+            self.delete_session(&session.session_id).await?;
+        }
+        Ok(count)
+    }
+
     async fn delete_session(&self, session_id: &str) -> anyhow::Result<()> {
         let _ = self
             .client

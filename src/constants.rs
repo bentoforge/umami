@@ -75,9 +75,11 @@ pub const MESSAGING_LINK_PERMISSION: &str = "messaging:link";
 /// `scope:messaging-resolver`.
 pub const MESSAGING_RESOLVE_PERMISSION: &str = "messaging:resolve";
 
-/// Self-service management of one's own messaging links (get/regenerate code, list/unlink).
-/// Derived (in the config `apis`) from `is:messaging-configured`, so it only appears when the
-/// deployment actually has a Telegram bot and/or WhatsApp number configured.
+/// Self-service over one's own messaging links: read the link code, list and unlink identities.
+///
+/// Granted by nothing in the built-in default config. Whether a deployment does messaging at all is
+/// its own statement, written as an `apis` rule — umami cannot infer it, now that the bot lives
+/// entirely on the app's side and umami never sees one.
 pub const MANAGE_MESSAGING_PERMISSION: &str = "manage:messaging";
 
 /// Self-service management of one's own **email contacts** (list/add/remove, verify, preferred).
@@ -117,10 +119,6 @@ pub const SYSTEM_TENANT_MARKER: &str = "is:system-tenant";
 /// keep this marker but lose [`SYSTEM_TENANT_MARKER`]. Splitting the two is what lets a rule say
 /// "manage users anywhere except in the system tenant itself".
 pub const SYSTEM_TENANT_MEMBER_MARKER: &str = "is:system-tenant-member";
-
-/// Added to every token's subject set when the config has a Telegram bot and/or WhatsApp number
-/// set (`messaging.telegramBot` / `messaging.whatsappNumber`). A global capability marker.
-pub const MESSAGING_CONFIGURED_MARKER: &str = "is:messaging-configured";
 
 /// Added to the subject set when the session authenticated with a passkey (WebAuthn).
 pub const PASSKEY_MARKER: &str = "is:passkey";

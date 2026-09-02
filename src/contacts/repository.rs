@@ -90,6 +90,14 @@ pub trait ContactRepository: Send + Sync {
 
     /// Deletes one of a user's addresses. A missing row is treated as "nothing to delete".
     async fn delete_contact(&self, user_id: &str, address: &str) -> anyhow::Result<()>;
+
+    /// Deletes every address a user holds, returning how many there were.
+    ///
+    /// For deleting the user themselves. Nothing else reaches these rows once the user is gone —
+    /// every read is keyed on a `userId` that no longer resolves — so they would sit in the table
+    /// holding addresses of somebody who asked to be removed, which is the one kind of leftover
+    /// that is not merely untidy.
+    async fn delete_all_for_user(&self, user_id: &str) -> anyhow::Result<usize>;
 }
 
 /// DynamoDB-backed [`ContactRepository`].
@@ -294,6 +302,16 @@ impl ContactRepository for DynamoContactRepository {
     }
 
     #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    async fn delete_all_for_user(&self, user_id: &str) -> anyhow::Result<usize> {
+        let contacts = self.list_contacts(user_id).await?;
+        let count = contacts.len();
+        for contact in contacts {
+            self.delete_contact(user_id, &contact.address).await?;
+        }
+        Ok(count)
+    }
+
     async fn delete_contact(&self, user_id: &str, address: &str) -> anyhow::Result<()> {
         // Both halves of the key come from the caller's own session, so there is no cross-user
         // delete to guard against — a foreign address simply is not in this user's partition.

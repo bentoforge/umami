@@ -14,7 +14,7 @@ use aws_sdk_dynamodb::types::{
     BillingMode, GlobalSecondaryIndex, KeySchemaElement, KeyType, Projection, ProjectionType,
     ReturnValue,
 };
-use chrono::{DateTime, SecondsFormat, Utc};
+use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use warp::http::StatusCode;
 use wasabi::aws::dynamodb::client::DynamoClient;
@@ -24,6 +24,7 @@ use wasabi::status_bail;
 
 const TABLE_CODES: &str = "messaging-codes";
 const FIELD_CODE: &str = "code";
+const FIELD_TTL: &str = "ttl";
 
 const TABLE_LINKS: &str = "messaging-links";
 const FIELD_LINK_KEY: &str = "linkKey";
@@ -40,6 +41,13 @@ struct CodeEntity {
     user_id: String,
     tenant_id: String,
     created: String,
+    /// DynamoDB TTL — **cleanup only**, never the authority on whether a code still works.
+    ///
+    /// TTL deletion is eventual (AWS allows up to 48 hours), so an expired row can outlive its own
+    /// expiry by a day; [`is_fresh`] is what decides, on every read. Same split as the auth
+    /// challenges. Without this the row for somebody who generated a code and never used it simply
+    /// stayed forever.
+    ttl: i64,
 }
 
 /// The subject a resolved external identity or code maps to.
@@ -51,6 +59,7 @@ pub struct LinkSubject {
 
 /// Persistence for messaging codes + links.
 #[async_trait]
+#[cfg_attr(test, mockall::automock)]
 pub trait MessagingRepository: Send + Sync {
     /// Returns the user's current code when it is younger than `ttl_secs`; otherwise mints a fresh
     /// one. The bool is `true` when a new code was generated (so callers can audit only real mints).
@@ -62,7 +71,12 @@ pub trait MessagingRepository: Send + Sync {
     ) -> anyhow::Result<(String, bool)>;
 
     /// Replaces the user's code with a fresh one (invalidating the old), returning it.
-    async fn regenerate_code(&self, user_id: &str, tenant_id: &str) -> anyhow::Result<String>;
+    async fn regenerate_code(
+        &self,
+        user_id: &str,
+        tenant_id: &str,
+        ttl_secs: i64,
+    ) -> anyhow::Result<String>;
 
     /// Atomically **consumes** a link code (single-use): deletes it and, when it existed and was
     /// still within `ttl_secs`, returns its owning subject. Expired/absent → `None` (⇒ reject).
@@ -70,12 +84,16 @@ pub trait MessagingRepository: Send + Sync {
 
     /// Creates a `(platform, externalId) → user` mapping. Idempotent for the same user; a conflict
     /// (already mapped to a different user) is a client error.
+    /// Binds `(platform, externalId)` to `subject`, taking it over from whoever held it.
+    ///
+    /// Returns the subject it displaced, if any — nothing else can learn that afterwards, and it is
+    /// what the caller writes into the audit trail.
     async fn create_link(
         &self,
         subject: &LinkSubject,
         platform: &str,
         external_id: &str,
-    ) -> anyhow::Result<()>;
+    ) -> anyhow::Result<Option<LinkSubject>>;
 
     /// Resolves a `(platform, externalId)` to its subject.
     async fn subject_for_external(
@@ -94,6 +112,14 @@ pub trait MessagingRepository: Send + Sync {
         platform: &str,
         external_id: &str,
     ) -> anyhow::Result<()>;
+
+    /// Removes every link a user holds **and their pending code**, returning how many links there
+    /// were.
+    ///
+    /// For deleting the user themselves. The code goes with them for a reason of its own: it is a
+    /// live bearer token that binds whoever redeems it to this user, so a row outliving the account
+    /// is a claim that can still be made on behalf of somebody who no longer exists.
+    async fn delete_all_for_user(&self, user_id: &str) -> anyhow::Result<usize>;
 }
 
 /// DynamoDB-backed [`MessagingRepository`].
@@ -106,7 +132,7 @@ impl DynamoMessagingRepository {
     #[tracing::instrument(skip(client), err(Display))]
     pub async fn with_client(client: &DynamoClient) -> anyhow::Result<Self> {
         client
-            .create_table(TABLE_CODES, |table| {
+            .create_table_with_ttl(TABLE_CODES, FIELD_TTL, |table| {
                 let by_user = hash_gsi(INDEX_BY_USER, FIELD_USER_ID)?;
                 let table = table
                     .attribute_definitions(str_attribute(FIELD_CODE)?)
@@ -154,14 +180,21 @@ impl DynamoMessagingRepository {
     }
 
     /// Inserts a fresh unique code for the user, returning it.
-    async fn put_new_code(&self, user_id: &str, tenant_id: &str) -> anyhow::Result<String> {
+    async fn put_new_code(
+        &self,
+        user_id: &str,
+        tenant_id: &str,
+        ttl_secs: i64,
+    ) -> anyhow::Result<String> {
         // Collisions in a 31^8 space are astronomically unlikely; retry a few times regardless.
         for _ in 0..5 {
+            let now = Utc::now();
             let entity = CodeEntity {
                 code: generate_code(),
                 user_id: user_id.to_owned(),
                 tenant_id: tenant_id.to_owned(),
-                created: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
+                created: now.to_rfc3339_opts(SecondsFormat::Millis, true),
+                ttl: (now + Duration::seconds(ttl_secs)).timestamp(),
             };
             let result = self
                 .client
@@ -263,12 +296,17 @@ impl MessagingRepository for DynamoMessagingRepository {
             return Ok((entity.code, false));
         }
         // None yet, or the existing one has expired → rotate.
-        let code = self.regenerate_code(user_id, tenant_id).await?;
+        let code = self.regenerate_code(user_id, tenant_id, ttl_secs).await?;
         Ok((code, true))
     }
 
     #[tracing::instrument(level = "debug", skip(self), err(Display))]
-    async fn regenerate_code(&self, user_id: &str, tenant_id: &str) -> anyhow::Result<String> {
+    async fn regenerate_code(
+        &self,
+        user_id: &str,
+        tenant_id: &str,
+        ttl_secs: i64,
+    ) -> anyhow::Result<String> {
         // Drop the old code first so it stops resolving, then mint a new one.
         if let Some(existing) = self.code_entity(user_id).await? {
             let _ = self
@@ -279,7 +317,7 @@ impl MessagingRepository for DynamoMessagingRepository {
                 .await
                 .context("Error deleting old messaging code")?;
         }
-        self.put_new_code(user_id, tenant_id).await
+        self.put_new_code(user_id, tenant_id, ttl_secs).await
     }
 
     #[tracing::instrument(level = "debug", skip(self), err(Display))]
@@ -314,37 +352,35 @@ impl MessagingRepository for DynamoMessagingRepository {
         subject: &LinkSubject,
         platform: &str,
         external_id: &str,
-    ) -> anyhow::Result<()> {
-        let key = link_key(platform, external_id);
-
-        // Idempotent for the same user; conflict if already mapped to someone else.
-        if let Some(existing) = self.subject_for_external(platform, external_id).await? {
-            if existing.user_id == subject.user_id {
-                return Ok(());
-            }
-            status_bail!(
-                StatusCode::CONFLICT,
-                "This messaging identity is already linked to another user"
-            );
-        }
-
+    ) -> anyhow::Result<Option<LinkSubject>> {
         let link = MessagingLink {
-            link_key: key,
+            link_key: link_key(platform, external_id),
             user_id: subject.user_id.clone(),
             tenant_id: subject.tenant_id.clone(),
             platform: platform.to_owned(),
             external_id: external_id.to_owned(),
             created: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
         };
-        let _ = self
+
+        // A plain overwrite, and `AllOld` in the same call rather than a read before it: the read
+        // would be a race — two claims arriving together would both report the same displaced user
+        // and one of the reports would be wrong. The write is what decides, so the write is what
+        // has to say who it displaced.
+        let previous = self
             .client
             .put_entity(TABLE_LINKS, &link)?
-            .condition_expression("attribute_not_exists(#k)")
-            .expression_attribute_names("#k", FIELD_LINK_KEY)
+            .return_values(ReturnValue::AllOld)
             .send()
             .await
-            .context("Error inserting messaging link (already linked?)")?;
-        Ok(())
+            .context("Error inserting messaging link")?;
+
+        let previous: Option<MessagingLink> = deserialize_entity(previous.attributes)?;
+        Ok(previous
+            .filter(|previous| previous.user_id != subject.user_id)
+            .map(|previous| LinkSubject {
+                user_id: previous.user_id,
+                tenant_id: previous.tenant_id,
+            }))
     }
 
     #[tracing::instrument(level = "debug", skip(self), err(Display))]
@@ -382,6 +418,33 @@ impl MessagingRepository for DynamoMessagingRepository {
         find_all(query)
             .await
             .context("Error listing 'messaging-links' by user")
+    }
+
+    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    async fn delete_all_for_user(&self, user_id: &str) -> anyhow::Result<usize> {
+        // The code first: it is the only one of the two that can still *create* something.
+        if let Some(existing) = self.code_entity(user_id).await? {
+            let _ = self
+                .client
+                .delete_item(TABLE_CODES)
+                .key(FIELD_CODE, str(&existing.code))
+                .send()
+                .await
+                .context("Error deleting a departing user's messaging code")?;
+        }
+
+        let links = self.list_links(user_id).await?;
+        let count = links.len();
+        for link in links {
+            let _ = self
+                .client
+                .delete_item(TABLE_LINKS)
+                .key(FIELD_LINK_KEY, str(&link.link_key))
+                .send()
+                .await
+                .context("Error deleting a departing user's messaging link")?;
+        }
+        Ok(count)
     }
 
     #[tracing::instrument(level = "debug", skip(self), err(Display))]

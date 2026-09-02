@@ -34,6 +34,7 @@ use crate::notify;
 use crate::notify::Notifier;
 use crate::notify::service::NotifyDeps;
 use crate::storage::{self, Repositories};
+use crate::users::service::DeleteUserDeps;
 use std::env;
 use std::sync::Arc;
 use wasabi::web::auth::authenticator::Authenticator;
@@ -141,6 +142,18 @@ impl Platform {
             rate_limiter,
             auth,
         })
+    }
+
+    /// Everything `DELETE /users/{id}` has to clear out along with the user.
+    pub fn delete_user_deps(&self) -> DeleteUserDeps {
+        DeleteUserDeps {
+            users: self.repos.users.clone(),
+            contacts: self.repos.contacts.clone(),
+            messaging: self.repos.messaging.clone(),
+            sessions: self.repos.sessions.clone(),
+            webauthn: self.repos.webauthn.clone(),
+            api_keys: self.repos.api_keys.clone(),
+        }
     }
 
     /// Dependencies of the notification routes.

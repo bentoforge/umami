@@ -7,13 +7,17 @@
 use crate::audit::AuditEntry;
 use crate::audit::repository::{AuditRepository, record_best_effort};
 use crate::audit::{AuditSeverity, NewAuditEntry};
+use crate::auth::apikeys::repository::ApiKeyRepository;
 use crate::auth::session::repository::SessionRepository;
+use crate::auth::webauthn::repository::WebauthnRepository;
 use crate::bail_i18n;
 use crate::config::Config;
 use crate::config::repository::ConfigRepository;
 use crate::constants::{
     MANAGE_USERS_PERMISSION, MAX_LIST_RESULTS, MAX_TEXT_BODY_SIZE, ROLE_MEMBER,
 };
+use crate::contacts::repository::ContactRepository;
+use crate::messaging::repository::MessagingRepository;
 use crate::tenants::repository::TenantRepository;
 use crate::users::repository::{NewUser, UserRepository};
 use crate::users::{DisplayNames, Salutation, User, normalize_name};
@@ -275,18 +279,39 @@ pub fn patch_user_route(
 
 /// `DELETE /users/{id}` — hard-delete a user within the caller's tenant (requires `manage:users`).
 pub fn delete_user_route(
-    users: Arc<dyn UserRepository>,
+    deps: DeleteUserDeps,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("users" / String)
         .and(warp::delete())
-        .and(with_cloneable(users))
+        .and(with_cloneable(deps))
         .and(with_user_with_any_permission(
             authenticator,
             REQUIRE_MANAGE_USERS,
         ))
         .and_then(handle_delete_user_route)
         .boxed()
+}
+
+/// Everything a user delete has to clear out.
+///
+/// A bundle rather than five parameters, because the list is the point: each entry is a table whose
+/// rows nothing can reach once the user is gone, and adding one here is how a future table joins the
+/// cascade instead of being forgotten.
+#[derive(Clone)]
+pub struct DeleteUserDeps {
+    /// The user record and its username guard.
+    pub users: Arc<dyn UserRepository>,
+    /// Their email addresses.
+    pub contacts: Arc<dyn ContactRepository>,
+    /// Their chat identity links and pending link code.
+    pub messaging: Arc<dyn MessagingRepository>,
+    /// Their refresh sessions.
+    pub sessions: Arc<dyn SessionRepository>,
+    /// Their registered passkeys.
+    pub webauthn: Arc<dyn WebauthnRepository>,
+    /// Their personal access tokens — never the tenant's service keys.
+    pub api_keys: Arc<dyn ApiKeyRepository>,
 }
 
 /// `POST /users/{id}/password` — admin password reset within the caller's tenant. Sets the given
@@ -392,10 +417,10 @@ async fn handle_patch_user_route(
 #[tracing::instrument(level = "debug", name = "DELETE /users/{id}", skip_all)]
 async fn handle_delete_user_route(
     user_id: String,
-    users: Arc<dyn UserRepository>,
+    deps: DeleteUserDeps,
     caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(delete_user(user_id, users, caller).await)
+    into_response(delete_user(user_id, deps, caller).await)
 }
 
 #[tracing::instrument(level = "debug", name = "POST /users/{id}/password", skip_all)]
@@ -652,12 +677,12 @@ async fn patch_user(
 
 async fn delete_user(
     user_id: String,
-    users: Arc<dyn UserRepository>,
+    deps: DeleteUserDeps,
     caller: AuthUser,
 ) -> anyhow::Result<Value> {
     let tenant_id = caller.tenant_id()?;
 
-    let user = match users.get_user(&user_id).await? {
+    let user = match deps.users.get_user(&user_id).await? {
         // Scope strictly to the caller's tenant — a foreign user reads as "not found".
         Some(user) if user.tenant_id == tenant_id => user,
         _ => client_bail!("No such user in this tenant"),
@@ -673,8 +698,38 @@ async fn delete_user(
         );
     }
 
-    users.delete_user(&user.user_id, &user.username).await?;
-    Ok(json!({ "status": "deleted" }))
+    // Everything reachable only through this user goes first, and a failure here stops the whole
+    // delete. The two orders fail differently: rows left behind a *live* user are visible and the
+    // retry converges, while a deleted user leaves rows nothing can ever reach again — every read
+    // on them is keyed on a `userId` that no longer resolves. Addresses of somebody who asked to be
+    // removed, and credentials that outlive the account they authenticated, are the wrong things to
+    // strand.
+    //
+    // Not here: in-flight WebAuthn ceremonies and pending challenges. Both are keyed on their own id
+    // with a TTL of minutes, neither can be found by user without an index nothing else reads, and
+    // one that outlives its user resolves into a `get_user` that returns nothing.
+    let contacts = deps.contacts.delete_all_for_user(&user.user_id).await?;
+    let links = deps.messaging.delete_all_for_user(&user.user_id).await?;
+    let sessions = deps.sessions.delete_all_for_user(&user.user_id).await?;
+    let passkeys = deps.webauthn.delete_all_for_user(&user.user_id).await?;
+    let tokens = deps
+        .api_keys
+        .delete_all_for_user(&user.tenant_id, &user.user_id)
+        .await?;
+
+    deps.users
+        .delete_user(&user.user_id, &user.username)
+        .await?;
+    Ok(json!({
+        "status": "deleted",
+        "deleted": {
+            "contacts": contacts,
+            "messagingLinks": links,
+            "sessions": sessions,
+            "passkeys": passkeys,
+            "personalAccessTokens": tokens
+        }
+    }))
 }
 
 async fn reset_password(
@@ -907,4 +962,159 @@ async fn logout_user(
     let user = scoped_user(&users, &user_id, &caller).await?;
     users.bump_token_version(&user.user_id).await?;
     Ok(json!({ "status": "ok" }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::apikeys::repository::MockApiKeyRepository;
+    use crate::auth::session::repository::MockSessionRepository;
+    use crate::auth::webauthn::repository::MockWebauthnRepository;
+    use crate::contacts::repository::MockContactRepository;
+    use crate::messaging::repository::MockMessagingRepository;
+    use crate::users::repository::MockUserRepository;
+    use chrono::Utc;
+    use wasabi::web::auth::user::User as WasabiUser;
+    use wasabi::web::auth::{CLAIM_SUB, CLAIM_TENANT};
+
+    /// An admin acting in `tenant-1`.
+    fn an_admin() -> AuthUser {
+        WasabiUser::builder()
+            .with_string(CLAIM_SUB, "admin-1")
+            .with_string(CLAIM_TENANT, "tenant-1")
+            .build()
+    }
+
+    /// The user being deleted, in the admin's own tenant.
+    fn a_user() -> User {
+        let now = Utc::now();
+        User {
+            user_id: "user-1".to_owned(),
+            tenant_id: "tenant-1".to_owned(),
+            roles: Vec::new(),
+            username: "jane".to_owned(),
+            title: None,
+            locale: None,
+            salutation: crate::users::Salutation::Unspecified,
+            firstname: None,
+            lastname: None,
+            password_hash: None,
+            locked: false,
+            token_version: 1,
+            totp_secret: None,
+            totp_pending: None,
+            custom_fields: Default::default(),
+            created: now,
+            last_updated: now,
+            last_seen: None,
+            last_active_or_created: now,
+            last_password_reset: None,
+            last_password_change: None,
+            has_passkey: false,
+            created_by: None,
+            last_changed_by: None,
+            preferred_contact: None,
+            notification_choices: Default::default(),
+        }
+    }
+
+    /// The three repositories a test does not vary: they always report a fixed count, so an
+    /// assertion on the response proves the cascade reached them.
+    fn deps(
+        users: MockUserRepository,
+        contacts: MockContactRepository,
+        messaging: MockMessagingRepository,
+    ) -> DeleteUserDeps {
+        let mut sessions = MockSessionRepository::new();
+        let _ = sessions
+            .expect_delete_all_for_user()
+            .returning(|_| Box::pin(async { Ok(3) }));
+        let mut webauthn = MockWebauthnRepository::new();
+        let _ = webauthn
+            .expect_delete_all_for_user()
+            .returning(|_| Box::pin(async { Ok(1) }));
+        let mut api_keys = MockApiKeyRepository::new();
+        let _ = api_keys
+            .expect_delete_all_for_user()
+            .returning(|_, _| Box::pin(async { Ok(2) }));
+
+        DeleteUserDeps {
+            users: Arc::new(users),
+            contacts: Arc::new(contacts),
+            messaging: Arc::new(messaging),
+            sessions: Arc::new(sessions),
+            webauthn: Arc::new(webauthn),
+            api_keys: Arc::new(api_keys),
+        }
+    }
+
+    /// Everything reachable only through the user goes with them. Nothing else can reach these rows
+    /// afterwards — every read on them is keyed on a `userId` that no longer resolves.
+    #[tokio::test]
+    async fn deleting_a_user_takes_their_contacts_and_messaging_links() {
+        let mut users = MockUserRepository::new();
+        let _ = users
+            .expect_get_user()
+            .returning(|_| Box::pin(async { Ok(Some(a_user())) }));
+        let _ = users
+            .expect_delete_user()
+            .times(1)
+            .returning(|_, _| Box::pin(async { Ok(()) }));
+
+        let mut contacts = MockContactRepository::new();
+        let _ = contacts
+            .expect_delete_all_for_user()
+            .times(1)
+            .returning(|_| Box::pin(async { Ok(2) }));
+
+        let mut messaging = MockMessagingRepository::new();
+        let _ = messaging
+            .expect_delete_all_for_user()
+            .times(1)
+            .returning(|_| Box::pin(async { Ok(1) }));
+
+        let result = delete_user(
+            "user-1".to_owned(),
+            deps(users, contacts, messaging),
+            an_admin(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["deleted"]["contacts"], 2);
+        assert_eq!(result["deleted"]["messagingLinks"], 1);
+        assert_eq!(result["deleted"]["sessions"], 3);
+        assert_eq!(result["deleted"]["passkeys"], 1);
+        assert_eq!(result["deleted"]["personalAccessTokens"], 2);
+    }
+
+    /// The order is load-bearing. A failure while clearing the dependents must leave the user
+    /// standing: rows behind a live user are visible and the retry converges, while a deleted user
+    /// strands rows nothing can ever reach again.
+    #[tokio::test]
+    async fn a_failed_cascade_leaves_the_user_alone() {
+        let mut users = MockUserRepository::new();
+        let _ = users
+            .expect_get_user()
+            .returning(|_| Box::pin(async { Ok(Some(a_user())) }));
+        let _ = users.expect_delete_user().never();
+
+        let mut contacts = MockContactRepository::new();
+        let _ = contacts
+            .expect_delete_all_for_user()
+            .returning(|_| Box::pin(async { Err(anyhow::anyhow!("DynamoDB is having a day")) }));
+
+        let mut messaging = MockMessagingRepository::new();
+        let _ = messaging.expect_delete_all_for_user().never();
+
+        assert!(
+            delete_user(
+                "user-1".to_owned(),
+                deps(users, contacts, messaging),
+                an_admin()
+            )
+            .await
+            .is_err()
+        );
+    }
 }

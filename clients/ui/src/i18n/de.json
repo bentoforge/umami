@@ -240,6 +240,7 @@
     "toSignIn": "Zur Anmeldung"
   },
   "messaging": {
+    "intro": "Chat-Konten, über die dieses Benutzerkonto erreichbar ist. Verknüpft wird in der jeweiligen Anwendung; hier lässt sich eine Verknüpfung wieder lösen.",
     "linksTitle": "Messaging-Verknüpfungen",
     "empty": "Keine Verknüpfungen.",
     "linkedOn": "Verknüpft am",

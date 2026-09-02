@@ -11,7 +11,6 @@ use crate::audit::repository::{AuditRepository, record_best_effort};
 use crate::audit::{AuditSeverity, NewAuditEntry};
 use crate::auth::broker::{MintParams, mint_for_api};
 use crate::auth::tokens::TokenIssuer;
-use crate::config::MessagingConfig;
 use crate::config::repository::ConfigRepository;
 use crate::constants::{
     MANAGE_MESSAGING_PERMISSION, MANAGE_USERS_PERMISSION, MAX_TEXT_BODY_SIZE,
@@ -38,38 +37,15 @@ const REQUIRE_LINK: &[&str] = &[MESSAGING_LINK_PERMISSION];
 const REQUIRE_RESOLVE: &[&str] = &[MESSAGING_RESOLVE_PERMISSION];
 const REQUIRE_MANAGE_USERS: &[&str] = &[MANAGE_USERS_PERMISSION];
 
-/// Self-service link-code response, with ready-made deep links when the deployment is configured.
+/// Self-service link-code response.
+///
+/// The code and nothing else. Building `t.me/<bot>?start=<code>` needs the bot's name, which lives
+/// with the app that runs the bot — umami never had it except as a copy in its own config, and a
+/// copy of a value it cannot verify is a copy that goes stale.
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct CodeResponse {
     code: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    telegram_url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    whatsapp_url: Option<String>,
-}
-
-impl CodeResponse {
-    /// Builds the response, filling deep links from the configured bot/number.
-    fn new(code: String, messaging: &MessagingConfig) -> Self {
-        let telegram_url = messaging
-            .telegram_bot
-            .as_ref()
-            .map(|bot| bot.trim().trim_start_matches('@'))
-            .filter(|bot| !bot.is_empty())
-            .map(|bot| format!("https://t.me/{bot}?start={code}"));
-        let whatsapp_url = messaging
-            .whatsapp_number
-            .as_ref()
-            .map(|num| num.chars().filter(char::is_ascii_digit).collect::<String>())
-            .filter(|num| !num.is_empty())
-            .map(|num| format!("https://wa.me/{num}?text={code}"));
-        CodeResponse {
-            code,
-            telegram_url,
-            whatsapp_url,
-        }
-    }
 }
 
 /// Self-service link list.
@@ -323,7 +299,7 @@ async fn my_code(
     if generated {
         audit_code_generated(&audit, tenant_id, user_id).await;
     }
-    Ok(CodeResponse::new(code, &config.messaging))
+    Ok(CodeResponse { code })
 }
 
 async fn regenerate_code(
@@ -334,9 +310,14 @@ async fn regenerate_code(
 ) -> anyhow::Result<CodeResponse> {
     let user_id = caller.user_id()?;
     let tenant_id = caller.tenant_id()?;
-    let code = messaging.regenerate_code(user_id, tenant_id).await?;
+    // The row's DynamoDB TTL comes from the same setting the freshness check uses, so a code cannot
+    // outlive its own expiry in the table by more than DynamoDB's own deletion lag.
+    let ttl_secs = config.current().await?.security.messaging_code_ttl_secs as i64;
+    let code = messaging
+        .regenerate_code(user_id, tenant_id, ttl_secs)
+        .await?;
     audit_code_generated(&audit, tenant_id, user_id).await;
-    Ok(CodeResponse::new(code, &config.current().await?.messaging))
+    Ok(CodeResponse { code })
 }
 
 /// Records a "link code generated" event (neutral — benign self-service).
@@ -436,7 +417,11 @@ async fn create_link(
         }
     };
 
-    messaging
+    // Claiming takes the identity over from whoever held it. That is deliberate: the claim carries
+    // a single-use code the *new* user just generated, so it is their own act, and whoever is
+    // holding the messaging account is the one who can prove it. Refusing instead would freeze a
+    // mistyped link forever — nothing else can release one, and there is no admin who can.
+    let displaced = messaging
         .create_link(&subject, &platform, &external_id)
         .await?;
 
@@ -450,6 +435,25 @@ async fn create_link(
         ),
     )
     .await;
+
+    // The user who lost it never asked for anything and would otherwise just stop receiving
+    // messages, so the trail has to carry it — under *their* id, where somebody looking into "why
+    // did this stop reaching me" would go.
+    if let Some(displaced) = displaced {
+        record_best_effort(
+            &audit,
+            NewAuditEntry::new(
+                AuditSeverity::Bad,
+                Some(displaced.tenant_id),
+                Some(displaced.user_id),
+                format!(
+                    "Messaging identity ({platform}) taken over by another user; this account no \
+                     longer receives messages on it"
+                ),
+            ),
+        )
+        .await;
+    }
 
     Ok(json!({ "userId": subject.user_id, "tenantId": subject.tenant_id }))
 }
@@ -536,4 +540,96 @@ async fn resolve(query: ResolveQuery, deps: ResolveDeps) -> anyhow::Result<Value
         username: user.username,
         roles: user.roles,
     })?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audit::repository::MockAuditRepository;
+    use crate::config::repository::StaticConfigRepository;
+    use crate::messaging::repository::MockMessagingRepository;
+    use std::sync::Mutex;
+
+    fn a_request() -> LinkRequest {
+        LinkRequest {
+            code: "abcd1234".to_owned(),
+            platform: "telegram".to_owned(),
+            external_id: "99887766".to_owned(),
+        }
+    }
+
+    fn a_subject(user_id: &str) -> crate::messaging::repository::LinkSubject {
+        crate::messaging::repository::LinkSubject {
+            user_id: user_id.to_owned(),
+            tenant_id: "tenant-1".to_owned(),
+        }
+    }
+
+    /// An audit repository that keeps what it was handed, so a test can assert on *who* the trail
+    /// names — the whole point of recording a takeover.
+    fn recording_audit(entries: Arc<Mutex<Vec<NewAuditEntry>>>) -> MockAuditRepository {
+        let mut audit = MockAuditRepository::new();
+        let _ = audit.expect_record().returning(move |entry| {
+            if let Ok(mut entries) = entries.lock() {
+                entries.push(entry);
+            }
+            Box::pin(async { Ok(()) })
+        });
+        audit
+    }
+
+    /// Claiming an identity somebody else holds takes it over — and both users end up in the trail.
+    /// The one who lost it never asked for anything and would otherwise just stop receiving
+    /// messages, with nothing anywhere to say why.
+    #[tokio::test]
+    async fn a_takeover_is_recorded_against_both_users() {
+        let mut messaging = MockMessagingRepository::new();
+        let _ = messaging
+            .expect_consume_code()
+            .returning(|_, _| Box::pin(async { Ok(Some(a_subject("new-owner"))) }));
+        let _ = messaging
+            .expect_create_link()
+            .times(1)
+            .returning(|_, _, _| Box::pin(async { Ok(Some(a_subject("old-owner"))) }));
+
+        let entries = Arc::new(Mutex::new(Vec::new()));
+        create_link(
+            a_request(),
+            Arc::new(messaging),
+            Arc::new(StaticConfigRepository::with_default()),
+            Arc::new(recording_audit(entries.clone())),
+        )
+        .await
+        .unwrap();
+
+        let entries = entries.lock().unwrap();
+        assert_eq!(entries.len(), 2, "one entry per affected user");
+        assert_eq!(entries[0].user.as_deref(), Some("new-owner"));
+        assert_eq!(entries[1].user.as_deref(), Some("old-owner"));
+        assert_eq!(entries[1].severity, AuditSeverity::Bad);
+    }
+
+    /// Nothing was displaced, so nobody has to be told about it.
+    #[tokio::test]
+    async fn a_fresh_link_records_only_the_new_owner() {
+        let mut messaging = MockMessagingRepository::new();
+        let _ = messaging
+            .expect_consume_code()
+            .returning(|_, _| Box::pin(async { Ok(Some(a_subject("new-owner"))) }));
+        let _ = messaging
+            .expect_create_link()
+            .returning(|_, _, _| Box::pin(async { Ok(None) }));
+
+        let entries = Arc::new(Mutex::new(Vec::new()));
+        create_link(
+            a_request(),
+            Arc::new(messaging),
+            Arc::new(StaticConfigRepository::with_default()),
+            Arc::new(recording_audit(entries.clone())),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(entries.lock().unwrap().len(), 1);
+    }
 }

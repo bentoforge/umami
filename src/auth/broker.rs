@@ -5,8 +5,8 @@
 use crate::auth::tokens::{AccessTokenClaims, TokenIssuer};
 use crate::config::Config;
 use crate::constants::{
-    MESSAGING_CONFIGURED_MARKER, PASSKEY_MARKER, SYSTEM_TENANT_MARKER, SYSTEM_TENANT_MEMBER_MARKER,
-    TOTP_MARKER, TWO_FACTOR_MARKER,
+    PASSKEY_MARKER, SYSTEM_TENANT_MARKER, SYSTEM_TENANT_MEMBER_MARKER, TOTP_MARKER,
+    TWO_FACTOR_MARKER,
 };
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -105,12 +105,6 @@ pub async fn mint_for_api(
     if params.passkey || params.totp {
         subject_set.push(TWO_FACTOR_MARKER.to_owned());
     }
-    // Global capability marker: messaging self-service only exists once the deployment has a bot
-    // and/or a WhatsApp number to point users at.
-    if config.messaging.is_configured() {
-        subject_set.push(MESSAGING_CONFIGURED_MARKER.to_owned());
-    }
-
     let permissions = match api.resolve(&subject_set) {
         Some(permissions) => permissions,
         None => status_bail!(

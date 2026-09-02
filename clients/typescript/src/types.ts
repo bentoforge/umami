@@ -325,8 +325,6 @@ export interface Config {
    * wins. Salutation *words* are per-locale constants in umami, not configuration. */
   defaultLocale: string;
   security: SecuritySettings;
-  /** Messaging integration (Telegram/WhatsApp) settings. */
-  messaging?: MessagingConfig;
   /** The notification types users can subscribe to. */
   notificationTypes?: NotificationTypeDef[];
   /** White-labeling for the management UI. */
@@ -432,21 +430,24 @@ export interface BrandingConfig {
   title?: string;
 }
 
-/** Messaging integration settings (Telegram/WhatsApp). */
-export interface MessagingConfig {
-  /** WhatsApp business number (digits) for click-to-chat links. */
-  whatsappNumber?: string;
-  /** Telegram bot username (without `@`) for deep links. */
-  telegramBot?: string;
+/** What a user delete cleared out along with the user. */
+export interface DeletedUserCounts {
+  contacts: number;
+  messagingLinks: number;
+  sessions: number;
+  passkeys: number;
+  /** PATs owned by the user. Tenant service keys are not user-owned and are untouched. */
+  personalAccessTokens: number;
 }
 
 // ── Messaging links ───────────────────────────────────────────────────────────
 
-/** The caller's link code plus ready-made deep links (when the deployment is configured). */
+/** The caller's link code, and nothing else.
+ *
+ * Building `t.me/<bot>?start=<code>` needs the bot's name, which belongs to whoever runs the bot —
+ * umami never sees one. Fetch this with the user's own token, then build your own deep link. */
 export interface MessagingCodeResponse {
   code: string;
-  telegramUrl?: string;
-  whatsappUrl?: string;
 }
 
 /** An external messaging identity mapped to a user. */

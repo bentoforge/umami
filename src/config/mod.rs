@@ -14,11 +14,10 @@ use crate::constants::{
     DEFAULT_MESSAGING_CODE_TTL_SECS, DEFAULT_PASSWORD_RESET_TTL_SECS, DEFAULT_PER_IP_BLOCK_SECS,
     DEFAULT_PER_IP_MAX_PER_WINDOW, DEFAULT_PER_IP_WINDOW_SECS, DEFAULT_REFRESH_TTL_SECS,
     DEFAULT_TOKEN_BLOCK_SECS, DEFAULT_TOKEN_MAX_PER_WINDOW, DEFAULT_TOKEN_WINDOW_SECS,
-    MANAGE_CONFIG_PERMISSION, MANAGE_CONTACTS_PERMISSION, MANAGE_MESSAGING_PERMISSION,
-    MANAGE_PASSWORDS_PERMISSION, MANAGE_PERSONAL_TOKENS_PERMISSION, MANAGE_PROFILE_PERMISSION,
-    MANAGE_SERVICE_KEYS_PERMISSION, MANAGE_SESSIONS_PERMISSION, MANAGE_TENANTS_PERMISSION,
-    MANAGE_USERS_PERMISSION, MESSAGING_CONFIGURED_MARKER, MESSAGING_LINK_PERMISSION,
-    MESSAGING_RESOLVE_PERMISSION, NOTIFICATIONS_AUDIENCE_PERMISSION,
+    MANAGE_CONFIG_PERMISSION, MANAGE_CONTACTS_PERMISSION, MANAGE_PASSWORDS_PERMISSION,
+    MANAGE_PERSONAL_TOKENS_PERMISSION, MANAGE_PROFILE_PERMISSION, MANAGE_SERVICE_KEYS_PERMISSION,
+    MANAGE_SESSIONS_PERMISSION, MANAGE_TENANTS_PERMISSION, MANAGE_USERS_PERMISSION,
+    MESSAGING_LINK_PERMISSION, MESSAGING_RESOLVE_PERMISSION, NOTIFICATIONS_AUDIENCE_PERMISSION,
     NOTIFICATIONS_REPORT_PERMISSION, NOTIFICATIONS_SEND_PERMISSION, ROLE_MEMBER, ROLE_OWNER,
     SWITCH_TENANT_PERMISSION, SYSTEM_TENANT_MARKER, SYSTEM_TENANT_MEMBER_MARKER,
     VIEW_AUDIT_PERMISSION, VIEW_RATELIMITS_PERMISSION,
@@ -480,32 +479,6 @@ pub struct CustomFieldDef {
     pub self_editable: bool,
 }
 
-/// Messaging integration settings. When either endpoint is set, umami can hand out ready-made
-/// deep links from `GET /auth/me/messaging-code` and synthesizes `is:messaging-configured`.
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct MessagingConfig {
-    /// WhatsApp business number (digits, e.g. `4915112345678`) for click-to-chat links.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub whatsapp_number: Option<String>,
-    /// Telegram bot username (without `@`) for `t.me/<bot>?start=<code>` deep links.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub telegram_bot: Option<String>,
-}
-
-impl MessagingConfig {
-    /// Whether any messaging endpoint is configured.
-    pub fn is_configured(&self) -> bool {
-        self.whatsapp_number
-            .as_ref()
-            .is_some_and(|v| !v.trim().is_empty())
-            || self
-                .telegram_bot
-                .as_ref()
-                .is_some_and(|v| !v.trim().is_empty())
-    }
-}
-
 /// White-labeling for the management UI. All optional; empty fields fall back to the built-in
 /// defaults. `logo`/`favicon` may be a `data:` URI (self-contained in the config) or an `http(s)`
 /// URL. Served by umami at `/app/branding.css`, `/app/logo`, `/app/favicon` (see `web_ui`).
@@ -721,9 +694,6 @@ pub struct Config {
     pub locales: Vec<String>,
     /// Security/token settings.
     pub security: SecuritySettings,
-    /// Messaging integration (Telegram/WhatsApp) settings.
-    #[serde(default)]
-    pub messaging: MessagingConfig,
     /// The notification types users can subscribe to — see [`NotificationTypeDef`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notification_types: Vec<NotificationTypeDef>,
@@ -748,7 +718,7 @@ impl Config {
 }
 
 /// A tenant's feature set *including* the synthetic markers `assignableIf` gates on
-/// (`is:system-tenant`, `is:messaging-configured`).
+/// (`is:system-tenant`).
 ///
 /// A newtype rather than a bare `Vec<String>`, and only producible by
 /// [`Config::eval_feature_set`], because the distinction is invisible at a call site and easy to
@@ -879,9 +849,6 @@ impl Config {
         let mut set: Vec<String> = tenant_features.to_vec();
         if is_system_tenant {
             set.push(SYSTEM_TENANT_MARKER.to_owned());
-        }
-        if self.messaging.is_configured() {
-            set.push(MESSAGING_CONFIGURED_MARKER.to_owned());
         }
         EffectiveFeatures(set)
     }
@@ -1025,7 +992,6 @@ impl Default for Config {
                 // names the URLs it trusts.
                 redirect_uris: Vec::new(),
             },
-            messaging: MessagingConfig::default(),
             // Empty: what a deployment notifies about is entirely its own, and inventing a type
             // would put an unasked-for switch in everybody's profile.
             notification_types: Vec::new(),
@@ -1081,9 +1047,10 @@ impl Default for Config {
                             VIEW_RATELIMITS_PERMISSION,
                         ],
                     ),
-                    // Self-service messaging is available to everyone once the deployment has a bot
-                    // and/or number configured.
-                    rule(MESSAGING_CONFIGURED_MARKER, &[MANAGE_MESSAGING_PERMISSION]),
+                    // No rule for `manage:messaging`. Whether a deployment links chat identities
+                    // at all is a statement only it can make — the bot lives on the app's side and
+                    // umami never sees one — so it writes the rule rather than inheriting one that
+                    // shows an empty panel to everybody else.
                     // Messaging M2M: only system-tenant service keys carrying the scope get the
                     // cross-tenant link/resolve permissions.
                     rule(

@@ -240,6 +240,7 @@
     "toSignIn": "To sign-in"
   },
   "messaging": {
+    "intro": "Chat accounts this account can be reached on. Linking happens in the application itself; here you can disconnect one.",
     "linksTitle": "Messaging links",
     "empty": "No links.",
     "linkedOn": "Linked",

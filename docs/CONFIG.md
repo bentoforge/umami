@@ -92,10 +92,6 @@ Relevant environment variables:
 //   contact list, so the account is the party to hold accountable. Without the cap, anyone with an
 //   account can add a stranger's address and have umami mail that stranger on repeat.
 
-// MessagingConfig — either/both optional; when set, /auth/me/messaging-code returns deep links
-//   and every token gets the is:messaging-configured marker:
-{ "whatsappNumber": "4915112345678", "telegramBot": "my_link_bot" }
-
 // NotificationTypeDef — one subscribable thing. See NOTIFICATIONS.md for the model.
 //   A cadence code is a plain STRING, not a fixed enum: umami never interprets one (no arithmetic,
 //   no ordering, no scheduling — the rule is equality), so the vocabulary is the deployment's.
@@ -195,7 +191,6 @@ At mint time umami builds a **subject set** and runs it through the target API's
 | Marker | Added when |
 |--------|-----------|
 | `is:system-tenant` | the token's tenant equals `UMAMI_SYSTEM_TENANT_ID` |
-| `is:messaging-configured` | the config has `messaging.telegramBot` and/or `messaging.whatsappNumber` |
 
 Synthetic markers also participate in **assignability** (`assignableIf`) via
 `Config::eval_feature_set`, so a scope/role can be gated on e.g. `is:system-tenant` and will only
@@ -264,7 +259,6 @@ role matrix; see [§6](#6-proposed-standard-config) for that. The default `apis[
 | *(empty — always)* | `manage:profile`, `manage:passwords`, `manage:personal-tokens`, `manage:sessions` |
 | `role:owner` | `admin:tenant`, `manage:users`, `manage:service-keys`, `manage:config` |
 | `is:system-tenant-member` | `manage:tenants`, `switch:tenant`, `view:ratelimits` |
-| `is:messaging-configured` | `manage:messaging` |
 | `scope:messaging-linker + is:system-tenant` | `messaging:link` |
 | `scope:messaging-resolver + is:system-tenant` | `messaging:resolve` |
 | `scope:notifier + is:system-tenant` | `notifications:audience`, `notifications:send` |
@@ -327,7 +321,6 @@ feature/scope and a product-API entry with eligibility + claims. Copy, adjust, `
       "mailSend":      { "maxPerWindow": 5,   "windowSecs": 3600, "blockSecs": 3600 }
     }
   },
-  "messaging": { "telegramBot": "my_link_bot", "whatsappNumber": "4915112345678" },
   "apis": [
     {
       "code": "umami", "audience": "umami",
@@ -339,7 +332,9 @@ feature/scope and a product-API entry with eligibility + claims. Copy, adjust, `
         // there is no separate deny marker).
         { "when": "!role:readonly", "grant": ["manage:profile","manage:passwords","manage:personal-tokens","manage:sessions"] },
         { "when": "!role:readonly", "grant": ["manage:contacts"] },
-        { "when": "is:messaging-configured + !role:readonly", "grant": ["manage:messaging"] },
+        // Only for a deployment that actually links chat identities — see §7. The built-in
+        // default has no rule for this, because umami cannot tell whether you do.
+        { "when": "!role:readonly", "grant": ["manage:messaging"] },
         { "when": "scope:messaging-linker + is:system-tenant",   "grant": ["messaging:link"] },
         { "when": "scope:messaging-resolver + is:system-tenant", "grant": ["messaging:resolve"] },
         { "when": "scope:notifier + is:system-tenant", "grant": ["notifications:audience","notifications:send"] },
@@ -370,10 +365,36 @@ feature/scope and a product-API entry with eligibility + claims. Copy, adjust, `
 
 ## 7. Messaging specifics
 
+**There is no `messaging` config block, and switching the feature on is a permission rule.** umami
+has no way to tell whether a deployment links chat identities: the bot belongs to the app that runs
+it, and umami never sees one. So the built-in default grants `manage:messaging` to nobody, and a
+deployment that wants it writes one line into its `apis`:
+
+```jsonc
+{ "when": "!role:readonly", "grant": ["manage:messaging"] }
+```
+
+That permission is what makes the messaging section appear in the profile.
+
 - The per-user **link code** is a short-lived, single-use OTP (`security.messagingCodeTtlSecs`).
-  `GET /auth/me/messaging-code` returns the current code, rotating it if expired, and — when
-  `messaging` is configured — ready-made deep links (`t.me/<bot>?start=<code>`,
-  `wa.me/<number>?text=<code>`).
+  `GET /auth/me/messaging-code` returns the current code, rotating it if expired — **just the
+  code**. Building `t.me/<bot>?start=<code>` needs the bot's name, which lives with the app, so the
+  app builds its own deep link. The profile does not show the code at all: connecting is the app's
+  flow, and it is the app that has to run the bot on the other end.
+- **Claiming an identity takes it over** from whoever held it. `messaging-links` is keyed on
+  `(platform, externalId)` alone, so there is exactly one row per identity. The claim carries a
+  single-use code the new user just generated and can only be presented by whoever holds the chat
+  account, so it is their own act — and refusing instead would freeze a mistyped link forever, since
+  nothing releases one but its owner and there is no admin who can. Both users are audited, the
+  displaced one under their own id.
+- **Unlinking stays in the profile** for exactly that reason: it is the only way an identity is ever
+  released. The admin view (`GET /users/{id}/messaging-links`) is read-only.
+- The link code lives in its own table keyed on the **code**, not as a field on the user: redeeming
+  it is a `DeleteItem` on that key returning the old row, which is what makes "single-use" atomic.
+  The row carries a DynamoDB TTL for cleanup, but freshness is still checked on read — TTL deletion
+  is eventual, so it can never be the authority.
+- **Deleting a user deletes their links and their pending code**, along with everything else only
+  they can reach — see §7b.
 - The bot backend is a **system-tenant service key** carrying `scope:messaging-linker`
   (→ `messaging:link`) and/or `scope:messaging-resolver` (→ `messaging:resolve`). Because the
   mapping requires `+ is:system-tenant`, such a key only works in the system tenant.
@@ -442,6 +463,37 @@ naming the locale, rather than a placeholder in every mail or a password reset t
 
 The default config ships both empty. A placeholder imprint would go out in real mail until somebody
 noticed.
+
+---
+
+## 7b. What `DELETE /users/{id}` takes with it
+
+Everything whose only way in is that user's id:
+
+| Gone | Why |
+|---|---|
+| contacts | addresses of somebody who asked to be removed |
+| messaging links + pending code | the code is a live bearer token that would still bind an identity to the account |
+| refresh sessions | |
+| passkeys | credentials outliving the account they authenticated |
+| personal access tokens | **PATs only** — a service key carries no `userId` and belongs to the tenant, so it survives whoever created it |
+
+**Dependents first, then the user**, and a failure anywhere stops the delete. The two orders fail
+differently: rows behind a *live* user are visible and a retry converges, while a deleted user
+strands rows nothing can ever reach again — every read on them is keyed on a `userId` that no longer
+resolves.
+
+Two things stay: **in-flight WebAuthn ceremonies** and **pending auth challenges**. Both are keyed on
+their own id with a TTL of minutes, neither can be found by user without an index nothing else would
+read, and one that outlives its user resolves into a lookup that returns nothing.
+
+The response says what went:
+
+```json
+{ "status": "deleted",
+  "deleted": { "contacts": 2, "messagingLinks": 1, "sessions": 3,
+               "passkeys": 1, "personalAccessTokens": 0 } }
+```
 
 ---
 
