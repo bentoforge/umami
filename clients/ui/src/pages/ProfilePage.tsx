@@ -481,15 +481,13 @@ function MessagingPanel() {
 
   return (
     <section className={`${card} space-y-4`}>
-      <div>
-        <h2 className="font-medium text-slate-800 dark:text-slate-200">Messaging</h2>
-        <p className="text-sm text-slate-500">{t("messaging.intro")}</p>
-      </div>
+      <h2 className="font-medium text-slate-800 dark:text-slate-200 mb-3">
+        {t("messaging.linksTitle")}
+      </h2>
 
       <Banner tone="error">{error}</Banner>
 
       <div>
-        <div className="text-xs text-slate-500 mb-1">{t("messaging.linksTitle")}</div>
         {links.length === 0 ? (
           <span className="text-xs text-slate-400">{t("messaging.empty")}</span>
         ) : (
