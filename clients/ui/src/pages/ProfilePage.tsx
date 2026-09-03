@@ -13,6 +13,7 @@ import type {
 } from "@bentoforge/umami-iam";
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useLocation } from "react-router-dom";
 import { useUmami } from "../auth/UmamiProvider";
 import {
   AuditList,
@@ -38,6 +39,21 @@ const AUDIT_PAGE = 10;
 export function ProfilePage() {
   const { client, me } = useUmami();
   const { t } = useTranslation();
+  const { hash } = useLocation();
+
+  // A start-page task links here with a `#section` — scroll to it. The panels below fetch on
+  // mount, so wait a frame for the layout to settle before jumping (and `scroll-mt-*` on each
+  // target keeps it clear of the sticky header).
+  useEffect(() => {
+    if (!hash) {
+      return;
+    }
+    const id = hash.slice(1);
+    const frame = requestAnimationFrame(() => {
+      document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [hash]);
 
   if (!me) return null;
 
@@ -367,7 +383,7 @@ function ContactsPanel() {
 
   const contacts = data?.contacts ?? [];
   return (
-    <section className={`${card} space-y-4`}>
+    <section id="contacts" className={`${card} scroll-mt-24 space-y-4`}>
       <div className="flex items-center justify-between gap-3">
         <h2 className="font-medium text-slate-800 dark:text-slate-200">{t("contacts.title")}</h2>
         {!adding && (
@@ -585,7 +601,7 @@ function BaseDataCard() {
   };
 
   return (
-    <section className={`${card} space-y-4`}>
+    <section id="profile" className={`${card} scroll-mt-24 space-y-4`}>
       <div className="flex items-center justify-between">
         <h2 className="font-medium text-slate-800 dark:text-slate-200">
           {t("profile.detailsTitle")}
@@ -778,7 +794,7 @@ function SecurityCard() {
   };
 
   return (
-    <section className={`${card} space-y-4`}>
+    <section id="security" className={`${card} scroll-mt-24 space-y-4`}>
       <h2 className="font-medium text-slate-800 dark:text-slate-200">
         {t("profile.securityTitle")}
       </h2>

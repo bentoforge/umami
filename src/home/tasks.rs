@@ -15,7 +15,7 @@ impl HomeTask for ChangePassword {
     fn evaluate(&self, ctx: &HomeContext<'_>) -> Option<Task> {
         ctx.password_generated.then_some(Task {
             code: "change-password",
-            url: "/profile",
+            url: "/profile#security",
             important: true,
         })
     }
@@ -40,7 +40,7 @@ impl HomeTask for ConfirmEmail {
         };
         Some(Task {
             code,
-            url: "/profile",
+            url: "/profile#contacts",
             important: ctx.has_second_factor(),
         })
     }
@@ -54,7 +54,7 @@ impl HomeTask for AddPasskey {
     fn evaluate(&self, ctx: &HomeContext<'_>) -> Option<Task> {
         (!ctx.has_second_factor()).then_some(Task {
             code: "add-passkey",
-            url: "/profile",
+            url: "/profile#security",
             important: false,
         })
     }
@@ -67,7 +67,7 @@ impl HomeTask for LinkAuthenticator {
     fn evaluate(&self, ctx: &HomeContext<'_>) -> Option<Task> {
         (!ctx.has_second_factor()).then_some(Task {
             code: "link-authenticator",
-            url: "/profile",
+            url: "/profile#security",
             important: false,
         })
     }
@@ -83,7 +83,7 @@ impl HomeTask for CompleteProfile {
             || ctx.user.lastname.as_deref().unwrap_or_default().is_empty();
         missing.then_some(Task {
             code: "complete-profile",
-            url: "/profile",
+            url: "/profile#profile",
             important: false,
         })
     }

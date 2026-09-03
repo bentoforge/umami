@@ -149,7 +149,7 @@ not administering the deployment.
 //   type ∈ { "string", "number", "bool"/"boolean", "select" }
 
 // AppDef — a launch card for another service, on the start page:
-{ "label": { "de": "Website Concierge", "en": "Website Concierge" },  // LocalizedText
+{ "name": { "de": "Website Concierge", "en": "Website Concierge" },   // LocalizedText
   "description": "Ihre Seiten, live betreut",                          // LocalizedText, optional
   "url": "https://wsc.example.com",                                    // absolute; opens a new tab
   "enabledIf": "feature:wsc" }                                         // optional; see below

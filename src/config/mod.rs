@@ -489,8 +489,9 @@ pub struct CustomFieldDef {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct AppDef {
-    /// Card heading, in one or more languages — see [`LocalizedText`].
-    pub label: LocalizedText,
+    /// Card heading, in one or more languages — see [`LocalizedText`]. Named `name` like every other
+    /// catalogue entry (role, feature, …), not `label`, so the shape is uniform across the config.
+    pub name: LocalizedText,
     /// Card subheading, in one or more languages.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<LocalizedText>,
@@ -977,14 +978,14 @@ pub fn validate_labels(config: &Config) -> anyhow::Result<()> {
     }
 
     for app in &config.apps {
-        if app.label.is_empty() {
-            client_bail!("An app card needs a 'label' (url '{}')", app.url.trim());
+        if app.name.is_empty() {
+            client_bail!("An app card needs a 'name' (url '{}')", app.url.trim());
         }
         if app.url.trim().is_empty() {
-            let label = app
-                .label
+            let name = app
+                .name
                 .resolve(&config.default_locale, &config.default_locale);
-            client_bail!("App card '{label}' needs a 'url' to link to");
+            client_bail!("App card '{name}' needs a 'url' to link to");
         }
     }
     Ok(())

@@ -41,7 +41,7 @@ pub struct HomeDeps {
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct AppCard {
-    label: String,
+    name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     description: Option<String>,
     url: String,
@@ -151,7 +151,7 @@ fn resolve_apps(
             Some(expression) => eval_expression(expression, &view),
         })
         .map(|app| AppCard {
-            label: app.label.resolve(locale, &config.default_locale).to_owned(),
+            name: app.name.resolve(locale, &config.default_locale).to_owned(),
             description: app
                 .description
                 .as_ref()

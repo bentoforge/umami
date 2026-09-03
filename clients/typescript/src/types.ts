@@ -376,7 +376,7 @@ export interface Config {
 /** A launch card for another service this deployment fronts, on the start page. Gated per-user by
  * `enabledIf` (evaluated server-side); the resolved, per-caller list is {@link HomeResponse.apps}. */
 export interface AppDef {
-  label: LocalizedText;
+  name: LocalizedText;
   description?: LocalizedText | null;
   /** Absolute `http(s)` URL, opened in a new tab. */
   url: string;
@@ -388,7 +388,7 @@ export interface AppDef {
 /** One launch card as the start page sees it — labels resolved into the caller's language, and
  * only present when the caller passes its `enabledIf`. */
 export interface AppCard {
-  label: string;
+  name: string;
   description?: string;
   url: string;
 }
