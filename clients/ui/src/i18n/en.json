@@ -16,6 +16,14 @@
     "config": "System configuration",
     "rateLimits": "Rate limits"
   },
+  "config": {
+    "title": "Configuration",
+    "reload": "Reload",
+    "save": "Save",
+    "saving": "Saving…",
+    "invalidJson": "Invalid JSON: {{message}}",
+    "saved": "Saved. New version: {{version}}."
+  },
   "layout": {
     "menu": "Menu",
     "logout": "Log out",

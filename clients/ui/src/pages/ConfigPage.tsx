@@ -1,5 +1,6 @@
 import type { Config } from "@bentoforge/umami-iam";
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useUmami } from "../auth/UmamiProvider";
 import { Banner, errMsg } from "../components";
 import { card, ghostButton, primaryButton } from "../ui";
@@ -8,8 +9,8 @@ import { card, ghostButton, primaryButton } from "../ui";
  * Save is version-checked server-side (optimistic concurrency) — a concurrent edit yields a 409. */
 export function ConfigPage() {
   const { client } = useUmami();
+  const { t } = useTranslation();
   const [text, setText] = useState("");
-  const [version, setVersion] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -20,7 +21,6 @@ export function ConfigPage() {
     try {
       const config = await client.getConfig();
       setText(JSON.stringify(config, null, 2));
-      setVersion(config.version);
     } catch (err) {
       setError(errMsg(err));
     }
@@ -38,7 +38,7 @@ export function ConfigPage() {
     try {
       parsed = JSON.parse(text) as Config;
     } catch (err) {
-      setError(`Invalid JSON: ${errMsg(err)}`);
+      setError(t("config.invalidJson", { message: errMsg(err) }));
       return;
     }
 
@@ -46,8 +46,7 @@ export function ConfigPage() {
     try {
       const saved = await client.putConfig(parsed);
       setText(JSON.stringify(saved, null, 2));
-      setVersion(saved.version);
-      setNotice(`Saved. New version: ${saved.version}.`);
+      setNotice(t("config.saved", { version: saved.version }));
     } catch (err) {
       setError(errMsg(err));
     } finally {
@@ -58,19 +57,15 @@ export function ConfigPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-slate-900 dark:text-white">Config</h1>
-          <p className="text-sm text-slate-500">
-            Whole-document editor{version !== null && ` — loaded version ${version}`}. Saving writes
-            the entire document; the server rejects the write if the version moved underneath you.
-          </p>
-        </div>
+        <h1 className="text-xl font-semibold text-slate-900 dark:text-white">
+          {t("config.title")}
+        </h1>
         <div className="flex gap-2">
           <button className={ghostButton} onClick={() => void load()} disabled={saving}>
-            Reload
+            {t("config.reload")}
           </button>
           <button className={primaryButton} onClick={() => void save()} disabled={saving}>
-            {saving ? "Saving…" : "Save"}
+            {saving ? t("config.saving") : t("config.save")}
           </button>
         </div>
       </div>
