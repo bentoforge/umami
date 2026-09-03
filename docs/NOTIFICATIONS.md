@@ -56,7 +56,10 @@ cannot tell it apart from a weekly type and does not need to.
 
 Each cadence carries its own **label**, exactly as a role or a feature does — a vocabulary the
 deployment invents has to bring its own words, because nothing in a client's message catalogue could
-know what `on-publish` should read as in a picker.
+know what `on-publish` should read as in a picker. And exactly as for a role, that label is a
+`LocalizedText`: a plain string, or a map of locale tag to string. `GET /auth/me/notifications`
+resolves it into the reader's language, so the picker gets one string per entry either way — see
+[CONFIG.md](CONFIG.md) (*Labels*).
 
 The typo protection an enum would have bought lives where it has to:
 
@@ -81,12 +84,12 @@ In the config, `notificationTypes`, shaped like the other catalogues:
 ```jsonc
 "notificationTypes": [
   { "code": "wsc-new-content",          // stable: it keys every user's stored choice
-    "name": "Neue Inhalte",
+    "name": { "de": "Neue Inhalte", "en": "New content" },   // or a plain string, = {"*": …}
     "description": "Seiten, die seit der letzten Nachricht veröffentlicht wurden.",
     "cadences": [                       // what the app actually fires, with the words a user reads
-      { "code": "daily",   "name": "Täglich" },
-      { "code": "weekly",  "name": "Wöchentlich" },
-      { "code": "monthly", "name": "Monatlich" }
+      { "code": "daily",   "name": { "de": "Täglich",    "en": "Daily" } },
+      { "code": "weekly",  "name": { "de": "Wöchentlich", "en": "Weekly" } },
+      { "code": "monthly", "name": { "de": "Monatlich",  "en": "Monthly" } }
     ],
     "default": "weekly",                // "on", a cadence code, or omitted for off
     "eligibleIf": "role:wsc-editor,feature:pro" },   // optional
@@ -217,7 +220,7 @@ umami adds what only it has, so a worker rendering its own layout does not need 
 
 | Field | What |
 |---|---|
-| `notification.type` / `.cadence` | the codes, normalized. **Codes only** — the catalogue's labels are one string each in the deployment's own language, so sending them along would look like a translation without being one, and a layout wants the stable code anyway |
+| `notification.type` / `.cadence` | the codes, normalized. **Codes only** — a catalogue label is whatever languages the deployment happened to write, so sending one along would look like a translation without reliably being one, and a layout wants the stable code anyway |
 | `recipient` | every name form umami can compose, plus `salutationKey` for a template that branches |
 | `locale` | the recipient's resolved language |
 | `footer` / `globalContext` | the deployment's imprint and template constants, from the config `mail` block |

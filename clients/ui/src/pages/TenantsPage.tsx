@@ -1,4 +1,4 @@
-import type { CustomFieldDef, Tenant } from "@bentoforge/umami-iam";
+import type { CustomFieldView, Tenant } from "@bentoforge/umami-iam";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useNavigate } from "react-router-dom";
@@ -20,7 +20,7 @@ export function TenantsPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const [tenants, setTenants] = useState<Tenant[] | null>(null);
-  const [defs, setDefs] = useState<CustomFieldDef[]>([]);
+  const [defs, setDefs] = useState<CustomFieldView[]>([]);
   const [truncated, setTruncated] = useState(false);
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);

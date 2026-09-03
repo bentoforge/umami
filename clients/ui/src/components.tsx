@@ -1,10 +1,10 @@
 import type {
   ApiKeyView,
   AuditEntry,
+  CatalogueEntry,
   Contact,
-  CustomFieldDef,
+  CustomFieldView,
   MessagingLink,
-  RoleDef,
 } from "@bentoforge/umami-iam";
 import { EllipsisVerticalIcon } from "@heroicons/react/24/outline";
 import { type ReactNode, useEffect, useRef, useState } from "react";
@@ -146,7 +146,7 @@ export function CustomFieldsForm({
   values,
   onChange,
 }: {
-  defs: CustomFieldDef[];
+  defs: CustomFieldView[];
   values: Record<string, unknown>;
   onChange: (next: Record<string, unknown>) => void;
 }) {
@@ -224,7 +224,7 @@ export function RoleToggleList({
   canToggle,
   empty,
 }: {
-  roles: RoleDef[];
+  roles: CatalogueEntry[];
   selected: string[];
   onToggle: (code: string, assigned: boolean) => void;
   disabled?: boolean;
@@ -269,11 +269,11 @@ export function RoleToggleList({
  * them, `unknownLabel` as their description: hiding a grant would make it unremovable and invisible
  * at the same time. */
 export function roleCatalog(
-  defs: RoleDef[],
+  defs: CatalogueEntry[],
   assignable: string[],
   selected: string[],
   unknownLabel: string,
-): RoleDef[] {
+): CatalogueEntry[] {
   return [
     ...defs.filter((d) => assignable.includes(d.code) || selected.includes(d.code)),
     ...selected

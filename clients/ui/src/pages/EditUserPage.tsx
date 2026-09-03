@@ -1,10 +1,10 @@
 import type {
   ApiKeyView,
   AuditEntry,
+  CatalogueEntry,
   Contact,
-  CustomFieldDef,
+  CustomFieldView,
   MessagingLink,
-  RoleDef,
   Salutation,
   SessionView,
   UserView,
@@ -44,7 +44,7 @@ export function EditUserPage() {
   const { userId = "" } = useParams();
 
   const [user, setUser] = useState<UserView | null>(null);
-  const [defs, setDefs] = useState<CustomFieldDef[]>([]);
+  const [defs, setDefs] = useState<CustomFieldView[]>([]);
   const [locales, setLocales] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -222,7 +222,7 @@ function DetailsCard({
   onError,
 }: {
   user: UserView;
-  defs: CustomFieldDef[];
+  defs: CustomFieldView[];
   locales: string[];
   onSaved: () => Promise<void>;
   onError: (msg: string) => void;
@@ -391,13 +391,13 @@ function RolesCard({
 }) {
   const { client } = useUmami();
   const { t } = useTranslation();
-  const [defs, setDefs] = useState<RoleDef[]>([]);
+  const [defs, setDefs] = useState<CatalogueEntry[]>([]);
   const [assignable, setAssignable] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     client
-      .getConfig()
+      .catalogue()
       .then((c) => setDefs(c.roles))
       .catch(() => setDefs([]));
   }, [client]);
@@ -581,7 +581,7 @@ function PatsCard({ userId }: { userId: string }) {
   const { client } = useUmami();
   const { t } = useTranslation();
   const [pats, setPats] = useState<ApiKeyView[] | null>(null);
-  const [defs, setDefs] = useState<RoleDef[]>([]);
+  const [defs, setDefs] = useState<CatalogueEntry[]>([]);
 
   useEffect(() => {
     client
@@ -592,7 +592,7 @@ function PatsCard({ userId }: { userId: string }) {
 
   useEffect(() => {
     client
-      .getConfig()
+      .catalogue()
       .then((c) => setDefs(c.roles))
       .catch(() => setDefs([]));
   }, [client]);

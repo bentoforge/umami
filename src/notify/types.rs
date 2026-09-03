@@ -67,6 +67,7 @@
 //! make a later change of that default silently overwrite what people actually chose. Anything that
 //! writes a preference must therefore leave an untouched type *absent*.
 
+use crate::config::text::LocalizedText;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use wasabi::client_bail;
@@ -100,8 +101,8 @@ pub fn normalize_cadence(raw: &str) -> String {
 pub struct CadenceDef {
     /// Stable code, lowercase. Compared against a firing and against a user's stored choice.
     pub code: String,
-    /// Human-readable label, shown in the picker.
-    pub name: String,
+    /// Human-readable label, shown in the picker — in one or more languages.
+    pub name: LocalizedText,
 }
 
 /// A notification type in the config catalogue — the unit of consent, and what a user actually sees
@@ -114,11 +115,11 @@ pub struct CadenceDef {
 pub struct NotificationTypeDef {
     /// Stable code the app names when it fires, and the key a user's preference is stored under.
     pub code: String,
-    /// Human-readable name, shown in the profile.
-    pub name: String,
+    /// Human-readable name, shown in the profile — in one or more languages.
+    pub name: LocalizedText,
     /// Optional description, shown muted under the name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
+    pub description: Option<LocalizedText>,
     /// The cadences this type is actually fired at — the deployment's own vocabulary.
     ///
     /// Only these may be offered to a user, and a firing naming anything outside the list is
@@ -192,6 +193,9 @@ pub fn validate_catalogue(types: &[NotificationTypeDef]) -> anyhow::Result<()> {
         if !seen.insert(code) {
             client_bail!("Duplicate notification type '{code}'");
         }
+        if type_def.name.is_empty() {
+            client_bail!("Notification type '{code}' needs a 'name' to show in the profile");
+        }
         // An empty cadence list is legitimate: that is a plain on/off type (case 2).
         let mut cadences: BTreeSet<&str> = BTreeSet::new();
         for cadence in &type_def.cadences {
@@ -212,7 +216,7 @@ pub fn validate_catalogue(types: &[NotificationTypeDef]) -> anyhow::Result<()> {
                      when they mean on or off, so a cadence of that name would be ambiguous"
                 );
             }
-            if cadence.name.trim().is_empty() {
+            if cadence.name.is_empty() {
                 client_bail!("Cadence '{value}' on '{code}' needs a 'name' to show in the picker");
             }
             if !cadences.insert(value) {
@@ -278,7 +282,7 @@ mod tests {
     fn cadence(code: &str, name: &str) -> CadenceDef {
         CadenceDef {
             code: code.to_owned(),
-            name: name.to_owned(),
+            name: name.into(),
         }
     }
 
@@ -286,7 +290,7 @@ mod tests {
     fn rhythmic(default: Option<&str>) -> NotificationTypeDef {
         NotificationTypeDef {
             code: "wsc-new-content".to_owned(),
-            name: "New content".to_owned(),
+            name: "New content".into(),
             description: None,
             cadences: vec![
                 cadence("daily", "Daily"),
@@ -302,7 +306,7 @@ mod tests {
     fn plain(default: Option<&str>) -> NotificationTypeDef {
         NotificationTypeDef {
             code: "wsc-build-failed".to_owned(),
-            name: "Build failed".to_owned(),
+            name: "Build failed".into(),
             description: None,
             cadences: Vec::new(),
             default: default.map(str::to_owned),
@@ -480,11 +484,20 @@ mod tests {
             "two switches for one thing, one of them dead"
         );
 
-        let unnamed = NotificationTypeDef {
+        let uncoded = NotificationTypeDef {
             code: "  ".to_owned(),
+            ..ok.clone()
+        };
+        assert!(validate_catalogue(&[uncoded]).is_err());
+
+        let unnamed = NotificationTypeDef {
+            name: "  ".into(),
             ..ok
         };
-        assert!(validate_catalogue(&[unnamed]).is_err());
+        assert!(
+            validate_catalogue(&[unnamed]).is_err(),
+            "a switch with no words on it is not one anybody can find"
+        );
     }
 
     #[test]

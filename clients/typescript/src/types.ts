@@ -234,35 +234,66 @@ export interface CreateTenantResponse {
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
+/** A label in the config document, in one or more languages.
+ *
+ * A bare string **is** the map `{"*": "…"}` — the `*` entry answers for every language without one
+ * of its own. Resolution goes: the exact tag, its primary subtag (`de-AT` → `de`), `*`, then the
+ * deployment's `defaultLocale`.
+ *
+ * Do not resolve this yourself. {@link UmamiClient.catalogue} and
+ * {@link UmamiClient.customFields} return the labels already resolved into the caller's language,
+ * and those are what a screen should render — this type appears only on the raw config document,
+ * which exists to be edited rather than displayed. */
+export type LocalizedText = string | Record<string, string>;
+
 /** A role assignable to a user (`role:*`). Permissions come from the per-API rules, not here. */
 export interface RoleDef {
   code: string;
-  name: string;
+  name: LocalizedText;
   /** Optional human-readable description (shown muted under the name in the admin UI). */
-  description?: string | null;
+  description?: LocalizedText | null;
   /** Boolean expression over the tenant's `feature:*`/`is:*` gating whether it may be assigned. */
   assignableIf?: string | null;
 }
 /** A scope carried by an M2M service key (`scope:*`); same assignability gating as roles. */
 export interface ScopeDef {
   code: string;
-  name: string;
+  name: LocalizedText;
   /** Optional human-readable description (shown muted under the name in the admin UI). */
-  description?: string | null;
+  description?: LocalizedText | null;
   assignableIf?: string | null;
 }
 /** An authorization feature granted to a tenant (`feature:*`). */
 export interface FeatureDef {
   code: string;
-  name: string;
+  name: LocalizedText;
   /** Optional human-readable description (shown muted under the name in the admin UI). */
-  description?: string | null;
+  description?: LocalizedText | null;
   /** Boolean expression over the tenant's current features gating whether it may be granted. */
   assignableIf?: string | null;
 }
+
+/** One catalogue entry with its labels resolved into the caller's language — a role, a scope or a
+ * feature, whichever list it arrived in.
+ *
+ * Carries no `assignableIf`: whether an entry may be assigned is answered per tenant by
+ * {@link UmamiClient.assignableRoles} and its siblings, never by evaluating an expression here. */
+export interface CatalogueEntry {
+  code: string;
+  name: string;
+  description?: string;
+}
+
+/** The label catalogues, resolved (`GET /config/catalogue`). */
+export interface Catalogue {
+  roles: CatalogueEntry[];
+  scopes: CatalogueEntry[];
+  features: CatalogueEntry[];
+}
+
 export interface CustomFieldDef {
   code: string;
-  label: string;
+  label: LocalizedText;
   /** `"string"` | `"number"` | `"bool"` | `"select"`. */
   type: string;
   /** Allowed values for a `select` field (ignored otherwise). */
@@ -274,10 +305,15 @@ export interface CustomFieldDef {
   selfEditable?: boolean;
 }
 
+/** One custom-field schema with its label resolved — otherwise {@link CustomFieldDef} verbatim. */
+export interface CustomFieldView extends Omit<CustomFieldDef, "label"> {
+  label: string;
+}
+
 /** The custom-field schemas for rendering user/tenant forms (`GET /config/custom-fields`). */
 export interface CustomFieldsSchema {
-  user: CustomFieldDef[];
-  tenant: CustomFieldDef[];
+  user: CustomFieldView[];
+  tenant: CustomFieldView[];
   /** Languages the deployment can actually answer in — the message catalogue, narrowed by
    *  `config.locales`. Render the language picker from this, never from a list of your own: a
    *  UI-side list offers languages the server will then answer in English. */
@@ -503,6 +539,12 @@ export interface CadenceDef {
   /** Stable, lowercase. Compared against a firing and a stored choice. */
   code: Cadence;
   /** Label for the picker. */
+  name: LocalizedText;
+}
+
+/** One cadence as the picker sees it: the code to send back, and the words to show. */
+export interface CadenceView {
+  code: Cadence;
   name: string;
 }
 
@@ -510,8 +552,8 @@ export interface CadenceDef {
 export interface NotificationTypeDef {
   /** Stable code an app names when it fires, and the key a choice is stored under. */
   code: string;
-  name: string;
-  description?: string;
+  name: LocalizedText;
+  description?: LocalizedText;
   /** The cadences this type is actually fired at. A firing naming anything else is rejected, and
    * only these may be offered to a user — otherwise they would subscribe and never hear anything.
    *
@@ -531,7 +573,7 @@ export interface NotificationTypeView {
   code: string;
   name: string;
   description?: string;
-  cadences: CadenceDef[];
+  cadences: CadenceView[];
   default: Choice | null;
   /** Every value this type accepts, always including `"off"` — exactly what a picker should offer. */
   allowed: Choice[];

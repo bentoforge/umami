@@ -1,4 +1,4 @@
-import type { ApiKeyView, ScopeDef } from "@bentoforge/umami-iam";
+import type { ApiKeyView, CatalogueEntry } from "@bentoforge/umami-iam";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useUmami } from "../auth/UmamiProvider";
@@ -170,7 +170,7 @@ function CreateKey({
   const { t } = useTranslation();
   const [name, setName] = useState("");
   const [scopes, setScopes] = useState<string[]>([]);
-  const [defs, setDefs] = useState<ScopeDef[]>([]);
+  const [defs, setDefs] = useState<CatalogueEntry[]>([]);
   const [assignable, setAssignable] = useState<string[]>([]);
   const [origins, setOrigins] = useState("");
   const [expiresAt, setExpiresAt] = useState("");
@@ -186,14 +186,14 @@ function CreateKey({
 
   useEffect(() => {
     client
-      .getConfig()
+      .catalogue()
       .then((c) => setDefs(c.scopes))
       .catch(() => setDefs([]));
   }, [client]);
 
   // Assignable scopes with their config name/description; any assignable code the catalog no longer
   // defines still shows (labelled by its code) so it is never silently hidden.
-  const scopeCatalog: ScopeDef[] = assignable.map(
+  const scopeCatalog: CatalogueEntry[] = assignable.map(
     (code) => defs.find((d) => d.code === code) ?? { code, name: code },
   );
 

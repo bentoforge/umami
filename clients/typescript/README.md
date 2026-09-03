@@ -42,7 +42,9 @@ await umami.refresh();
 - **API keys**: `exchangeApiKey` (M2M/BFF), plus `createApiKey` / `listApiKeys` / `deleteApiKey`
 - **Tenants**: signup, get/patch, status/license, packages, features, entitlements, usage
 - **Users**: `createUser` / `listUsers` / `patchUser`
-- **Config**: `getConfig` / `putConfig`
+- **Config**: `getConfig` / `putConfig` (the whole document, labels as authored — for an editor);
+  `catalogue` / `getCustomFields` for the same labels resolved into the caller's language, which
+  is what a screen should render
 
 All request/response types mirror the Rust server contract (see [`src/types.ts`](src/types.ts));
 errors throw `UmamiError` with the HTTP `status` and parsed `body`.

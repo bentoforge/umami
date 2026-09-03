@@ -1,4 +1,4 @@
-import type { CustomFieldDef, RoleDef, Salutation, UserView } from "@bentoforge/umami-iam";
+import type { CatalogueEntry, CustomFieldView, Salutation, UserView } from "@bentoforge/umami-iam";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
@@ -23,7 +23,7 @@ export function UsersPage() {
   const { client, me } = useUmami();
   const { t } = useTranslation();
   const [users, setUsers] = useState<UserView[] | null>(null);
-  const [defs, setDefs] = useState<CustomFieldDef[]>([]);
+  const [defs, setDefs] = useState<CustomFieldView[]>([]);
   const [truncated, setTruncated] = useState(false);
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -242,7 +242,7 @@ function CreateUser({
   onDone,
   onError,
 }: {
-  fieldDefs: CustomFieldDef[];
+  fieldDefs: CustomFieldView[];
   onDone: (res: UserView & { temporaryPassword?: string | null }) => Promise<void>;
   onError: (msg: string) => void;
 }) {
@@ -250,7 +250,7 @@ function CreateUser({
   const { t } = useTranslation();
   const [username, setUsername] = useState("");
   const [roles, setRoles] = useState<string[]>([]);
-  const [roleDefs, setRoleDefs] = useState<RoleDef[]>([]);
+  const [roleDefs, setRoleDefs] = useState<CatalogueEntry[]>([]);
   const [assignable, setAssignable] = useState<string[]>([]);
   const [fields, setFields] = useState<Record<string, unknown>>({});
   const [title, setTitle] = useState("");
@@ -261,7 +261,7 @@ function CreateUser({
 
   useEffect(() => {
     client
-      .getConfig()
+      .catalogue()
       .then((c) => setRoleDefs(c.roles))
       .catch(() => setRoleDefs([]));
   }, [client]);

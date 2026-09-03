@@ -6,7 +6,9 @@
 
 pub mod repository;
 pub mod service;
+pub mod text;
 
+use crate::config::text::LocalizedText;
 use crate::constants::{
     DEFAULT_ACCESS_TTL_SECS, DEFAULT_CONTACT_CHALLENGE_TTL_SECS, DEFAULT_LOGIN_BLOCK_SECS,
     DEFAULT_LOGIN_MAX_FAILURES, DEFAULT_LOGIN_WINDOW_SECS, DEFAULT_MAIL_SEND_BLOCK_SECS,
@@ -409,11 +411,11 @@ impl ApiDef {
 pub struct RoleDef {
     /// Stable code referenced by `user.roles` (namespaced `role:*`).
     pub code: String,
-    /// Human-readable name.
-    pub name: String,
+    /// Human-readable name, in one or more languages — see [`LocalizedText`].
+    pub name: LocalizedText,
     /// Optional human-readable description (shown muted under the name in the admin UI).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
+    pub description: Option<LocalizedText>,
     /// DSL over the tenant's features (`feature:*`/`is:*`) — the role is assignable to a user in a
     /// tenant only when this holds. `None` = always assignable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -426,11 +428,11 @@ pub struct RoleDef {
 pub struct ScopeDef {
     /// Stable code referenced by `apiKey.scopes` (namespaced `scope:*`).
     pub code: String,
-    /// Human-readable name.
-    pub name: String,
+    /// Human-readable name, in one or more languages — see [`LocalizedText`].
+    pub name: LocalizedText,
     /// Optional human-readable description (shown muted under the name in the admin UI).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
+    pub description: Option<LocalizedText>,
     /// DSL over the tenant's features (`feature:*`/`is:*`) gating assignability to a key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assignable_if: Option<String>,
@@ -442,11 +444,11 @@ pub struct ScopeDef {
 pub struct FeatureDef {
     /// Stable code.
     pub code: String,
-    /// Human-readable name.
-    pub name: String,
+    /// Human-readable name, in one or more languages — see [`LocalizedText`].
+    pub name: LocalizedText,
     /// Optional human-readable description (shown muted under the name in the admin UI).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
+    pub description: Option<LocalizedText>,
     /// DSL over the tenant's **current** features — the feature is grantable only when this holds
     /// (encodes prerequisites). `None` = always grantable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -459,8 +461,8 @@ pub struct FeatureDef {
 pub struct CustomFieldDef {
     /// Stable code the field's value is stored under (in a tenant's/user's `customFields` map).
     pub code: String,
-    /// Display label.
-    pub label: String,
+    /// Display label, in one or more languages — see [`LocalizedText`].
+    pub label: LocalizedText,
     /// Field type: `string`, `number`, `bool`/`boolean`, or `select` (constrained to `options`).
     #[serde(rename = "type")]
     pub field_type: String,
@@ -917,6 +919,40 @@ fn default_locale() -> String {
     "en".to_owned()
 }
 
+/// Rejects a catalogue label that says nothing, at publish time.
+///
+/// A blank label fails invisibly: [`LocalizedText`] resolves it to the empty string, and the picker
+/// then shows a row with no words in it — the code it stands for is never rendered anywhere, so
+/// there is nothing on screen to identify what was ticked. The same goes for a label map written in
+/// nothing but blanks, which is the shape a half-finished translation takes.
+pub fn validate_labels(config: &Config) -> anyhow::Result<()> {
+    let roles = config.roles.iter().map(|d| ("Role", &d.code, &d.name));
+    let scopes = config.scopes.iter().map(|d| ("Scope", &d.code, &d.name));
+    let features = config
+        .features
+        .iter()
+        .map(|d| ("Feature", &d.code, &d.name));
+    for (kind, code, name) in roles.chain(scopes).chain(features) {
+        if name.is_empty() {
+            client_bail!("{kind} '{code}' needs a 'name' to show in a picker");
+        }
+    }
+
+    let fields = config
+        .custom_user_fields
+        .iter()
+        .chain(&config.custom_tenant_fields);
+    for field in fields {
+        if field.label.is_empty() {
+            client_bail!(
+                "Custom field '{}' needs a 'label' to show above its input",
+                field.code
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Evaluates an optional `assignableIf` against a feature set — `None` means always assignable.
 fn assignable(assignable_if: &Option<String>, set: &BTreeSet<&str>) -> bool {
     match assignable_if {
@@ -929,7 +965,7 @@ impl Default for Config {
     fn default() -> Self {
         let role = |code: &str, name: &str| RoleDef {
             code: code.to_owned(),
-            name: name.to_owned(),
+            name: name.into(),
             description: None,
             assignable_if: None,
         };
@@ -939,7 +975,7 @@ impl Default for Config {
         };
         let scope = |code: &str, name: &str, assignable_if: Option<&str>| ScopeDef {
             code: code.to_owned(),
-            name: name.to_owned(),
+            name: name.into(),
             description: None,
             assignable_if: assignable_if.map(str::to_owned),
         };
@@ -1254,7 +1290,7 @@ mod tests {
     fn field(code: &str, field_type: &str, required: bool, options: &[&str]) -> CustomFieldDef {
         CustomFieldDef {
             code: code.to_owned(),
-            label: code.to_owned(),
+            label: code.into(),
             field_type: field_type.to_owned(),
             options: s(options),
             required,
@@ -1462,20 +1498,20 @@ mod tests {
         let config = Config {
             roles: vec![RoleDef {
                 code: "role:ai".to_owned(),
-                name: "AI".to_owned(),
+                name: "AI".into(),
                 description: None,
                 assignable_if: Some("feature:ai".to_owned()),
             }],
             features: vec![
                 FeatureDef {
                     code: "feature:base".to_owned(),
-                    name: "Base".to_owned(),
+                    name: "Base".into(),
                     description: None,
                     assignable_if: None,
                 },
                 FeatureDef {
                     code: "feature:ai".to_owned(),
-                    name: "AI".to_owned(),
+                    name: "AI".into(),
                     description: None,
                     assignable_if: Some("feature:base".to_owned()),
                 },
@@ -1527,7 +1563,7 @@ mod tests {
         let config = Config {
             roles: vec![RoleDef {
                 code: "role:platform-admin".to_owned(),
-                name: "Platform admin".to_owned(),
+                name: "Platform admin".into(),
                 description: None,
                 assignable_if: Some(SYSTEM_TENANT_MARKER.to_owned()),
             }],

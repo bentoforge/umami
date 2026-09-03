@@ -7,6 +7,7 @@ import type {
   AuditPage,
   Cadence,
   Capabilities,
+  Catalogue,
   Choice,
   Config,
   Contact,
@@ -748,15 +749,30 @@ export class UmamiClient {
 
   // ── config ────────────────────────────────────────────────────────────────────
 
+  /** The whole config document, labels **unresolved** (`manage:config`).
+   *
+   * This is the editor's view: every {@link LocalizedText} arrives as authored, so a load → edit →
+   * {@link UmamiClient.putConfig} round-trip keeps the languages the editing admin does not read.
+   * To *display* a role, scope or feature, call {@link UmamiClient.catalogue} instead. */
   getConfig(): Promise<Config> {
     return this.request<Config>("/config");
   }
   putConfig(config: Config): Promise<Config> {
     return this.request<Config>("/config", { method: "PUT", body: JSON.stringify(config) });
   }
-  /** The user + tenant custom-field schemas (any authenticated admin; no `manage:config` needed). */
+  /** The user + tenant custom-field schemas, labels resolved into the caller's language (any
+   * authenticated caller; no `manage:config` needed). */
   getCustomFields(): Promise<CustomFieldsSchema> {
     return this.request<CustomFieldsSchema>("/config/custom-fields");
+  }
+  /** Role, scope and feature labels, resolved into the caller's language (any authenticated
+   * caller; no `manage:config` needed).
+   *
+   * What every screen that names a role should read. It says nothing about *assignability* — ask
+   * {@link UmamiClient.assignableRoles} / {@link UmamiClient.assignableScopes} /
+   * {@link UmamiClient.assignableFeatures} for that, since the answer depends on the tenant. */
+  catalogue(): Promise<Catalogue> {
+    return this.request<Catalogue>("/config/catalogue");
   }
 
   // ── API keys: tenant service keys (write:members) ──────────────────────────────

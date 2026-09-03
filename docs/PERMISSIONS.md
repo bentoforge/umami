@@ -123,9 +123,12 @@ granted — enabling chaining like `role:admin → write:blocks`, then `write:bl
 }
 ```
 
-- **Roles are labels only.** `RoleDef = { code, name, assignableIf? }`.
-- **Scopes** mirror roles for M2M keys. `ScopeDef = { code, name, assignableIf? }`.
-- **Features are flat labels granted to tenants.** `FeatureDef = { code, name, assignableIf? }`.
+- **Roles are labels only.** `RoleDef = { code, name, description?, assignableIf? }`. `name` and
+  `description` are `LocalizedText` — a string, or `{"de": …, "en": …, "*": …}`; a string is the
+  `*` entry. See [CONFIG.md](CONFIG.md) (*Labels*).
+- **Scopes** mirror roles for M2M keys. `ScopeDef = { code, name, description?, assignableIf? }`.
+- **Features are flat labels granted to tenants.** `FeatureDef = { code, name, description?,
+  assignableIf? }`.
 - The **only** place role/scope/feature → permission is mapped is each API's `permissions` — an
   **ordered list** of `{ when, grant }` rules. Rules run top-to-bottom, accumulating: a rule fires
   when its `when` holds against the current set (subjects + permissions granted so far), adding its

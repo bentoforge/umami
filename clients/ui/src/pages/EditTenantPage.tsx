@@ -1,4 +1,4 @@
-import type { CustomFieldDef, FeatureDef, Tenant } from "@bentoforge/umami-iam";
+import type { CatalogueEntry, CustomFieldView, Tenant } from "@bentoforge/umami-iam";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams } from "react-router-dom";
@@ -24,7 +24,7 @@ export function EditTenantPage() {
   const { tenantId = "" } = useParams();
 
   const [tenant, setTenant] = useState<Tenant | null>(null);
-  const [defs, setDefs] = useState<CustomFieldDef[]>([]);
+  const [defs, setDefs] = useState<CustomFieldView[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [missing, setMissing] = useState(false);
@@ -154,7 +154,7 @@ function DetailsCard({
   onError,
 }: {
   tenant: Tenant;
-  defs: CustomFieldDef[];
+  defs: CustomFieldView[];
   onSaved: () => Promise<void>;
   onError: (msg: string) => void;
 }) {
@@ -288,13 +288,13 @@ function FeaturesCard({
 }) {
   const { client } = useUmami();
   const { t } = useTranslation();
-  const [defs, setDefs] = useState<FeatureDef[]>([]);
+  const [defs, setDefs] = useState<CatalogueEntry[]>([]);
   const [grantable, setGrantable] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     client
-      .getConfig()
+      .catalogue()
       .then((c) => setDefs(c.features))
       .catch(() => setDefs([]));
   }, [client]);
@@ -327,7 +327,7 @@ function FeaturesCard({
   };
 
   // The catalog, plus any already-granted code the catalog no longer defines (never hide a grant).
-  const catalog: FeatureDef[] = [
+  const catalog: CatalogueEntry[] = [
     ...defs,
     ...tenant.features
       .filter((code) => !defs.some((d) => d.code === code))

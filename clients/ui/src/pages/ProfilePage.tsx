@@ -1,12 +1,12 @@
 import type {
   ApiKeyView,
   AuditEntry,
+  CatalogueEntry,
   Contact,
   ContactsResponse,
-  CustomFieldDef,
+  CustomFieldView,
   MessagingLink,
   MyNotificationsResponse,
-  RoleDef,
   Salutation,
   SessionView,
   TotpSetup,
@@ -512,7 +512,7 @@ function DetailRow({ label, children }: { label: string; children: ReactNode }) 
 function BaseDataCard() {
   const { client, me, refreshMe } = useUmami();
   const { t } = useTranslation();
-  const [defs, setDefs] = useState<CustomFieldDef[]>([]);
+  const [defs, setDefs] = useState<CustomFieldView[]>([]);
   const [editing, setEditing] = useState(false);
   const [values, setValues] = useState<Record<string, unknown>>({});
   const [title, setTitle] = useState("");
@@ -1072,7 +1072,7 @@ function PatsPanel() {
   const [selectedRoles, setSelectedRoles] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [freshSecret, setFreshSecret] = useState<string | null>(null);
-  const [defs, setDefs] = useState<RoleDef[]>([]);
+  const [defs, setDefs] = useState<CatalogueEntry[]>([]);
 
   const load = useCallback(async () => {
     setError(null);
@@ -1090,7 +1090,7 @@ function PatsPanel() {
 
   useEffect(() => {
     client
-      .getConfig()
+      .catalogue()
       .then((c) => setDefs(c.roles))
       .catch(() => setDefs([]));
   }, [client]);
@@ -1099,7 +1099,7 @@ function PatsPanel() {
 
   // A PAT can only inherit the user's own roles — offer exactly those, with catalog name/description.
   const myRoles = me?.user.roles ?? [];
-  const roleCatalog: RoleDef[] = myRoles.map(
+  const roleCatalog: CatalogueEntry[] = myRoles.map(
     (code) => defs.find((d) => d.code === code) ?? { code, name: code },
   );
 

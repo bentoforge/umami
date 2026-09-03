@@ -33,7 +33,7 @@ use crate::contacts::normalize_email;
 use crate::contacts::preference::preference_for;
 use crate::contacts::repository::ContactRepository;
 use crate::notify::types::{
-    CHOICE_OFF, CadenceDef, Delivery, NotificationTypeDef, normalize_cadence, resolve_delivery,
+    CHOICE_OFF, Delivery, NotificationTypeDef, normalize_cadence, resolve_delivery,
 };
 // Aliased: `Recipient` in this module is the audience response's, which carries no name parts and
 // deliberately no address.
@@ -104,7 +104,7 @@ struct TypeView {
     /// The cadences this type is actually fired at — code plus label, the only choices worth
     /// offering. The label travels with the code because the vocabulary is the deployment's, so
     /// nothing in a client's message catalogue could know what to call it.
-    cadences: Vec<CadenceDef>,
+    cadences: Vec<CadenceView>,
     /// What applies when the user has never chosen: `"on"`, a cadence code, or `null` for off.
     default: Option<String>,
     /// Every value this type accepts, always including `"off"` — what a picker should offer.
@@ -114,6 +114,14 @@ struct TypeView {
     choice: Option<String>,
     /// What currently applies, choice and default folded together. `"off"` = nothing arrives.
     effective: String,
+}
+
+/// One cadence as the picker sees it: the code to send back, and the words to show.
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct CadenceView {
+    code: String,
+    name: String,
 }
 
 /// The caller's subscribable types.
@@ -450,6 +458,9 @@ async fn my_notifications(deps: NotifyDeps, caller: AuthUser) -> anyhow::Result<
         None => status_bail!(StatusCode::NOT_FOUND, "No such user"),
     };
     let features = tenant_features(&deps, &user.tenant_id).await?;
+    // The profile screen reads these, so the catalogue's labels are resolved here rather than
+    // shipped as maps: the client has no business re-deriving which language this user reads in.
+    let locale = crate::i18n::resolve(&config, user.locale.as_deref(), None);
 
     let types = config
         .notification_types
@@ -462,9 +473,25 @@ async fn my_notifications(deps: NotifyDeps, caller: AuthUser) -> anyhow::Result<
             let effective = choice.or(type_def.default.as_deref()).unwrap_or(CHOICE_OFF);
             TypeView {
                 code: type_def.code.clone(),
-                name: type_def.name.clone(),
-                description: type_def.description.clone(),
-                cadences: type_def.cadences.clone(),
+                name: type_def
+                    .name
+                    .resolve(&locale, &config.default_locale)
+                    .to_owned(),
+                description: type_def
+                    .description
+                    .as_ref()
+                    .map(|text| text.resolve(&locale, &config.default_locale).to_owned()),
+                cadences: type_def
+                    .cadences
+                    .iter()
+                    .map(|cadence| CadenceView {
+                        code: cadence.code.clone(),
+                        name: cadence
+                            .name
+                            .resolve(&locale, &config.default_locale)
+                            .to_owned(),
+                    })
+                    .collect(),
                 default: type_def.default.clone(),
                 allowed: type_def
                     .allowed_choices()
@@ -952,16 +979,16 @@ mod tests {
     fn rhythmic() -> NotificationTypeDef {
         NotificationTypeDef {
             code: "wsc-new-content".to_owned(),
-            name: "New content".to_owned(),
+            name: "New content".into(),
             description: None,
             cadences: vec![
                 CadenceDef {
                     code: "daily".to_owned(),
-                    name: "Daily".to_owned(),
+                    name: "Daily".into(),
                 },
                 CadenceDef {
                     code: "weekly".to_owned(),
-                    name: "Weekly".to_owned(),
+                    name: "Weekly".into(),
                 },
             ],
             default: None,

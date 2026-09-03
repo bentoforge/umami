@@ -77,11 +77,65 @@ Relevant environment variables:
 }
 ```
 
+### Labels: `LocalizedText`
+
+Every label in the document — role, scope and feature `name`/`description`, `CustomFieldDef.label`,
+a notification type and its cadences — is a **`LocalizedText`**: either a plain string, or a map of
+locale tag to string.
+
+```jsonc
+"name": "Owner"
+"name": { "de": "Eigentümer", "en": "Owner", "*": "Owner" }
+```
+
+**A plain string is the map `{"*": "…"}`.** Same value, shorter spelling — so a document written
+before this existed means exactly what it always meant, and a deployment that only ever needs one
+language never has to write a map.
+
+Resolution, for a reader whose locale is `L`:
+
+1. `L`, lowercased — `de-AT`, `DE` and `de_CH` all look up the same entry
+2. `L`'s primary subtag — `de-AT` reaches a `de` entry
+3. `*` — the deployment's own "anything else"
+4. steps 1–2 again for the deployment's `defaultLocale`
+5. whatever entry sorts first, so a label never renders as nothing
+
+`*` sits **above** `defaultLocale` on purpose: an author who wrote one is stating what an unlisted
+language should read, which says more than the default, whose job is only to name the language umami
+itself writes in. Map keys are normalized (lowercased) on read, so an uppercase tag in a
+hand-written config still matches a reader.
+
+A label with no words in it — `""`, or a map of nothing but blanks — is **rejected by `PUT /config`**.
+It would otherwise fail invisibly: the picker renders a row with no text, and the code it stands for
+is shown nowhere.
+
+#### Who resolves it
+
+umami does, at the edge, in the language of the caller's `locale` claim. Clients never see a map
+except in the document itself:
+
+| Endpoint | Labels | For |
+|---|---|---|
+| `GET /config/catalogue` | resolved | naming a role, scope or feature on screen |
+| `GET /config/custom-fields` | resolved | rendering a user/tenant form |
+| `GET /auth/me/notifications` | resolved | the notification picker in a profile |
+| `GET`/`PUT /config` | **as authored** | the config editor, which loads → edits → writes back |
+
+The document keeps its maps because the editor round-trips it whole: flattening a label on read
+would delete every language the editing admin does not happen to read, with nothing on screen saying
+so. Everything that *displays* a label reads one of the resolved endpoints instead — which is also
+why they are authenticated-only rather than `manage:config`: a member looking at their own roles is
+not administering the deployment.
+
 ### Building blocks
 
 ```jsonc
 // RoleDef / ScopeDef / FeatureDef — same shape:
 { "code": "role:admin", "name": "Administrator", "assignableIf": "feature:pro" }
+{ "code": "role:admin", "name": { "de": "Administrator", "en": "Admin", "*": "Admin" },
+  "description": { "de": "Verwaltet Benutzer", "en": "Manages users" } }
+//   name / description: LocalizedText — a plain string, or a map of locale tag to string (see
+//   "Labels" above); both spellings are always accepted, everywhere a label appears.
 //   assignableIf (optional): a DSL expression over the tenant's feature set (incl. synthetic
 //   is:* markers). Role/scope: gates whether it may be assigned. Feature: gates whether it may be
 //   granted (prerequisites). Omitted = always assignable/grantable.
@@ -261,8 +315,8 @@ The five `manage:profile`/`passwords`/`personal-tokens`/`sessions`/`messaging` p
 role simply isn't granted these; a deployment that doesn't use a given surface (e.g. no PATs) just
 doesn't grant that permission, and the corresponding UI hides itself.
 
-**Authenticated but permission-free** (any valid token): `GET /auth/me`, `GET /config/custom-fields`,
-plus login/refresh/logout, JWKS and the passkey-login ceremonies.
+**Authenticated but permission-free** (any valid token): `GET /auth/me`, `GET /config/catalogue`,
+`GET /config/custom-fields`, plus login/refresh/logout, JWKS and the passkey-login ceremonies.
 
 **Unauthenticated** (no token at all): `GET /auth/capabilities` — what the sign-in screen may offer,
 currently `{ "passwordRecovery": bool }` — plus the three ceremonies whose proof *is* the mailed
