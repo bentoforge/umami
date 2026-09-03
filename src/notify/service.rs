@@ -458,9 +458,11 @@ async fn my_notifications(deps: NotifyDeps, caller: AuthUser) -> anyhow::Result<
         None => status_bail!(StatusCode::NOT_FOUND, "No such user"),
     };
     let features = tenant_features(&deps, &user.tenant_id).await?;
-    // The profile screen reads these, so the catalogue's labels are resolved here rather than
-    // shipped as maps: the client has no business re-deriving which language this user reads in.
-    let locale = crate::i18n::resolve(&config, user.locale.as_deref(), None);
+    // Resolved here rather than shipped as maps — the client has no business re-deriving which
+    // language this user reads in. The token's `locale` claim (profile first, else the browser
+    // language it was minted with) is that answer, and the one every other resolved endpoint uses;
+    // re-resolving from the often-empty profile field would strand a user on the default locale.
+    let locale = caller.locale();
 
     let types = config
         .notification_types
@@ -475,12 +477,12 @@ async fn my_notifications(deps: NotifyDeps, caller: AuthUser) -> anyhow::Result<
                 code: type_def.code.clone(),
                 name: type_def
                     .name
-                    .resolve(&locale, &config.default_locale)
+                    .resolve(locale, &config.default_locale)
                     .to_owned(),
                 description: type_def
                     .description
                     .as_ref()
-                    .map(|text| text.resolve(&locale, &config.default_locale).to_owned()),
+                    .map(|text| text.resolve(locale, &config.default_locale).to_owned()),
                 cadences: type_def
                     .cadences
                     .iter()
@@ -488,7 +490,7 @@ async fn my_notifications(deps: NotifyDeps, caller: AuthUser) -> anyhow::Result<
                         code: cadence.code.clone(),
                         name: cadence
                             .name
-                            .resolve(&locale, &config.default_locale)
+                            .resolve(locale, &config.default_locale)
                             .to_owned(),
                     })
                     .collect(),

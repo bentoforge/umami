@@ -95,9 +95,11 @@ async fn home(deps: HomeDeps, caller: AuthUser) -> anyhow::Result<HomeResponse> 
         Some(user) => user,
         None => status_bail!(StatusCode::NOT_FOUND, "No such user"),
     };
-    // The user's own `locale` wins, falling back to the deployment default — the same order the
-    // token minting uses, so the start page reads in the language the rest of umami answers in.
-    let locale = crate::i18n::resolve(&config, user.locale.as_deref(), None);
+    // The caller's token already carries a resolved locale — profile preference first, else the
+    // browser language it was minted with, else the default. Reading it (rather than re-resolving
+    // from the profile field, which is often empty) keeps this page in the same language as every
+    // other resolved endpoint, `/config/catalogue` included.
+    let locale = caller.locale();
 
     let features = deps
         .tenants
@@ -110,7 +112,7 @@ async fn home(deps: HomeDeps, caller: AuthUser) -> anyhow::Result<HomeResponse> 
         &user,
         &features,
         deps.system_tenant_id.as_deref(),
-        &locale,
+        locale,
     );
 
     let contacts = deps.contacts.list_contacts(user_id).await?;
@@ -118,9 +120,9 @@ async fn home(deps: HomeDeps, caller: AuthUser) -> anyhow::Result<HomeResponse> 
     let tasks = evaluate(&ctx)
         .into_iter()
         .map(|task| TaskCard {
-            label: crate::i18n::message(&locale, &format!("home.task.{}.label", task.code)),
+            label: crate::i18n::message(locale, &format!("home.task.{}.label", task.code)),
             description: crate::i18n::message(
-                &locale,
+                locale,
                 &format!("home.task.{}.description", task.code),
             ),
             url: task.url.to_owned(),
