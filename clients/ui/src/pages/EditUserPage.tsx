@@ -293,28 +293,30 @@ function DetailsCard({
 
       {editing ? (
         <>
+          <Field label={t("users.username")}>
+            <input
+              className={input}
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+            />
+          </Field>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <Field label={t("users.username")}>
-              <input
-                className={input}
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-              />
-            </Field>
-            <Field label={t("users.salutation")}>
-              <select
-                className={input}
-                value={salutation}
-                onChange={(e) => setSalutation(e.target.value as Salutation)}
-              >
-                <option value="">—</option>
-                <option value="SIR">{t("users.salutationSir")}</option>
-                <option value="MADAM">{t("users.salutationMadam")}</option>
-              </select>
-            </Field>
-            <Field label={t("users.nameTitle")}>
-              <input className={input} value={title} onChange={(e) => setTitle(e.target.value)} />
-            </Field>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <Field label={t("users.salutation")}>
+                <select
+                  className={input}
+                  value={salutation}
+                  onChange={(e) => setSalutation(e.target.value as Salutation)}
+                >
+                  <option value="">—</option>
+                  <option value="SIR">{t("users.salutationSir")}</option>
+                  <option value="MADAM">{t("users.salutationMadam")}</option>
+                </select>
+              </Field>
+              <Field label={t("users.nameTitle")}>
+                <input className={input} value={title} onChange={(e) => setTitle(e.target.value)} />
+              </Field>
+            </div>
             <Field label={t("users.firstname")}>
               <input
                 className={input}
@@ -355,6 +357,11 @@ function DetailsCard({
           <DetailRow label={t("users.username")}>{user.username}</DetailRow>
           <DetailRow label={t("users.name")}>
             {user.firstname || user.lastname ? user.fullName : "—"}
+          </DetailRow>
+          <DetailRow label={t("users.locale")}>
+            {user.locale
+              ? t(`locale.${user.locale}`, { defaultValue: user.locale })
+              : t("users.localeAuto")}
           </DetailRow>
           {defs.map((def) => (
             <DetailRow key={def.code} label={def.label}>

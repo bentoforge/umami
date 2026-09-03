@@ -46,6 +46,8 @@ struct MeUser {
     salutation: Salutation,
     firstname: Option<String>,
     lastname: Option<String>,
+    /// The caller's own language (BCP-47), or `null` for the deployment default. Editable.
+    locale: Option<String>,
     /// Server-composed display names (`name` / `fullName` / `addressableName`), flattened in.
     #[serde(flatten)]
     names: DisplayNames,
@@ -69,6 +71,7 @@ impl MeUser {
             salutation: user.salutation,
             firstname: user.firstname,
             lastname: user.lastname,
+            locale: user.locale,
             mfa_enabled: user.totp_secret.is_some(),
             has_passkey: user.has_passkey,
             names,

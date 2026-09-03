@@ -54,6 +54,7 @@ pub async fn maybe_auto_init(platform: &Platform) -> anyhow::Result<()> {
             salutation: crate::users::Salutation::default(),
             firstname: None,
             lastname: Some("Root Admin".to_owned()),
+            locale: None,
             password_hash: Some(password_hash),
             custom_fields: std::collections::BTreeMap::new(),
             created_by: None,

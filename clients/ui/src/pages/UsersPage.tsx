@@ -24,6 +24,7 @@ export function UsersPage() {
   const { t } = useTranslation();
   const [users, setUsers] = useState<UserView[] | null>(null);
   const [defs, setDefs] = useState<CustomFieldView[]>([]);
+  const [locales, setLocales] = useState<string[]>([]);
   const [truncated, setTruncated] = useState(false);
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -37,8 +38,14 @@ export function UsersPage() {
   useEffect(() => {
     client
       .getCustomFields()
-      .then((r) => setDefs(r.user))
-      .catch(() => setDefs([]));
+      .then((r) => {
+        setDefs(r.user);
+        setLocales(r.locales);
+      })
+      .catch(() => {
+        setDefs([]);
+        setLocales([]);
+      });
   }, [client]);
 
   const resetPassword = async (user: UserView) => {
@@ -134,6 +141,7 @@ export function UsersPage() {
       {creating && (
         <CreateUser
           fieldDefs={defs}
+          locales={locales}
           onDone={async (res) => {
             setCreating(false);
             setNotice("User created.");
@@ -239,10 +247,12 @@ export function UsersPage() {
 
 function CreateUser({
   fieldDefs,
+  locales,
   onDone,
   onError,
 }: {
   fieldDefs: CustomFieldView[];
+  locales: string[];
   onDone: (res: UserView & { temporaryPassword?: string | null }) => Promise<void>;
   onError: (msg: string) => void;
 }) {
@@ -257,6 +267,7 @@ function CreateUser({
   const [salutation, setSalutation] = useState<Salutation>("");
   const [firstname, setFirstname] = useState("");
   const [lastname, setLastname] = useState("");
+  const [locale, setLocale] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -291,6 +302,7 @@ function CreateUser({
         salutation,
         firstname,
         lastname,
+        locale,
         customFields: fields,
       });
       setUsername("");
@@ -299,6 +311,7 @@ function CreateUser({
       setSalutation("");
       setFirstname("");
       setLastname("");
+      setLocale("");
       setFields({});
       await onDone(res);
     } catch (err) {
@@ -311,24 +324,26 @@ function CreateUser({
   return (
     <section className={`${card} space-y-3`}>
       <h2 className="font-medium text-slate-800 dark:text-slate-200">{t("users.new")}</h2>
+      <Field label={t("users.username")}>
+        <input className={input} value={username} onChange={(e) => setUsername(e.target.value)} />
+      </Field>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <Field label={t("users.username")}>
-          <input className={input} value={username} onChange={(e) => setUsername(e.target.value)} />
-        </Field>
-        <Field label={t("users.salutation")}>
-          <select
-            className={input}
-            value={salutation}
-            onChange={(e) => setSalutation(e.target.value as Salutation)}
-          >
-            <option value="">—</option>
-            <option value="SIR">{t("users.salutationSir")}</option>
-            <option value="MADAM">{t("users.salutationMadam")}</option>
-          </select>
-        </Field>
-        <Field label={t("users.nameTitle")}>
-          <input className={input} value={title} onChange={(e) => setTitle(e.target.value)} />
-        </Field>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <Field label={t("users.salutation")}>
+            <select
+              className={input}
+              value={salutation}
+              onChange={(e) => setSalutation(e.target.value as Salutation)}
+            >
+              <option value="">—</option>
+              <option value="SIR">{t("users.salutationSir")}</option>
+              <option value="MADAM">{t("users.salutationMadam")}</option>
+            </select>
+          </Field>
+          <Field label={t("users.nameTitle")}>
+            <input className={input} value={title} onChange={(e) => setTitle(e.target.value)} />
+          </Field>
+        </div>
         <Field label={t("users.firstname")}>
           <input
             className={input}
@@ -338,6 +353,16 @@ function CreateUser({
         </Field>
         <Field label={t("users.lastname")}>
           <input className={input} value={lastname} onChange={(e) => setLastname(e.target.value)} />
+        </Field>
+        <Field label={t("users.locale")}>
+          <select className={input} value={locale} onChange={(e) => setLocale(e.target.value)}>
+            <option value="">{t("users.localeAuto")}</option>
+            {locales.map((code) => (
+              <option key={code} value={code}>
+                {t(`locale.${code}`, { defaultValue: code })}
+              </option>
+            ))}
+          </select>
         </Field>
         <CustomFieldsForm defs={fieldDefs} values={fields} onChange={setFields} />
       </div>

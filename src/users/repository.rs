@@ -87,6 +87,8 @@ pub struct NewUser {
     pub firstname: Option<String>,
     /// Family name.
     pub lastname: Option<String>,
+    /// The user's own language (BCP-47), or `None` for the deployment default.
+    pub locale: Option<String>,
     /// argon2id hash, or `None` for invite/SSO-only users.
     pub password_hash: Option<String>,
     /// Values for the config-defined custom user fields.
@@ -220,7 +222,10 @@ impl UserRepository for DynamoUserRepository {
         let now = Utc::now();
 
         let user = User {
-            locale: None,
+            locale: new_user
+                .locale
+                .map(|locale| locale.trim().to_owned())
+                .filter(|locale| !locale.is_empty()),
             user_id: generate_id(),
             tenant_id: new_user.tenant_id,
             roles: new_user.roles,

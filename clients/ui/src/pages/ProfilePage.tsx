@@ -690,6 +690,9 @@ function BaseDataCard() {
           <DetailRow label={t("users.name")}>
             {u.firstname || u.lastname ? u.fullName : "—"}
           </DetailRow>
+          <DetailRow label={t("users.locale")}>
+            {u.locale ? t(`locale.${u.locale}`, { defaultValue: u.locale }) : t("users.localeAuto")}
+          </DetailRow>
           {defs.map((def) => (
             <DetailRow key={def.code} label={def.label}>
               {formatFieldValue(u.customFields[def.code])}

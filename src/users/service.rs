@@ -57,6 +57,9 @@ struct CreateUserRequest {
     firstname: Option<String>,
     #[serde(default)]
     lastname: Option<String>,
+    /// BCP-47 language tag; empty or absent leaves the user on the deployment default.
+    #[serde(default)]
+    locale: Option<String>,
     roles: Option<Vec<String>>,
     custom_fields: Option<BTreeMap<String, Value>>,
 }
@@ -108,6 +111,8 @@ struct UserView {
     salutation: Salutation,
     firstname: Option<String>,
     lastname: Option<String>,
+    /// The user's own language (BCP-47), or `null` for the deployment default. Editable.
+    locale: Option<String>,
     /// Server-composed display names (`name` / `fullName` / `addressableName`), flattened in.
     #[serde(flatten)]
     names: DisplayNames,
@@ -144,6 +149,7 @@ impl UserView {
             salutation: user.salutation,
             firstname: user.firstname,
             lastname: user.lastname,
+            locale: user.locale,
             names,
             locked: user.locked,
             custom_fields: user.custom_fields,
@@ -489,6 +495,7 @@ async fn create_user(
             salutation: request.salutation.unwrap_or_default(),
             firstname: request.firstname,
             lastname: request.lastname,
+            locale: request.locale,
             password_hash: Some(password_hash),
             custom_fields,
             created_by: Some(caller.user_id()?.to_owned()),
