@@ -16,6 +16,18 @@
     "config": "System configuration",
     "rateLimits": "Rate limits"
   },
+  "layout": {
+    "menu": "Menu",
+    "logout": "Log out",
+    "theme": "Appearance",
+    "themeAuto": "Automatic",
+    "themeLight": "Light",
+    "themeDark": "Dark",
+    "switchTenant": "Switch tenant",
+    "noTenants": "No matching tenants.",
+    "impersonating": "Acting as:",
+    "endImpersonation": "End impersonation"
+  },
   "users": {
     "title": "Users",
     "new": "New user",

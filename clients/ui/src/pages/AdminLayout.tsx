@@ -90,7 +90,7 @@ export function AdminLayout() {
             <button
               type="button"
               className={`${headerIconButton} md:hidden`}
-              aria-label="Menu"
+              aria-label={t("layout.menu")}
               onClick={() => setMobileOpen((open) => !open)}
             >
               {mobileOpen ? <XMarkIcon className="h-6 w-6" /> : <Bars3Icon className="h-6 w-6" />}
@@ -132,12 +132,13 @@ export function AdminLayout() {
 // amber the noonu app uses, where blue stays clearly lowest.
 function ImpersonationNotice() {
   const { me, activeTenantId, activeTenantName, switchTenant } = useUmami();
+  const { t } = useTranslation();
   const home = me?.user.tenantId;
 
   return (
     <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 dark:border-[#d9a445]/40 dark:bg-[#2a2314]">
       <span className="text-sm text-amber-800 dark:text-[#e5b963]">
-        Übernahme aktiv: <strong>{activeTenantName ?? activeTenantId}</strong>
+        {t("layout.impersonating")} <strong>{activeTenantName ?? activeTenantId}</strong>
       </span>
       {home && (
         <button
@@ -146,15 +147,18 @@ function ImpersonationNotice() {
           onClick={() => void switchTenant(home, me?.tenant?.name)}
         >
           <XMarkIcon className="h-4 w-4" aria-hidden="true" />
-          Übernahme beenden
+          {t("layout.endImpersonation")}
         </button>
       )}
     </div>
   );
 }
 
-/** A half-filled circle — the theme/appearance glyph (Heroicons has no half-circle). */
-function HalfCircleIcon(props: SVGProps<SVGSVGElement>) {
+/** A half-filled circle — the theme/appearance glyph (Heroicons has no half-circle).
+ *
+ * The title is a required prop rather than a constant in here: it is the only human-readable string
+ * in the icon, and a component this far from a hook has no `t` of its own. */
+function HalfCircleIcon({ title, ...props }: SVGProps<SVGSVGElement> & { title: string }) {
   return (
     <svg
       viewBox="0 0 24 24"
@@ -165,21 +169,23 @@ function HalfCircleIcon(props: SVGProps<SVGSVGElement>) {
       aria-hidden="true"
       {...props}
     >
-      <title>Darstellung</title>
+      <title>{title}</title>
       <circle cx="12" cy="12" r="9" />
       <path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor" stroke="none" />
     </svg>
   );
 }
 
-const THEME_OPTIONS: { value: Theme; label: string; Icon: typeof SunIcon }[] = [
-  { value: "auto", label: "Automatisch", Icon: ComputerDesktopIcon },
-  { value: "light", label: "Hell", Icon: SunIcon },
-  { value: "dark", label: "Dunkel", Icon: MoonIcon },
+// Keys, not words: the list is module-level and `t` only exists inside the component below.
+const THEME_OPTIONS: { value: Theme; labelKey: string; Icon: typeof SunIcon }[] = [
+  { value: "auto", labelKey: "layout.themeAuto", Icon: ComputerDesktopIcon },
+  { value: "light", labelKey: "layout.themeLight", Icon: SunIcon },
+  { value: "dark", labelKey: "layout.themeDark", Icon: MoonIcon },
 ];
 
-/** Theme menu: half-circle trigger opening auto / hell / dunkel, the active one highlighted. */
+/** Theme menu: half-circle trigger opening auto / light / dark, the active one highlighted. */
 function ThemeSwitcher() {
+  const { t } = useTranslation();
   const [theme, setThemeState] = useState(getTheme());
   const [open, setOpen] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
@@ -209,14 +215,14 @@ function ThemeSwitcher() {
         type="button"
         className={headerIconButton}
         onClick={() => setOpen((v) => !v)}
-        title="Darstellung"
-        aria-label="Darstellung"
+        title={t("layout.theme")}
+        aria-label={t("layout.theme")}
       >
-        <HalfCircleIcon className="h-5 w-5" />
+        <HalfCircleIcon className="h-5 w-5" title={t("layout.theme")} />
       </button>
       {open && (
         <div className={`${popoverSurface} absolute right-0 mt-2 w-40 z-20 p-2 shadow-lg`}>
-          {THEME_OPTIONS.map(({ value, label, Icon }) => (
+          {THEME_OPTIONS.map(({ value, labelKey, Icon }) => (
             <button
               key={value}
               type="button"
@@ -227,7 +233,7 @@ function ThemeSwitcher() {
                   : "text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700"
               }`}
             >
-              <Icon className="h-4 w-4" /> {label}
+              <Icon className="h-4 w-4" /> {t(labelKey)}
             </button>
           ))}
         </div>
@@ -236,7 +242,7 @@ function ThemeSwitcher() {
   );
 }
 
-/** Icon-only user menu: full name + tenant, opening Profil / Audit / Sitzungen / Config + Abmelden. */
+/** Icon-only user menu: full name + tenant, opening the account items plus a way out. */
 function UserMenu({
   fullName,
   tenantName,
@@ -247,6 +253,7 @@ function UserMenu({
   items: NavItem[];
 }) {
   const { signOut } = useUmami();
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
 
@@ -306,7 +313,7 @@ function UserMenu({
             }}
             className="block w-full text-left rounded-lg px-3 py-1.5 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700"
           >
-            Abmelden
+            {t("layout.logout")}
           </button>
         </div>
       )}
@@ -325,6 +332,7 @@ function MobileMenu({
   onNavigate: () => void;
 }) {
   const { me, signOut, activeTenantId, switchTenant } = useUmami();
+  const { t } = useTranslation();
   const homeTenantId = me?.user.tenantId;
   const switched = !!activeTenantId && activeTenantId !== homeTenantId;
 
@@ -366,7 +374,7 @@ function MobileMenu({
               void switchTenant(homeTenantId, me?.tenant?.name);
             }}
           >
-            <XMarkIcon className="h-4 w-4" /> Übernahme beenden
+            <XMarkIcon className="h-4 w-4" /> {t("layout.endImpersonation")}
           </button>
         </>
       )}
@@ -379,7 +387,7 @@ function MobileMenu({
           void signOut();
         }}
       >
-        Abmelden
+        {t("layout.logout")}
       </button>
     </div>
   );
@@ -450,8 +458,8 @@ function TenantSwitcher() {
         type="button"
         className={headerIconButton}
         onClick={() => setOpen((v) => !v)}
-        title="Mandant wechseln"
-        aria-label="Mandant wechseln"
+        title={t("layout.switchTenant")}
+        aria-label={t("layout.switchTenant")}
       >
         <ArrowsRightLeftIcon className="h-5 w-5" />
       </button>
@@ -467,7 +475,7 @@ function TenantSwitcher() {
           />
           {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
           {results.length === 0 ? (
-            <p className="text-xs text-slate-400 px-1">Keine passenden Mandanten.</p>
+            <p className="text-xs text-slate-400 px-1">{t("layout.noTenants")}</p>
           ) : (
             <ul className="space-y-0.5">
               {results.map((tenant) => (
@@ -498,7 +506,7 @@ function TenantSwitcher() {
                 onClick={() => void pick(homeTenantId, me?.tenant?.name)}
                 className="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-sm text-amber-700 dark:text-amber-300 hover:bg-slate-50 dark:hover:bg-slate-700"
               >
-                <XMarkIcon className="h-4 w-4" /> Übernahme beenden
+                <XMarkIcon className="h-4 w-4" /> {t("layout.endImpersonation")}
               </button>
             </>
           )}

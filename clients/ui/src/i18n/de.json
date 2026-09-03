@@ -16,6 +16,18 @@
     "config": "Systemkonfiguration",
     "rateLimits": "Rate-Limits"
   },
+  "layout": {
+    "menu": "Menü",
+    "logout": "Abmelden",
+    "theme": "Darstellung",
+    "themeAuto": "Automatisch",
+    "themeLight": "Hell",
+    "themeDark": "Dunkel",
+    "switchTenant": "Mandant wechseln",
+    "noTenants": "Keine passenden Mandanten.",
+    "impersonating": "Übernahme aktiv:",
+    "endImpersonation": "Übernahme beenden"
+  },
   "users": {
     "title": "Benutzer",
     "new": "Neuer Benutzer",
