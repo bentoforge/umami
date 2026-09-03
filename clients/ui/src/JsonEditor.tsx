@@ -31,7 +31,12 @@ export default function JsonEditor({
   useEffect(() => subscribeTheme(() => setDark(resolvedDark())), []);
 
   return (
+    // `key` forces a remount on a light/dark switch. Reconfiguring the theme prop in place leaves
+    // oneDark's syntax highlight styles behind in their compartment — the background turns light
+    // but the brackets and keys keep their dark-tuned colours — so a fresh mount is the reliable
+    // way to shed the old theme entirely.
     <CodeMirror
+      key={dark ? "dark" : "light"}
       value={value}
       onChange={onChange}
       extensions={EXTENSIONS}
