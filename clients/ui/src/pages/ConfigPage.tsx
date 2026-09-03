@@ -1,12 +1,16 @@
 import type { Config } from "@bentoforge/umami-iam";
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useUmami } from "../auth/UmamiProvider";
-import { Banner, errMsg } from "../components";
-import { card, ghostButton, primaryButton } from "../ui";
+import { Banner, errMsg, Loader } from "../components";
+import { ghostButton, primaryButton } from "../ui";
 
-/** Crude config editor: the whole document rendered as JSON in a textarea, saved back wholesale.
- * Save is version-checked server-side (optimistic concurrency) — a concurrent edit yields a 409. */
+// CodeMirror is a heavy dependency and this is its only user, so it rides in a chunk fetched when
+// the config editor opens rather than in the main bundle.
+const JsonEditor = lazy(() => import("../JsonEditor"));
+
+/** Config editor: the whole document as JSON, saved back wholesale. Save is version-checked
+ * server-side (optimistic concurrency) — a concurrent edit yields a 409. */
 export function ConfigPage() {
   const { client } = useUmami();
   const { t } = useTranslation();
@@ -73,14 +77,15 @@ export function ConfigPage() {
       <Banner tone="error">{error}</Banner>
       <Banner tone="ok">{notice}</Banner>
 
-      <section className={card}>
-        <textarea
-          spellCheck={false}
-          className="w-full h-[70vh] font-mono text-xs rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 p-3 focus:outline-none focus:ring-2 focus:ring-primary"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-        />
-      </section>
+      <Suspense
+        fallback={
+          <div className="flex h-[70vh] items-center justify-center rounded-lg border border-slate-300 dark:border-slate-600">
+            <Loader />
+          </div>
+        }
+      >
+        <JsonEditor value={text} onChange={setText} />
+      </Suspense>
     </div>
   );
 }
