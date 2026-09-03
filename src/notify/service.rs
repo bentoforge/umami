@@ -56,7 +56,6 @@ use wasabi::status_bail;
 use wasabi::web::auth::authenticator::Authenticator;
 use wasabi::web::auth::user::User as AuthUser;
 use wasabi::web::auth::with_user_with_any_permission;
-use wasabi::web::locale::accept_language as accept_language_filter;
 use wasabi::web::warp::{into_response, with_body_as_json, with_cloneable};
 
 /// Cap on one send batch. High enough for a tenant-wide firing, low enough that one request cannot
@@ -253,7 +252,6 @@ pub fn my_notifications_route(
     warp::path!("auth" / "me" / "notifications")
         .and(warp::get())
         .and(with_cloneable(deps))
-        .and(accept_language_filter())
         .and(with_user_with_any_permission(authenticator, REQUIRE_SELF))
         .and_then(handle_my_notifications_route)
         .boxed()
@@ -350,10 +348,9 @@ pub fn send_route(
 #[tracing::instrument(level = "debug", name = "GET /auth/me/notifications", skip_all)]
 async fn handle_my_notifications_route(
     deps: NotifyDeps,
-    accept_language: Option<String>,
     caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(my_notifications(deps, accept_language, caller).await)
+    into_response(my_notifications(deps, caller).await)
 }
 
 #[tracing::instrument(level = "debug", name = "PUT /auth/me/notifications/{code}", skip_all)]
@@ -453,11 +450,7 @@ fn stored_choice<'a>(user: &'a User, code: &str) -> Option<&'a str> {
     user.notification_choices.get(code).map(String::as_str)
 }
 
-async fn my_notifications(
-    deps: NotifyDeps,
-    accept_language: Option<String>,
-    caller: AuthUser,
-) -> anyhow::Result<MyTypesResponse> {
+async fn my_notifications(deps: NotifyDeps, caller: AuthUser) -> anyhow::Result<MyTypesResponse> {
     let user_id = caller.user_id()?;
     let config = deps.config.current().await?;
     let user = match deps.users.get_user(user_id).await? {
@@ -466,12 +459,10 @@ async fn my_notifications(
     };
     let features = tenant_features(&deps, &user.tenant_id).await?;
     // Resolved here rather than shipped as maps — the client has no business re-deriving which
-    // language this user reads in. Profile preference first, then the request's `Accept-Language`,
-    // then the default: umami's own tokens carry no `locale` claim by default, so the header is the
-    // fallback that actually lands right for a user who never set a profile language.
-    let resolved =
-        crate::i18n::resolve(&config, user.locale.as_deref(), accept_language.as_deref());
-    let locale = resolved.as_str();
+    // language this user reads in. `caller.locale()` is the claim the authenticator resolved once
+    // (profile, else negotiated from Accept-Language against the supported set, else default), so a
+    // user who never set a profile language still gets their own.
+    let locale = caller.locale();
 
     let types = config
         .notification_types

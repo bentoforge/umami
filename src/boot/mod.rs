@@ -75,10 +75,6 @@ impl Platform {
     /// one block at the end. What a seam does when its prerequisite is missing depends on whether
     /// the operator named it: explicit is strict, unset auto-detects.
     pub async fn boot() -> anyhow::Result<Self> {
-        // umami guards its own admin routes with a trusted issuer (for local dev it can trust
-        // itself via the JWKS endpoint — see AUTH_ISSUER in .env.example).
-        let authenticator = Arc::new(Authenticator::from_env()?);
-
         // "Is AWS usable here?" — asked at most once, and only if some seam might pick an AWS
         // provider. Every such seam takes it, so the precondition they share is visible rather
         // than rediscovered as a failure on the first call to each service.
@@ -94,6 +90,16 @@ impl Platform {
         let tokens = Arc::new(TokenIssuer::from_env(keys.clone())?);
 
         let (config, config_seam) = repository::from_env(&aws).await?;
+
+        // umami guards its own admin routes with a trusted issuer (for local dev it can trust itself
+        // via the JWKS endpoint — see AUTH_ISSUER in .env.example). Configured with the languages
+        // this deployment can produce, so a token that carries no `locale` claim (umami's own do not,
+        // unless the config maps it) is still answered in the caller's `Accept-Language` rather than
+        // the bare default. Read once, here.
+        let current_config = config.current().await?;
+        let supported_locales = crate::i18n::supported(&current_config);
+        let authenticator =
+            Arc::new(Authenticator::from_env()?.with_supported_locales(supported_locales));
 
         // The one outbound seam. Without a transport this is a noop that says so, and the routes
         // needing mail refuse rather than accepting a request that goes nowhere.

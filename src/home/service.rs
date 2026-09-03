@@ -20,7 +20,6 @@ use wasabi::status_bail;
 use wasabi::web::auth::authenticator::Authenticator;
 use wasabi::web::auth::user::User as AuthUser;
 use wasabi::web::auth::with_user;
-use wasabi::web::locale::accept_language as accept_language_filter;
 use wasabi::web::warp::{into_response, with_cloneable};
 
 /// Dependencies of the start-page route.
@@ -76,7 +75,6 @@ pub fn home_route(
     warp::path!("auth" / "me" / "home")
         .and(warp::get())
         .and(with_cloneable(deps))
-        .and(accept_language_filter())
         .and(with_user(authenticator))
         .and_then(handle_home_route)
         .boxed()
@@ -85,29 +83,23 @@ pub fn home_route(
 #[tracing::instrument(level = "debug", name = "GET /auth/me/home", skip_all)]
 async fn handle_home_route(
     deps: HomeDeps,
-    accept_language: Option<String>,
     caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(home(deps, accept_language, caller).await)
+    into_response(home(deps, caller).await)
 }
 
-async fn home(
-    deps: HomeDeps,
-    accept_language: Option<String>,
-    caller: AuthUser,
-) -> anyhow::Result<HomeResponse> {
+async fn home(deps: HomeDeps, caller: AuthUser) -> anyhow::Result<HomeResponse> {
     let user_id = caller.user_id()?;
     let config = deps.config.current().await?;
     let user = match deps.users.get_user(user_id).await? {
         Some(user) => user,
         None => status_bail!(StatusCode::NOT_FOUND, "No such user"),
     };
-    // Profile preference first, then the request's `Accept-Language`, then the deployment default —
-    // the same resolution the token is minted with, done here because umami's own tokens carry no
-    // `locale` claim by default (the claim is config-driven), so reading it back would strand
-    // everyone on the default. The user's browser header is the fallback that actually lands right.
-    let locale = crate::i18n::resolve(&config, user.locale.as_deref(), accept_language.as_deref());
-    let locale = locale.as_str();
+    // The token's `locale` claim, resolved once at authentication: the profile's language if the
+    // token carried one, else negotiated from the caller's `Accept-Language` against the languages
+    // this deployment supports (see the authenticator's `with_supported_locales` at boot), else the
+    // default. One claim read, right answer — no per-endpoint header plumbing.
+    let locale = caller.locale();
 
     let features = deps
         .tenants
