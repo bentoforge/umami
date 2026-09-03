@@ -212,6 +212,18 @@ impl User {
             self.locale.as_deref().unwrap_or(default_locale),
         )
     }
+
+    /// Whether the current password came from an admin reset and has not been changed since — the
+    /// "you are on a generated password" state the profile and start-page nudge react to. A change
+    /// after the last reset (or no reset at all) clears it.
+    pub fn password_generated(&self) -> bool {
+        match self.last_password_reset {
+            Some(reset) => self
+                .last_password_change
+                .is_none_or(|changed| changed < reset),
+            None => false,
+        }
+    }
 }
 
 /// Composes [`DisplayNames`] from structured name parts, resolving the salutation word for

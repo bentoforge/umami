@@ -363,12 +363,51 @@ export interface Config {
   security: SecuritySettings;
   /** The notification types users can subscribe to. */
   notificationTypes?: NotificationTypeDef[];
+  /** The other services this deployment fronts, shown as launch cards on the start page. */
+  apps?: AppDef[];
   /** White-labeling for the management UI. */
   branding?: BrandingConfig;
   /** What every outbound mail carries beyond its own text. */
   mail?: MailConfig;
   /** The catalog of target APIs umami can mint tokens for. */
   apis: ApiDef[];
+}
+
+/** A launch card for another service this deployment fronts, on the start page. Gated per-user by
+ * `enabledIf` (evaluated server-side); the resolved, per-caller list is {@link HomeResponse.apps}. */
+export interface AppDef {
+  label: LocalizedText;
+  description?: LocalizedText | null;
+  /** Absolute `http(s)` URL, opened in a new tab. */
+  url: string;
+  /** DSL over the user's subjects (`feature:*`/`role:*`/`is:*`) gating visibility. Absent = shown
+   * to everyone. */
+  enabledIf?: string | null;
+}
+
+/** One launch card as the start page sees it — labels resolved into the caller's language, and
+ * only present when the caller passes its `enabledIf`. */
+export interface AppCard {
+  label: string;
+  description?: string;
+  url: string;
+}
+
+/** One account-hygiene task umami suggests on the start page — text resolved into the caller's
+ * language, a `url` into umami's own UI, and `important` when it is a real risk rather than a nudge. */
+export interface TaskCard {
+  label: string;
+  description: string;
+  /** In-app path (open in the same tab). */
+  url: string;
+  important: boolean;
+}
+
+/** The start page: the apps the caller may open, and the tasks umami suggests they do
+ * (`GET /auth/me/home`). */
+export interface HomeResponse {
+  apps: AppCard[];
+  tasks: TaskCard[];
 }
 
 /** What every outbound mail carries beyond its own text.

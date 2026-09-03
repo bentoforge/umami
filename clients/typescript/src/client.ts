@@ -22,6 +22,7 @@ import type {
   CustomFieldsSchema,
   DeletedUserCounts,
   ExchangeResponse,
+  HomeResponse,
   LoginResponse,
   MeResponse,
   MessagingCodeResponse,
@@ -220,6 +221,11 @@ export class UmamiClient {
   /** Current profile (user + tenant). */
   getMe(): Promise<MeResponse> {
     return this.request<MeResponse>("/auth/me");
+  }
+  /** The caller's start page: the apps they may open (gated per-user) and the account-hygiene
+   * tasks umami suggests, both resolved into their language. Any authenticated caller. */
+  home(): Promise<HomeResponse> {
+    return this.request<HomeResponse>("/auth/me/home");
   }
   /** Self-service profile edit: the structured name parts are always editable; custom fields only
    * when marked `selfEditable`. Blocked for `self:readonly` users. */

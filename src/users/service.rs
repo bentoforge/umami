@@ -131,13 +131,7 @@ impl UserView {
     /// Builds a view, composing the derived display names with the config salutation labels.
     fn build(user: User, default_locale: &str) -> Self {
         let names = user.display_names(default_locale);
-        // "Generated password" = an admin reset the password and the user has not changed it since.
-        let password_generated = match user.last_password_reset {
-            Some(reset) => user
-                .last_password_change
-                .is_none_or(|changed| changed < reset),
-            None => false,
-        };
+        let password_generated = user.password_generated();
         UserView {
             mfa_enabled: user.totp_secret.is_some(),
             password_generated,

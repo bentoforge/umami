@@ -156,6 +156,17 @@ impl Platform {
         }
     }
 
+    /// Dependencies of the start-page route.
+    pub fn home_deps(&self) -> crate::home::service::HomeDeps {
+        crate::home::service::HomeDeps {
+            users: self.repos.users.clone(),
+            tenants: self.repos.tenants.clone(),
+            contacts: self.repos.contacts.clone(),
+            config: self.config.clone(),
+            system_tenant_id: self.system_tenant_id.clone(),
+        }
+    }
+
     /// Dependencies of the notification routes.
     pub fn notify_deps(&self) -> NotifyDeps {
         NotifyDeps {

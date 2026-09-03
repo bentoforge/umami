@@ -72,6 +72,7 @@ Relevant environment variables:
   "security":  SecuritySettings,
   "messaging": MessagingConfig,
   "notificationTypes": [ NotificationTypeDef, … ],  // what users can subscribe to
+  "apps":      [ AppDef, … ],          // launch cards on the start page
   "branding":  BrandingConfig,        // white-labeling the management UI
   "apis":      [ ApiDef, … ]          // audiences + permission mapping
 }
@@ -146,6 +147,15 @@ not administering the deployment.
   "required": true,
   "showInTable": true }   // surface as a column in the admin list tables
 //   type ∈ { "string", "number", "bool"/"boolean", "select" }
+
+// AppDef — a launch card for another service, on the start page:
+{ "label": { "de": "Website Concierge", "en": "Website Concierge" },  // LocalizedText
+  "description": "Ihre Seiten, live betreut",                          // LocalizedText, optional
+  "url": "https://wsc.example.com",                                    // absolute; opens a new tab
+  "enabledIf": "feature:wsc" }                                         // optional; see below
+//   enabledIf: a DSL expression over the *user's* subjects (feature:*/role:*/is:*), evaluated
+//   server-side per caller — a card the user may not open is never sent. Omitted = shown to all.
+//   Served resolved (labels in the caller's language, gated) at GET /auth/me/home.
 
 // SecuritySettings:
 { "minPasswordLength": 8, "accessTtlSecs": 600, "refreshTtlSecs": 2592000,
@@ -315,8 +325,9 @@ The five `manage:profile`/`passwords`/`personal-tokens`/`sessions`/`messaging` p
 role simply isn't granted these; a deployment that doesn't use a given surface (e.g. no PATs) just
 doesn't grant that permission, and the corresponding UI hides itself.
 
-**Authenticated but permission-free** (any valid token): `GET /auth/me`, `GET /config/catalogue`,
-`GET /config/custom-fields`, plus login/refresh/logout, JWKS and the passkey-login ceremonies.
+**Authenticated but permission-free** (any valid token): `GET /auth/me`, `GET /auth/me/home`,
+`GET /config/catalogue`, `GET /config/custom-fields`, plus login/refresh/logout, JWKS and the
+passkey-login ceremonies.
 
 **Unauthenticated** (no token at all): `GET /auth/capabilities` — what the sign-in screen may offer,
 currently `{ "passwordRecovery": bool }` — plus the three ceremonies whose proof *is* the mailed

@@ -154,6 +154,18 @@ mod tests {
         "contact.verify.body",
         "auth.reset.subject",
         "auth.reset.body",
+        "home.task.change-password.label",
+        "home.task.change-password.description",
+        "home.task.link-email.label",
+        "home.task.link-email.description",
+        "home.task.verify-email.label",
+        "home.task.verify-email.description",
+        "home.task.add-passkey.label",
+        "home.task.add-passkey.description",
+        "home.task.link-authenticator.label",
+        "home.task.link-authenticator.description",
+        "home.task.complete-profile.label",
+        "home.task.complete-profile.description",
     ];
 
     #[test]

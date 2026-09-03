@@ -52,6 +52,7 @@ rust_i18n::i18n!("locales", fallback = "en");
 mod config;
 mod constants;
 mod contacts;
+mod home;
 mod messaging;
 mod notify;
 mod search;

@@ -24,6 +24,9 @@
     "invalidJson": "Ungültiges JSON: {{message}}",
     "saved": "Gespeichert. Neue Version: {{version}}."
   },
+  "start": {
+    "tasks": "Aufgaben"
+  },
   "layout": {
     "menu": "Menü",
     "logout": "Abmelden",

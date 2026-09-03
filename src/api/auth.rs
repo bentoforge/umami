@@ -16,6 +16,7 @@ use crate::auth::webauthn::{
     webauthn_register_start_route,
 };
 use crate::boot::Platform;
+use crate::home::service::home_route;
 use warp::Filter;
 use warp::filters::BoxedFilter;
 use wasabi::routes;
@@ -54,6 +55,7 @@ pub fn routes(platform: &Platform) -> BoxedFilter<(impl warp::Reply + use<>,)> {
             platform.config.clone(),
             platform.authenticator.clone()
         ),
+        home_route(platform.home_deps(), platform.authenticator.clone()),
         switch_tenant_route(platform.auth.clone(), platform.authenticator.clone()),
         change_password_route(
             platform.repos.users.clone(),

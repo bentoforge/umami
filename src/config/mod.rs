@@ -481,6 +481,27 @@ pub struct CustomFieldDef {
     pub self_editable: bool,
 }
 
+/// One service this deployment fronts, shown as a launch card on the start page.
+///
+/// Gated per-user by `enabledIf` against the same subject set as a role's `assignableIf`
+/// (`feature:*`/`role:*`/`is:*`) — resolved server-side, because a plain member cannot read the
+/// config and the visibility decision does not belong in a client.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AppDef {
+    /// Card heading, in one or more languages — see [`LocalizedText`].
+    pub label: LocalizedText,
+    /// Card subheading, in one or more languages.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<LocalizedText>,
+    /// Where the card links — an absolute `http(s)` URL, opened in a new tab.
+    pub url: String,
+    /// DSL over the user's subjects (`feature:*`/`role:*`/`is:*`) gating whether the card is shown.
+    /// `None` = shown to everyone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled_if: Option<String>,
+}
+
 /// White-labeling for the management UI. All optional; empty fields fall back to the built-in
 /// defaults. `logo`/`favicon` may be a `data:` URI (self-contained in the config) or an `http(s)`
 /// URL. Served by umami at `/app/branding.css`, `/app/logo`, `/app/favicon` (see `web_ui`).
@@ -699,6 +720,10 @@ pub struct Config {
     /// The notification types users can subscribe to — see [`NotificationTypeDef`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notification_types: Vec<NotificationTypeDef>,
+    /// The other services this deployment fronts, shown as launch cards on the start page — see
+    /// [`AppDef`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub apps: Vec<AppDef>,
     /// White-labeling for the management UI (accent CSS, logo, favicon).
     #[serde(default)]
     pub branding: BrandingConfig,
@@ -950,6 +975,18 @@ pub fn validate_labels(config: &Config) -> anyhow::Result<()> {
             );
         }
     }
+
+    for app in &config.apps {
+        if app.label.is_empty() {
+            client_bail!("An app card needs a 'label' (url '{}')", app.url.trim());
+        }
+        if app.url.trim().is_empty() {
+            let label = app
+                .label
+                .resolve(&config.default_locale, &config.default_locale);
+            client_bail!("App card '{label}' needs a 'url' to link to");
+        }
+    }
     Ok(())
 }
 
@@ -1031,6 +1068,7 @@ impl Default for Config {
             // Empty: what a deployment notifies about is entirely its own, and inventing a type
             // would put an unasked-for switch in everybody's profile.
             notification_types: Vec::new(),
+            apps: Vec::new(),
             branding: BrandingConfig::default(),
             // Empty on purpose: an imprint and a set of base URLs are a deployment's own, and a
             // placeholder shipped as a default would go out in real mail until somebody noticed.
