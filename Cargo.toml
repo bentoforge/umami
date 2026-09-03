@@ -13,10 +13,9 @@ lto = true
 codegen-units = 1
 
 [dependencies]
-# Framework. Local path while the Accept-Language locale negotiation lands in wasabi; switch back to
-# the released tag once it is cut (see the commented line — bump the tag past 3.7.0).
-wasabi = { path = "../../0711sw/wasabi", features = ["aws_dynamodb", "aws_s3"] }
-#wasabi = { git = "https://github.com/bentoforge/wasabi", tag = "3.7.0", features = ["aws_dynamodb", "aws_s3"] }
+# Framework. Pinned to a released tag; local path kept for reference during dev.
+#wasabi = { path = "../../0711sw/wasabi", features = ["aws_dynamodb", "aws_s3"] }
+wasabi = { git = "https://github.com/bentoforge/wasabi", tag = "3.8.0", features = ["aws_dynamodb", "aws_s3"] }
 
 dotenvy = "0.15"
 tokio = { version = "1.48", features = ["full"] }

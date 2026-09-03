@@ -2150,15 +2150,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "itertools"
-version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
-dependencies = [
- "either",
-]
-
-[[package]]
 name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2900,7 +2891,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b570b25f7617e43d59005d0990ccb79e950a423952cea19671b7a876da390adf"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -3295,7 +3286,7 @@ dependencies = [
  "arc-swap",
  "base62",
  "globwalk",
- "itertools 0.11.0",
+ "itertools",
  "normpath",
  "serde",
  "serde-saphyr",
@@ -4530,6 +4521,7 @@ dependencies = [
 [[package]]
 name = "wasabi"
 version = "0.1.0"
+source = "git+https://github.com/bentoforge/wasabi?tag=3.8.0#5e81d5f0bb3fea27c3c9ed30a1dbe048d620ded3"
 dependencies = [
  "wasabi-core",
  "wasabi-macro",
@@ -4538,6 +4530,7 @@ dependencies = [
 [[package]]
 name = "wasabi-core"
 version = "0.1.0"
+source = "git+https://github.com/bentoforge/wasabi?tag=3.8.0#5e81d5f0bb3fea27c3c9ed30a1dbe048d620ded3"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -4580,6 +4573,7 @@ dependencies = [
 [[package]]
 name = "wasabi-macro"
 version = "0.1.0"
+source = "git+https://github.com/bentoforge/wasabi?tag=3.8.0#5e81d5f0bb3fea27c3c9ed30a1dbe048d620ded3"
 dependencies = [
  "darling",
  "quote",
