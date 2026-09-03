@@ -1,6 +1,7 @@
 import { json, jsonParseLinter } from "@codemirror/lang-json";
 import { linter, lintGutter } from "@codemirror/lint";
 import { oneDark } from "@codemirror/theme-one-dark";
+import { EditorView } from "@codemirror/view";
 import CodeMirror from "@uiw/react-codemirror";
 import { useEffect, useState } from "react";
 import { resolvedDark, subscribeTheme } from "./theme";
@@ -9,6 +10,20 @@ import { resolvedDark, subscribeTheme } from "./theme";
 // and a gutter to hang it in. Static: the set never changes, so it is built once rather than per
 // render (a fresh array would make CodeMirror reconfigure the editor on every keystroke).
 const EXTENSIONS = [json(), linter(jsonParseLinter()), lintGutter()];
+
+// The light theme has to be our own. The one @uiw/react-codemirror ships for `theme="light"` sets
+// only a white background and no text colour, so unstyled tokens (the JSON braces and punctuation)
+// and the base foreground fall through to the browser default — which follows the OS
+// `prefers-color-scheme`. On a dark OS that paints light glyphs on our forced-white ground: the
+// brackets vanish. Pinning both `color` and `color-scheme` here decouples the editor from the OS,
+// so a light pin stays light whatever the system is set to. (oneDark already does this for dark.)
+const LIGHT_THEME = EditorView.theme(
+  {
+    "&": { backgroundColor: "#fff", color: "#0f172a", colorScheme: "light" },
+    ".cm-gutters": { backgroundColor: "#fff", color: "#94a3b8", border: "none" },
+  },
+  { dark: false },
+);
 
 /** A JSON source editor: syntax highlighting, line numbers, bracket matching and inline parse
  * errors, themed to follow the app's light/dark choice.
@@ -31,16 +46,11 @@ export default function JsonEditor({
   useEffect(() => subscribeTheme(() => setDark(resolvedDark())), []);
 
   return (
-    // `key` forces a remount on a light/dark switch. Reconfiguring the theme prop in place leaves
-    // oneDark's syntax highlight styles behind in their compartment — the background turns light
-    // but the brackets and keys keep their dark-tuned colours — so a fresh mount is the reliable
-    // way to shed the old theme entirely.
     <CodeMirror
-      key={dark ? "dark" : "light"}
       value={value}
       onChange={onChange}
       extensions={EXTENSIONS}
-      theme={dark ? oneDark : "light"}
+      theme={dark ? oneDark : LIGHT_THEME}
       height="70vh"
       readOnly={readOnly}
       className="overflow-hidden rounded-lg border border-slate-300 text-sm focus-within:ring-2 focus-within:ring-primary dark:border-slate-600"
