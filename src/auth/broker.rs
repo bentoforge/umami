@@ -11,6 +11,7 @@ use crate::constants::{
 use serde_json::json;
 use std::collections::BTreeMap;
 use warp::http::StatusCode;
+use wasabi::web::auth::CLAIM_LOCALE;
 use wasabi::{client_bail, status_bail};
 
 /// Reads the auth-strength (`amr`) claim off a caller's access token → `(passkey, totp)`, so a
@@ -46,8 +47,9 @@ pub struct MintParams<'a> {
     /// the user's profile *and* the request's `Accept-Language`, a key exchange knows what the
     /// relaying service asked for.
     ///
-    /// Always *resolved*, but only *emitted* when the target API maps `$user.locale` — there is no
-    /// hardcoded locale claim.
+    /// Always *resolved*. Emitted as the standard `locale` claim when the **user** has an explicit
+    /// profile language (see the mint flow), or when the target API maps `$user.locale`; a user on
+    /// "automatic" is left claim-less so the authenticator negotiates per request.
     pub locale: &'a str,
     /// Whether the principal's **home** tenant is the system tenant (adds
     /// `is:system-tenant-member`). Unlike [`Self::system_tenant`] this survives a tenant switch:
@@ -172,6 +174,7 @@ pub async fn mint_for_api(
             .map_or(&empty_fields, |tenant| &tenant.custom_fields),
     };
     let mut extra = api.build_claims(&ctx);
+    apply_user_locale_claim(&mut extra, params.user);
     if let Some(kind) = params.kind {
         let _ = extra.insert("kind".to_owned(), json!(kind));
     }
@@ -201,4 +204,93 @@ pub async fn mint_for_api(
             params.access_ttl_secs,
         )
         .await
+}
+
+/// Ensures the token carries the standard OIDC `locale` claim for a user who has **chosen** a
+/// language, so their stated preference rides in the token — honoured by every downstream service
+/// and by umami's own re-reads without a second lookup, and not overridable by a mismatched
+/// browser.
+///
+/// A user on "automatic" (no profile locale) is deliberately left claim-less, so the authenticator
+/// negotiates the language from each request's `Accept-Language` rather than freezing a login-time
+/// guess into the token — and an M2M key (no user) likewise. A config that maps `locale` itself
+/// already put it in `extra` and wins; this only fills the gap the default config leaves.
+fn apply_user_locale_claim(
+    extra: &mut BTreeMap<String, serde_json::Value>,
+    user: Option<&crate::users::User>,
+) {
+    if let Some(locale) = user.and_then(|user| user.locale.as_deref()) {
+        let _ = extra
+            .entry(CLAIM_LOCALE.to_owned())
+            .or_insert_with(|| json!(locale));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::Value;
+
+    /// A minimal user carrying just the locale under test.
+    fn user_with_locale(locale: Option<&str>) -> crate::users::User {
+        let now = chrono::Utc::now();
+        crate::users::User {
+            user_id: "u1".to_owned(),
+            tenant_id: "t1".to_owned(),
+            roles: Vec::new(),
+            username: "jo".to_owned(),
+            title: None,
+            locale: locale.map(str::to_owned),
+            salutation: crate::users::Salutation::Unspecified,
+            firstname: None,
+            lastname: None,
+            password_hash: None,
+            locked: false,
+            token_version: 1,
+            totp_secret: None,
+            totp_pending: None,
+            custom_fields: Default::default(),
+            created: now,
+            last_updated: now,
+            last_seen: None,
+            last_active_or_created: now,
+            last_password_reset: None,
+            last_password_change: None,
+            has_passkey: false,
+            created_by: None,
+            last_changed_by: None,
+            preferred_contact: None,
+            notification_choices: Default::default(),
+        }
+    }
+
+    #[test]
+    fn an_explicit_profile_language_becomes_the_locale_claim() {
+        let mut extra = BTreeMap::new();
+        apply_user_locale_claim(&mut extra, Some(&user_with_locale(Some("de"))));
+        assert_eq!(extra.get(CLAIM_LOCALE), Some(&json!("de")));
+    }
+
+    #[test]
+    fn automatic_leaves_the_claim_absent_for_the_authenticator_to_negotiate() {
+        let mut extra = BTreeMap::new();
+        apply_user_locale_claim(&mut extra, Some(&user_with_locale(None)));
+        assert!(!extra.contains_key(CLAIM_LOCALE));
+    }
+
+    #[test]
+    fn an_m2m_key_gets_no_user_locale_claim() {
+        let mut extra = BTreeMap::new();
+        apply_user_locale_claim(&mut extra, None);
+        assert!(!extra.contains_key(CLAIM_LOCALE));
+    }
+
+    #[test]
+    fn a_config_mapped_locale_wins_over_the_profile() {
+        // The deployment deliberately mapped `locale` to something of its own — do not clobber it.
+        let mut extra: BTreeMap<String, Value> = BTreeMap::new();
+        let _ = extra.insert(CLAIM_LOCALE.to_owned(), json!("fr"));
+        apply_user_locale_claim(&mut extra, Some(&user_with_locale(Some("de"))));
+        assert_eq!(extra.get(CLAIM_LOCALE), Some(&json!("fr")));
+    }
 }

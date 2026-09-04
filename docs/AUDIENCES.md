@@ -70,11 +70,24 @@ A user record carries no address of its own — `$user.email` resolves through t
 ### What is always in a token, mapping or not
 
 `iss`, `sub`, `aud`, `tenant`, `permissions`, `iat`, `exp` and `ver` (the `tokenVersion` snapshot) are
-hardcoded. Two more appear conditionally: `kind` (`"api_key"` on a key exchange, `"messaging"` on a
-chat resolve) and `amr` (the second factors a session used — `["passkey"]`, `["totp"]`, or both).
+hardcoded. Three more appear conditionally: `kind` (`"api_key"` on a key exchange, `"messaging"` on a
+chat resolve), `amr` (the second factors a session used — `["passkey"]`, `["totp"]`, or both), and
+`locale` — see below.
 
 **Everything else comes from the mapping**, so a deployment that maps nothing gets exactly that list.
 In particular umami puts no personal data in a token by default.
+
+### `locale` — the one profile field that self-emits
+
+`locale` is the exception to "personal data only via the mapping". A user who has **chosen** a
+language (an explicit profile `locale`, not "automatic") gets it as the standard OIDC `locale` claim
+in every token, whether or not the API maps `$user.locale` — their stated preference is meant to
+travel, honoured by downstream services and by umami's own re-reads without a second lookup.
+
+A user on **automatic** (no profile language) is deliberately left claim-less. wasabi's authenticator
+then negotiates the language from each request's `Accept-Language` against the deployment's supported
+set — so it tracks the browser instead of freezing a login-time guess into the token. An API that
+maps `locale` itself (via `$user.locale` or a literal) still wins; the self-emit only fills the gap.
 
 ## The minting paths
 
