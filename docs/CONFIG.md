@@ -207,10 +207,13 @@ not administering the deployment.
 //   serves these at /app/branding.css, /app/logo, /app/favicon. logo/favicon may be a data: URI
 //   (self-contained) or an http(s) URL. Swap the accent via customCss:
 { "customCss": ":root{--brand: 225 29 72; --brand-dark: 190 18 60}",  // space-separated RGB
+  "logo":      "data:image/svg+xml;base64,…",  // theme-neutral; use when light and dark are the same
   "logoLight": "data:image/svg+xml;base64,…",  // or "https://cdn.example.com/logo-light.svg"
-  "logoDark":  "data:image/svg+xml;base64,…",  // shown in dark mode; each falls back to the other
+  "logoDark":  "data:image/svg+xml;base64,…",  // shown in dark mode
   "favicon":   "data:image/png;base64,…",
   "title":     "noonu" }                       // browser tab AND the logo's alt text
+//   Each theme resolves logo{Light,Dark} → logo → the other variant → built-in default, so a
+//   deployment with one logo for both themes sets only `logo`.
 //   served at /app/logo/light, /app/logo/dark, /app/favicon; the UI picks the logo by theme.
 //
 //   The top bar has six tokens of its own, for a logo that needs its own background:

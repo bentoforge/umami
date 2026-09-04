@@ -513,11 +513,18 @@ pub struct BrandingConfig {
     /// `:root{--brand: <r> <g> <b>; --brand-dark: <r> <g> <b>}` (space-separated RGB channels).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_css: Option<String>,
-    /// Logo for **light** backgrounds — a `data:` URI or an `http(s)` URL. Empty → falls back to the
-    /// dark logo, then a built-in default.
+    /// Theme-neutral logo — a `data:` URI or an `http(s)` URL, used for both light and dark when the
+    /// deployment's logo is the same on either background. It sits **between** the theme-specific
+    /// logos and the built-in default: a variant wins when set, this fills in otherwise. Set only
+    /// this when light and dark are identical, rather than repeating it into both.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub logo: Option<String>,
+    /// Logo for **light** backgrounds — a `data:` URI or an `http(s)` URL. Empty → falls back to
+    /// [`Self::logo`], then the dark logo, then a built-in default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub logo_light: Option<String>,
-    /// Logo for **dark** backgrounds. Empty → falls back to the light logo, then a built-in default.
+    /// Logo for **dark** backgrounds. Empty → falls back to [`Self::logo`], then the light logo,
+    /// then a built-in default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub logo_dark: Option<String>,
     /// Favicon — a `data:` URI or an `http(s)` URL. Empty → the built-in default.

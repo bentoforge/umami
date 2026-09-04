@@ -495,9 +495,13 @@ export interface BrandingConfig {
   /** Extra CSS injected after the app stylesheet — override the accent via
    * `:root{--brand: <r> <g> <b>; --brand-dark: <r> <g> <b>}` (space-separated RGB channels). */
   customCss?: string;
-  /** Logo for light backgrounds (data: URI or http(s) URL); falls back to logoDark, then default. */
+  /** Theme-neutral logo (data: URI or http(s) URL), used for both light and dark when they are the
+   * same. Sits between the theme-specific logos and the built-in default. */
+  logo?: string;
+  /** Logo for light backgrounds (data: URI or http(s) URL); falls back to logo, then logoDark, then
+   * default. */
   logoLight?: string;
-  /** Logo for dark backgrounds; falls back to logoLight, then default. */
+  /** Logo for dark backgrounds; falls back to logo, then logoLight, then default. */
   logoDark?: string;
   favicon?: string;
   /** Browser tab title (document `<title>`); served at /app/branding.json, applied at runtime.

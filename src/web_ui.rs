@@ -80,15 +80,16 @@ pub fn ui_routes(
                 DEFAULT_FAVICON_SVG,
             ))
         });
-    // Two theme variants; each falls back to the other, then a built-in default. The UI picks via
-    // <picture media="(prefers-color-scheme: dark)">.
+    // Two theme variants; each prefers its own, then the theme-neutral `logo`, then the other
+    // variant, then a built-in default. The UI picks via <picture media="(prefers-color-scheme:
+    // dark)">. A deployment whose light and dark logos are the same sets only `logo`.
     let logo_light = warp::path!("app" / "logo" / "light")
         .and(warp::get())
         .and(with_cloneable(config.clone()))
         .and_then(|config: Arc<dyn ConfigRepository>| async move {
             let brand = branding(&config).await;
             Ok::<_, Rejection>(asset_response(
-                brand.logo_light.or(brand.logo_dark),
+                brand.logo_light.or(brand.logo.clone()).or(brand.logo_dark),
                 DEFAULT_LOGO_LIGHT_SVG,
             ))
         });
@@ -98,7 +99,7 @@ pub fn ui_routes(
         .and_then(|config: Arc<dyn ConfigRepository>| async move {
             let brand = branding(&config).await;
             Ok::<_, Rejection>(asset_response(
-                brand.logo_dark.or(brand.logo_light),
+                brand.logo_dark.or(brand.logo.clone()).or(brand.logo_light),
                 DEFAULT_LOGO_DARK_SVG,
             ))
         });
