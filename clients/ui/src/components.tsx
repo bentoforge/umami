@@ -43,20 +43,25 @@ export function Footer({ className = "" }: { className?: string }) {
   const { i18n } = useTranslation();
   const { footer, version } = useBranding();
   const html = resolveLocalized(footer, i18n.language);
-  const title = useBrandingTitle() ?? "umami";
   if (!html && !version) {
     return null;
   }
   return (
     <footer className={`px-6 py-6 text-center text-xs ${className}`}>
       {html && (
-        <div
+        // `span`, not `div`: the version hangs off the end of this line rather
+        // than sitting under it, so the whole footer is one sentence.
+        <span
           className="[&_a]:underline [&_a]:underline-offset-2 [&_a:hover]:opacity-100"
           // biome-ignore lint/security/noDangerouslySetInnerHtml: operator-authored branding config, trusted like branding.css — see branding.ts
           dangerouslySetInnerHTML={{ __html: html }}
         />
       )}
-      {version && <div className="mt-1 font-mono opacity-60">{`${title} ${version}`}</div>}
+      {html && version && <span className="mx-1.5 opacity-40">·</span>}
+      {/* The title is not repeated here — it is already whatever the footer
+          text and the logo above say, and a third printing read like a stray
+          heading. */}
+      {version && <span className="font-mono opacity-60">{version}</span>}
     </footer>
   );
 }

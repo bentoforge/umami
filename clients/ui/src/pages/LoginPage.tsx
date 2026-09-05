@@ -314,7 +314,12 @@ export function LoginPage() {
           </button>
         )}
       </div>
-      <Footer className="text-login-text opacity-70" />
+      {/* Neutral, not `text-login-text`: that is the colour of text *on the
+          card*, and this footer sits on the page behind it. Branding that sets
+          a white card text — a dark card — then paints this white on a light
+          page, where it disappears. Same treatment as the admin layout, so the
+          footer reads the same everywhere. */}
+      <Footer className="text-slate-500 dark:text-slate-400" />
     </div>
   );
 }
