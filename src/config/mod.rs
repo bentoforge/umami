@@ -535,6 +535,13 @@ pub struct BrandingConfig {
     /// `/app/branding.json` and applied by the SPA at runtime. Empty → `"umami"`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// A legal/imprint line shown at the foot of every screen — the login page and every page
+    /// behind it. Raw HTML, trusted the way [`Self::custom_css`] is: the operator authors it, so a
+    /// link is simply `<a href="…">…</a>`. Translatable like any catalogue label
+    /// ([`LocalizedText`]) — a bare string is every language, a map picks per locale — and the SPA
+    /// resolves it against the reader's current language. Empty → no footer line.
+    #[serde(default, skip_serializing_if = "LocalizedText::is_empty")]
+    pub footer: LocalizedText,
 }
 
 /// System security/token settings.

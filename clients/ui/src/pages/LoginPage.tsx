@@ -3,7 +3,7 @@ import { type FormEvent, useCallback, useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router-dom";
 import { useUmami } from "../auth/UmamiProvider";
-import { Logo } from "../components";
+import { Footer, Logo } from "../components";
 import { errorBox } from "../ui";
 
 /**
@@ -177,8 +177,8 @@ export function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-login-bg px-4">
-      <div className="w-full max-w-sm rounded-2xl bg-login-card text-login-text shadow-xl p-8">
+    <div className="min-h-screen flex flex-col items-center bg-login-bg px-4">
+      <div className="my-auto w-full max-w-sm rounded-2xl bg-login-card text-login-text shadow-xl p-8">
         {/* Theme-aware branding logo (config `branding.logoLight`/`logoDark`, else built-in). */}
         <div className="flex justify-center mb-6">
           <Logo className="h-16 w-auto max-w-full" />
@@ -314,6 +314,7 @@ export function LoginPage() {
           </button>
         )}
       </div>
+      <Footer className="text-login-text opacity-70" />
     </div>
   );
 }

@@ -13,7 +13,7 @@ import { Fragment, type SVGProps, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { NavLink, Outlet } from "react-router-dom";
 import { useUmami } from "../auth/UmamiProvider";
-import { errMsg, Logo } from "../components";
+import { errMsg, Footer, Logo } from "../components";
 import { getTheme, setTheme, type Theme } from "../theme";
 import { card, headerIconButton, input } from "../ui";
 
@@ -61,7 +61,7 @@ export function AdminLayout() {
   const tenantName = activeTenantName ?? me?.tenant?.name ?? me?.user.tenantId ?? "";
 
   return (
-    <div className="min-h-screen bg-slate-100 dark:bg-slate-900">
+    <div className="min-h-screen flex flex-col bg-slate-100 dark:bg-slate-900">
       <header className="bg-header-bg border-b border-header-border text-header-text">
         <div className="mx-auto max-w-6xl px-6 py-3 flex items-center gap-4">
           {/* Logo → Start. Theme-aware (config `branding.logoLight`/`logoDark`, else built-in). */}
@@ -109,13 +109,17 @@ export function AdminLayout() {
 
       {/* Keyed on the active tenant so a switch remounts the pages → they refetch against the new
           token without a full reload (a reload would silently refresh back to the home tenant). */}
-      <main key={activeTenantId ?? "none"} className="mx-auto max-w-6xl px-6 py-8">
+      <main key={activeTenantId ?? "none"} className="mx-auto w-full max-w-6xl flex-1 px-6 py-8">
         {/* Below the bar rather than inside it, and spaced like any other block:
             stuck to the header it read as part of the chrome, which is the one
             thing this must not be — it is a state you have to be able to leave. */}
         {switched && <ImpersonationNotice />}
         <Outlet />
       </main>
+
+      {/* The same legal line as the sign-in page, in a slate tone for the admin ground —
+          `flex-1` on main keeps it at the foot even when a page is short. */}
+      <Footer className="text-slate-500 dark:text-slate-400" />
     </div>
   );
 }

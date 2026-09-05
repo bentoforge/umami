@@ -9,7 +9,7 @@ import type {
 import { EllipsisVerticalIcon } from "@heroicons/react/24/outline";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useBrandingTitle } from "./branding";
+import { resolveLocalized, useBranding, useBrandingTitle } from "./branding";
 import i18n from "./i18n/i18n";
 import { resolvedDark, subscribeTheme } from "./theme";
 import { ghostButton, iconButton, input } from "./ui";
@@ -27,6 +27,39 @@ export function Loader({ label }: { label?: string }) {
 
 /** Extracts a human-readable message from a thrown value (UmamiError, Error, or anything). */
 export const errMsg = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+/**
+ * The foot of every screen — the operator's legal line, and the build this server is.
+ *
+ * The line itself is operator HTML from `branding.footer`, resolved to the reader's current
+ * language and injected as authored: trusted config, the same footing as `branding.css`, so a
+ * `<a href>` is just a link. The version is the build tag, a shade quieter — a thing to read only
+ * when someone asks "which build?". Nothing to show → nothing renders, rather than an empty bar.
+ *
+ * `className` carries the text colour: the two hosts sit on different grounds — the sign-in card's
+ * own palette, and the admin's slate page.
+ */
+export function Footer({ className = "" }: { className?: string }) {
+  const { i18n } = useTranslation();
+  const { footer, version } = useBranding();
+  const html = resolveLocalized(footer, i18n.language);
+  const title = useBrandingTitle() ?? "umami";
+  if (!html && !version) {
+    return null;
+  }
+  return (
+    <footer className={`px-6 py-6 text-center text-xs ${className}`}>
+      {html && (
+        <div
+          className="[&_a]:underline [&_a]:underline-offset-2 [&_a:hover]:opacity-100"
+          // biome-ignore lint/security/noDangerouslySetInnerHtml: operator-authored branding config, trusted like branding.css — see branding.ts
+          dangerouslySetInnerHTML={{ __html: html }}
+        />
+      )}
+      {version && <div className="mt-1 font-mono opacity-60">{`${title} ${version}`}</div>}
+    </footer>
+  );
+}
 
 /** Date+time in the active language: German uses the DIN 5008 shape `TT.MM.JJJJ HH:MM:SS`; other
  * languages get an unambiguous ISO-like `YYYY-MM-DD HH:MM:SS`. Both render in local time. */
