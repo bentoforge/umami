@@ -29,25 +29,23 @@ tenant/membership authority for a fleet of wasabi-based B2B services. See [READM
 the product overview and the `docs/` directory for the reference docs (CONFIG, PERMISSIONS,
 AUDIENCES, API-KEYS, CONTACTS, NOTIFICATIONS, SCHEMA).
 
-## Reference repositories (read these first — follow their conventions exactly)
+## Where the conventions come from
 
-| Repo | Local path | Use as reference for |
-|------|-----------|----------------------|
-| `wasabi` | `../../0711sw/wasabi` | Framework: warp filters, `Authenticator`/`User`, `DynamoClient`, schema helpers, error handling, logging |
-| `dbx-core` | `../../0711sw/durablox/dbx-core` | Reference *service*: repository pattern, module layout, `main.rs` wiring, route functions, strict lints, CI |
+The framework is [wasabi](https://github.com/bentoforge/wasabi) — warp filters,
+`Authenticator`/`User`, `DynamoClient`, schema helpers, error handling, logging. Grep it for a
+framework pattern rather than inventing one.
 
-**This spec describes _what_ to build; wasabi/dbx-core show _how_ we write code.** When in doubt
-about a pattern, grep the reference repos rather than inventing something.
+**This spec describes _what_ to build; the existing code shows _how_ it is written.** These files are
+the canonical examples in this repo:
 
-Concrete files worth copying patterns from:
-
-- `dbx-core/src/main.rs` — bootstrap, `run_webserver(routes![...])`, `Arc` wiring, strict lints.
-- `dbx-core/src/blox/repository.rs` — canonical repository: `#[async_trait]` trait +
+- `src/main.rs` — boot, bootstrap, serve, and the strict lint block.
+- `src/boot/mod.rs` + `src/storage/mod.rs` — how dependencies are built and a backend is chosen.
+- `src/tenants/repository.rs` — canonical repository: `#[async_trait]` trait +
   `#[cfg_attr(test, mockall::automock)]`, `DynamoXRepository { client: DynamoClient }`,
   `with_client(&DynamoClient)` that calls `create_table`, `const FIELD_*`, camelCase entities.
-- `dbx-core/src/metamodel/service.rs` — canonical warp route: `pub fn x_api_route(deps) ->
-  BoxedFilter<(impl warp::Reply,)>`, `into_response` / `into_response_with_status`,
-  `with_body_as_string`, `with_cloneable`, `enforce_user_with_any_permission`.
+- `src/api/*.rs` + `src/tenants/service.rs` — canonical warp routes: one route group per domain,
+  `pub fn x_route(deps) -> BoxedFilter<(impl warp::Reply,)>`, `into_response` /
+  `into_response_with_status`, `with_body_as_json`, `with_cloneable`, permission guards.
 - `wasabi/wasabi-core/src/web/auth/{mod.rs,user.rs,authenticator.rs}` — JWT validation, claim
   constants (`CLAIM_SUB`, `CLAIM_TENANT`, `CLAIM_PERMISSIONS`, …), `User` accessors.
 - `wasabi/wasabi-core/src/aws/dynamodb/{mod.rs,schema.rs,client.rs}` — `DynamoClient`,
@@ -72,7 +70,7 @@ on. (Global preference: `cargo audit` too, before commit/push.)
 ## Running locally
 
 ```bash
-aws sso login --profile dbx-dev    # dev testing runs against the shared dbx-dev account
+aws sso login --profile my-profile # dev testing runs against a real AWS account
 cp .env.example .env               # fill UMAMI_SIGNING_KEY
 cargo run --features pretty_logs
 ```
@@ -150,10 +148,10 @@ naming schema rather than to umami. A new seam follows that shape; do not add a 
 switch — strictness is derived from explicitness. A failed boot exits **1**, never 0. Full
 reference: [docs/SEAMS.md](docs/SEAMS.md).
 
-## Key conventions (non-negotiable — from wasabi/dbx-core)
+## Key conventions (non-negotiable)
 
 - **Curly braces on every `if`**, even single-line bodies (global user preference).
-- **Strict lints** in `main.rs`: copy the `#![deny(...)]` block from `dbx-core/src/main.rs`
+- **Strict lints** in `main.rs`: keep the `#![deny(...)]` block
   (denies `warnings`, `missing_docs`, `unsafe_code`, `clippy::unwrap_used`, `expect_used`,
   `panic`, `indexing_slicing`, …) with the same `#![cfg_attr(test, allow(...))]` relaxation.
 - **Repositories**: `#[async_trait] pub trait XRepository: Send + Sync` +
@@ -215,7 +213,7 @@ one active tenant**; `POST /auth/switch-tenant` re-issues with a different `tena
 
 ## CI/CD
 
-In `.github/`, mirroring `dbx-core`:
+In `.github/`:
 
 - **CI (Rust)** — `.github/workflows/ci-rust.yml` on PRs and pushes to `main` that touch `src/**` or
   the manifests. It delegates to the `verify-rust` composite action, which runs `cargo fmt --check`,

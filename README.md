@@ -140,8 +140,7 @@ self-hosted service.
 ### Running locally next to your app
 
 umami is deployed per environment, so the compose file that starts it belongs to
-**the environment**, not here — see the consuming repo (for noonu/WSC:
-`wsc/docker-compose.yml`). Two things bite whichever way you start it:
+**the environment**. Two things bite whichever way you start it:
 
 - **Publish umami on the port its issuer names.** `AUTH_ISSUER=<iss>=jwks:/…`
   makes umami validate its own admin tokens by fetching the JWKS at the issuer
@@ -158,7 +157,7 @@ umami is deployed per environment, so the compose file that starts it belongs to
 
 ```bash
 # 1. AWS creds for the target account (dev uses AWS SSO)
-aws sso login --profile dbx-dev
+aws sso login --profile my-profile
 
 # 2. Config from the template, then fill the secrets (see below)
 cp .env.example .env

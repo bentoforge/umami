@@ -110,14 +110,14 @@ granted — enabling chaining like `role:admin → write:blocks`, then `write:bl
       ]
     },
     {
-      "code": "dbx-core", "audience": "dbx-core",
+      "code": "catalog", "audience": "catalog",
       "eligibility": "role:member, role:admin, is:system-tenant",   // false ⇒ no JWT (403)
       "permissions": [
         { "when": "role:admin",           "grant": ["admin:blocks","write:blocks"] },
         { "when": "feature:ai + role:ai", "grant": ["use:ai"] },
         { "when": "write:blocks",         "grant": ["read:blocks"] }   // chains off an earlier grant
       ],
-      "claims": { "svc": "dbx-core" }
+      "claims": { "svc": "catalog" }
     }
   ]
 }

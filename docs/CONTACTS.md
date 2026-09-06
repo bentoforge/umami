@@ -97,8 +97,8 @@ credentials belong to the worker; a dead-letter queue on the SQS side is the ret
                  "name": "Dr. Jane Doe", "salutation": "Frau", "salutationKey": "MADAM",
                  "firstName": "Jane", "lastName": "Doe" },
   "context": { "link": "https://umami.example.com/app/verify-contact?token=…" },
-  "footer": "noonu GmbH · …",                       // from the config, already in `body` too
-  "globalContext": { "baseUrl": "https://noonu.dev" },
+  "footer": "Beispiel GmbH · …",                       // from the config, already in `body` too
+  "globalContext": { "baseUrl": "https://app.example.com" },
   "locale": "de", "userId": "…", "tenantId": "…" }
 ```
 
@@ -114,7 +114,7 @@ always filled in for umami's own mails.
 
 One field rather than one per sender, so there is one thing to switch on. What keeps them apart in
 it is that **every name carries its sender's namespace** — `umami::password-reset`,
-`wsc::new-content`, `abc::report-ready` — and that is a rule rather than a convention:
+`app::new-content`, `abc::report-ready` — and that is a rule rather than a convention:
 `POST /notifications/send` refuses a template with no namespace, and refuses `umami::` outright.
 
 Both halves of that matter. Without the reservation a caller could have its notification rendered as

@@ -149,10 +149,10 @@ not administering the deployment.
 //   type ∈ { "string", "number", "bool"/"boolean", "select" }
 
 // AppDef — a launch card for another service, on the start page:
-{ "name": { "de": "Website Concierge", "en": "Website Concierge" },   // LocalizedText
-  "description": "Ihre Seiten, live betreut",                          // LocalizedText, optional
-  "url": "https://wsc.example.com",                                    // absolute; opens a new tab
-  "enabledIf": "feature:wsc" }                                         // optional; see below
+{ "name": { "de": "Analysen", "en": "Analytics" },                     // LocalizedText
+  "description": "Zahlen zu Ihren Seiten",                             // LocalizedText, optional
+  "url": "https://analytics.example.com",                              // absolute; opens a new tab
+  "enabledIf": "feature:analytics" }                                   // optional; see below
 //   enabledIf: a DSL expression over the *user's* subjects (feature:*/role:*/is:*), evaluated
 //   server-side per caller — a card the user may not open is never sent. Omitted = shown to all.
 //   Served resolved (labels in the caller's language, gated) at GET /auth/me/home.
@@ -186,7 +186,7 @@ not administering the deployment.
 //   `on-publish` and `quarterly` are as valid as `weekly`, and each carries its own label the way a
 //   role or a feature does. PUT /config rejects a duplicate code, a type with no cadences, a
 //   non-lowercase or unlabelled cadence, and a `default` the type is never fired at.
-{ "code": "wsc-new-content",        // stable: keys every user's stored choice
+{ "code": "new-content",        // stable: keys every user's stored choice
   "name": "New content",
   "description": "Pages published since the last message.",
   "cadences": [                     // what the app actually fires — code plus the words a user reads
@@ -195,7 +195,7 @@ not administering the deployment.
     { "code": "monthly", "name": "Monatlich" }
   ],
   "default": "weekly",              // "on", a cadence code, or omitted for off
-  "eligibleIf": "role:wsc-editor" } // DSL over role:*/feature:*/is:system-tenant{,-member}
+  "eligibleIf": "role:editor" } // DSL over role:*/feature:*/is:system-tenant{,-member}
 //   Omit `cadences` entirely for a type with no rhythm of its own: the choice is then "on"/"off".
 //   `off` and `on` are reserved and cannot be cadence codes. A user can always choose `off`,
 //   whether or not the type has a rhythm.
@@ -211,7 +211,7 @@ not administering the deployment.
   "logoLight": "data:image/svg+xml;base64,…",  // or "https://cdn.example.com/logo-light.svg"
   "logoDark":  "data:image/svg+xml;base64,…",  // shown in dark mode
   "favicon":   "data:image/png;base64,…",
-  "title":     "noonu" }                       // browser tab AND the logo's alt text
+  "title":     "Example" }                       // browser tab AND the logo's alt text
 //   Each theme resolves logo{Light,Dark} → logo → the other variant → built-in default, so a
 //   deployment with one logo for both themes sets only `logo`.
 //   served at /app/logo/light, /app/logo/dark, /app/favicon; the UI picks the logo by theme.
@@ -250,10 +250,10 @@ not administering the deployment.
 { "customCss": ":root{--header-bg: 30 58 113; --header-text: 255 255 255; --header-text-muted: 203 213 225; --header-hover: 42 74 139; --header-accent: 45 203 166; --header-border: 45 203 166} header{border-bottom-width:4px}" }
 
 // ApiDef — a target audience + its permission projection:
-{ "code": "dbx-core", "audience": "dbx-core",
+{ "code": "catalog", "audience": "catalog",
   "eligibility": "role:member,role:admin",      // optional gate; no token minted if it fails
   "permissions": [ { "when": "role:admin", "grant": ["write:blocks"] }, … ],  // ordered
-  "claims": { "svc": "dbx-core", "org": "$tenant.custom.customerNo" } }
+  "claims": { "svc": "catalog", "org": "$tenant.custom.customerNo" } }
 //   A claim source is either a LITERAL string or a `$` reference. Without the `$` it is a literal —
 //   `"tenant.features"` puts those words in the token, not the array. PUT /config now refuses a
 //   value that looks like a reference but is missing its `$`, and an unknown `$…` reference too:
@@ -434,7 +434,7 @@ feature/scope and a product-API entry with eligibility + claims. Copy, adjust, `
       ]
     },
     {
-      "code": "dbx-core", "audience": "dbx-core",
+      "code": "catalog", "audience": "catalog",
       "eligibility": "role:member,role:admin,role:owner",
       "permissions": [
         { "when": "role:admin,role:owner", "grant": ["write:blocks","read:blocks"] },
@@ -506,11 +506,11 @@ the config:
 ```jsonc
 "mail": {
   "footer": {                                  // keyed by locale, and a template
-    "de": "noonu GmbH · Musterstraße 1 · 70173 Stuttgart\nFragen: {{ globalContext.supportMail }}",
-    "en": "noonu GmbH · Musterstraße 1 · 70173 Stuttgart, Germany"
+    "de": "Beispiel GmbH · Musterstraße 1 · 70173 Stuttgart\nFragen: {{ globalContext.supportMail }}",
+    "en": "Beispiel GmbH · Musterstraße 1 · 70173 Stuttgart, Germany"
   },
   "globalContext": {                           // constants for every mail and every template
-    "supportMail": "hilfe@noonu.dev"
+    "supportMail": "hilfe@example.com"
   }
 }
 ```

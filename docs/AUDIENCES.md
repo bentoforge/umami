@@ -12,8 +12,8 @@ apis: [
     "claims": { "features": "$tenant.features" } },  // the umami admin API
 
   {
-    "code": "dbx-core",
-    "audience": "dbx-core",                          // → the token's `aud`
+    "code": "catalog",
+    "audience": "catalog",                          // → the token's `aud`
     "eligibility": "role:member,role:admin",         // must hold, else 403
     "permissions": [                                 // ORDERED list; later rules see earlier grants
       { "when": "admin:tenant", "grant": ["admin:blocks", "admin:assets", "write:blocks"] },
@@ -21,7 +21,7 @@ apis: [
       { "when": "feature:ai", "grant": ["use:ai"] }
     ],
     "claims": {                                      // claim mapping for this audience
-      "svc":      "dbx-core",                        // static literal (no `$`)
+      "svc":      "catalog",                        // static literal (no `$`)
       "features": "$tenant.features",                // effective feature codes (array)
       "dept":     "$user.custom.department"          // project a custom user field
     }
@@ -121,13 +121,13 @@ by refresh cookie vs. by API key.
 
 ## Worked example
 
-A key requests `api=dbx-core`; its roles resolve to `{member, write:blocks}`; its tenant has feature
+A key requests `api=catalog`; its roles resolve to `{member, write:blocks}`; its tenant has feature
 `{ai}` → **S = {member, write:blocks, ai}**.
 
 - Eligibility `member,admin`: `member ∈ S` → **eligible**.
 - Projection: `write:blocks → [write:blocks]` ✓, `ai → [use:ai]` ✓ (others don't match)
   → **permissions = {write:blocks, use:ai}**.
-- Token: `aud=dbx-core`, `permissions=[write:blocks,use:ai]`, `svc=dbx-core`, `features=[ai]`,
+- Token: `aud=catalog`, `permissions=[write:blocks,use:ai]`, `svc=catalog`, `features=[ai]`,
   `dept=<user.customFields.department>`.
 
 ## What changes

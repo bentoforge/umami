@@ -26,7 +26,7 @@ consent machinery, where it does not belong.
 
 ## 2. Cadences, and why the app owns the clock
 
-An app already runs its own jobs. wsc asks "is there new content" daily, weekly and monthly. umami
+An app already runs its own jobs — say it asks "is there new content" daily, weekly and monthly. umami
 does **not** reproduce that: when a job fires it says which cadences that firing represents, and
 umami answers with the users whose choice matches.
 
@@ -39,7 +39,7 @@ calendar already expresses.
 weekly run; on the first Friday of the month it is the monthly one too. So a firing carries a set:
 
 ```json
-{ "tenantId": "…", "type": "wsc-new-content", "cadences": ["daily", "weekly", "monthly"] }
+{ "tenantId": "…", "type": "new-content", "cadences": ["daily", "weekly", "monthly"] }
 ```
 
 Each user still appears at most once, because a user's choice is a single value.
@@ -83,7 +83,7 @@ In the config, `notificationTypes`, shaped like the other catalogues:
 
 ```jsonc
 "notificationTypes": [
-  { "code": "wsc-new-content",          // stable: it keys every user's stored choice
+  { "code": "new-content",          // stable: it keys every user's stored choice
     "name": { "de": "Neue Inhalte", "en": "New content" },   // or a plain string, = {"*": …}
     "description": "Seiten, die seit der letzten Nachricht veröffentlicht wurden.",
     "cadences": [                       // what the app actually fires, with the words a user reads
@@ -92,13 +92,13 @@ In the config, `notificationTypes`, shaped like the other catalogues:
       { "code": "monthly", "name": { "de": "Monatlich",  "en": "Monthly" } }
     ],
     "default": "weekly",                // "on", a cadence code, or omitted for off
-    "eligibleIf": "role:wsc-editor,feature:pro" },   // optional
+    "eligibleIf": "role:editor,feature:pro" },   // optional
 
   // Case 2 — no rhythm of its own, so no `cadences` at all. The choice is "on" or "off".
-  { "code": "wsc-build-failed",
+  { "code": "build-failed",
     "name": "Build fehlgeschlagen",
     "default": "on",
-    "eligibleIf": "role:wsc-editor" }
+    "eligibleIf": "role:editor" }
 ]
 ```
 
@@ -106,7 +106,7 @@ The app then fires:
 
 ```
 POST /notifications/audience
-{ "tenantId": "…", "type": "wsc-new-content", "cadences": ["daily", "weekly"] }
+{ "tenantId": "…", "type": "new-content", "cadences": ["daily", "weekly"] }
 ```
 
 — its Friday job, which is both the daily and the weekly run. Someone who chose `monthly` is simply
@@ -176,13 +176,13 @@ and the answer is only as good as the record of who changed what when.
 
 ```
 POST /notifications/audience
-{ "tenantId": "…", "type": "wsc-new-content", "cadences": ["daily","weekly"] }
+{ "tenantId": "…", "type": "new-content", "cadences": ["daily","weekly"] }
 → { "recipients": [ { "userId": "…", "addressableName": "Ms Doe",
                       "locale": "de", "cadence": "weekly" } ],
     "truncated": false }
 
 POST /notifications/send
-{ "type": "wsc-new-content",          // omit entirely for a transactional message (case 1)
+{ "type": "new-content",          // omit entirely for a transactional message (case 1)
   "messages": [ { "userId": "…", "subject": "…", "body": "…" } ] }
 → { "results": [ { "userId": "…", "status": "queued", "messageId": "…" } ] }
 ```
@@ -192,17 +192,17 @@ POST /notifications/send
 A message may hand over finished text, name a layout the worker renders, or both:
 
 ```jsonc
-{ "type": "wsc-new-content",
+{ "type": "new-content",
   "messages": [
     { "userId": "…",
       "subject": "…", "body": "…",     // optional when `template` is given
-      "template": "wsc::new-content",  // your namespaced layout name; umami forwards it
+      "template": "app::new-content",  // your namespaced layout name; umami forwards it
       "context": { "pages": 3 },       // opaque data for that layout
       "cadence": "weekly" }            // which cadence this recipient matched
   ] }
 ```
 
-**Every template name is namespaced**, and that is checked: `wsc::new-content`, not
+**Every template name is namespaced**, and that is checked: `app::new-content`, not
 `new-content`. A worker keys its layout off this one field and every sender writes into it, so an
 unnamespaced name is refused (two apps inventing `digest` would share a layout) and so is anything
 under `umami::`, which is reserved for the mails umami sends itself. The namespace is lowercase
