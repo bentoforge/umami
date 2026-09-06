@@ -151,7 +151,7 @@ pub struct ClaimContext<'a> {
 }
 
 /// The **single** place a claim-mapping *source* string is interpreted:
-/// - a plain string is used **literally** (e.g. `"dbx-core"` → `"dbx-core"`);
+/// - a plain string is used **literally** (e.g. `"catalog"` → `"catalog"`);
 /// - `$user.email` — the user's **confirmed** address (see [`crate::contacts`]); resolved only when
 ///   an API actually asks for it, and omitted when there is none;
 /// - `$user.<field>` — one of `id`, `username`, `title`, `salutation`, `firstname`,
@@ -1184,18 +1184,18 @@ mod tests {
             let _ = mail.footer.insert(locale.to_owned(), text.to_owned());
             mail
         };
-        assert!(super::validate_mail(&with_footer("de", "noonu GmbH")).is_ok());
-        assert!(super::validate_mail(&with_footer("de-at", "noonu GmbH")).is_ok());
+        assert!(super::validate_mail(&with_footer("de", "Beispiel GmbH")).is_ok());
+        assert!(super::validate_mail(&with_footer("de-at", "Beispiel GmbH")).is_ok());
 
         assert!(super::validate_mail(&with_footer("de", "  ")).is_err());
-        assert!(super::validate_mail(&with_footer("DE", "noonu GmbH")).is_err());
-        assert!(super::validate_mail(&with_footer("", "noonu GmbH")).is_err());
+        assert!(super::validate_mail(&with_footer("DE", "Beispiel GmbH")).is_err());
+        assert!(super::validate_mail(&with_footer("", "Beispiel GmbH")).is_err());
 
         let with_key = |key: &str| {
             let mut mail = super::MailConfig::default();
             let _ = mail
                 .global_context
-                .insert(key.to_owned(), "https://noonu.dev".to_owned());
+                .insert(key.to_owned(), "https://app.example.com".to_owned());
             mail
         };
         assert!(super::validate_mail(&with_key("baseUrl")).is_ok());
@@ -1225,12 +1225,12 @@ mod tests {
             let mut mail = super::MailConfig::default();
             let _ = mail
                 .global_context
-                .insert("supportMail".to_owned(), "hilfe@noonu.dev".to_owned());
+                .insert("supportMail".to_owned(), "hilfe@example.com".to_owned());
             let _ = mail.footer.insert("de".to_owned(), text.to_owned());
             mail
         };
 
-        assert!(super::validate_mail(&footer("noonu GmbH · Stuttgart")).is_ok());
+        assert!(super::validate_mail(&footer("Beispiel GmbH · Stuttgart")).is_ok());
         assert!(super::validate_mail(&footer("Fragen: {{ globalContext.supportMail }}")).is_ok());
         // umami's own key is available to a footer even though it cannot be configured.
         assert!(super::validate_mail(&footer("{{ globalContext.umamiBaseUrl }}")).is_ok());
@@ -1247,8 +1247,8 @@ mod tests {
     #[test]
     fn the_email_lookup_is_only_paid_for_when_something_asks() {
         let api = |claims: BTreeMap<String, String>| ApiDef {
-            code: "dbx-core".to_owned(),
-            audience: "dbx-core".to_owned(),
+            code: "catalog".to_owned(),
+            audience: "catalog".to_owned(),
             eligibility: None,
             permissions: Vec::new(),
             claims,
@@ -1309,23 +1309,23 @@ mod tests {
         let claims =
             |name: &str, source: &str| BTreeMap::from([(name.to_owned(), source.to_owned())]);
 
-        assert!(validate_claims("dbx-core", &claims("org", "$tenant.custom.customerNo")).is_ok());
-        assert!(validate_claims("dbx-core", &claims("feat", "$tenant.features")).is_ok());
+        assert!(validate_claims("catalog", &claims("org", "$tenant.custom.customerNo")).is_ok());
+        assert!(validate_claims("catalog", &claims("feat", "$tenant.features")).is_ok());
         assert!(
-            validate_claims("dbx-core", &claims("svc", "dbx-core")).is_ok(),
+            validate_claims("catalog", &claims("svc", "catalog")).is_ok(),
             "a plain literal is a legitimate claim value"
         );
 
         assert!(
-            validate_claims("dbx-core", &claims("mail", "$user.emial")).is_err(),
+            validate_claims("catalog", &claims("mail", "$user.emial")).is_err(),
             "a typo'd reference would leave the claim missing from every token"
         );
         assert!(
-            validate_claims("dbx-core", &claims("feat", "tenant.features")).is_err(),
+            validate_claims("catalog", &claims("feat", "tenant.features")).is_err(),
             "a missing $ makes it a literal — the failure the docs themselves shipped"
         );
         assert!(
-            validate_claims("dbx-core", &claims("org", "customTenant:customerNo")).is_err(),
+            validate_claims("catalog", &claims("org", "customTenant:customerNo")).is_err(),
             "the old syntax no longer resolves and must not pass silently"
         );
     }
@@ -1448,10 +1448,10 @@ mod tests {
         assert!(eval_expression("", &set(&["a"])));
     }
 
-    fn dbx_api() -> ApiDef {
+    fn catalog_api() -> ApiDef {
         ApiDef {
-            code: "dbx-core".to_owned(),
-            audience: "dbx-core".to_owned(),
+            code: "catalog".to_owned(),
+            audience: "catalog".to_owned(),
             eligibility: Some("role:member,role:admin".to_owned()),
             permissions: vec![
                 PermissionRule {
@@ -1468,13 +1468,13 @@ mod tests {
                     grant: s(&["read:blocks"]),
                 },
             ],
-            claims: BTreeMap::from([("svc".to_owned(), "dbx-core".to_owned())]),
+            claims: BTreeMap::from([("svc".to_owned(), "catalog".to_owned())]),
         }
     }
 
     #[test]
     fn resolve_ordered_accumulate_with_chaining() {
-        let api = dbx_api();
+        let api = catalog_api();
         // role:admin → admin:blocks, write:blocks → (chained) read:blocks
         let perms = api.resolve(&s(&["role:admin"])).expect("eligible");
         assert_eq!(perms, s(&["admin:blocks", "read:blocks", "write:blocks"]));
@@ -1482,7 +1482,7 @@ mod tests {
 
     #[test]
     fn resolve_respects_eligibility_and_features() {
-        let api = dbx_api();
+        let api = catalog_api();
         // role:ai alone is eligible? eligibility is role:member,role:admin → no.
         assert!(api.resolve(&s(&["role:ai", "feature:ai"])).is_none());
         // role:member is eligible but grants nothing here.
@@ -1646,9 +1646,9 @@ mod tests {
 
     #[test]
     fn claim_mapping_resolves_sources() {
-        let mut api = dbx_api();
+        let mut api = catalog_api();
         api.claims = BTreeMap::from([
-            ("svc".to_owned(), "dbx-core".to_owned()), // literal
+            ("svc".to_owned(), "catalog".to_owned()), // literal
             ("uname".to_owned(), "$user.username".to_owned()),
             ("dept".to_owned(), "$user.custom.department".to_owned()),
             ("tid".to_owned(), "$tenant.id".to_owned()),
@@ -1679,7 +1679,7 @@ mod tests {
             tenant_custom: &tenant_cf,
         };
         let claims = api.build_claims(&ctx);
-        assert_eq!(claims.get("svc"), Some(&json!("dbx-core")));
+        assert_eq!(claims.get("svc"), Some(&json!("catalog")));
         assert_eq!(claims.get("uname"), Some(&json!("jane")));
         assert_eq!(claims.get("dept"), Some(&json!("engineering")));
         assert_eq!(claims.get("tid"), Some(&json!("t1")));

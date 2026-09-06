@@ -63,7 +63,7 @@ jobs:
   # 4. Docker → build the self-contained image (UI baked in) and push to GHCR.
   #
   # Multi-arch, one native runner per architecture. The image is consumed by
-  # Fargate services on ARM64 (cheaper, and what the noonu fleet runs) and by
+  # Fargate services on ARM64 (cheaper, and what the fleet runs) and by
   # x86 hosts elsewhere, so dropping either would break somebody. Cross-building
   # under QEMU is not an option here: the release profile compiles the whole Rust
   # tree, and emulated that takes tens of minutes.

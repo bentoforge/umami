@@ -147,7 +147,7 @@ pub struct OutboundMail {
     /// always required.
     ///
     /// One field rather than one per sender, so a worker has one thing to switch on. What keeps
-    /// them apart in it is a **namespace on every name** — `umami::`, `wsc::`, `abc::` — checked by
+    /// them apart in it is a **namespace on every name** — `umami::`, `app::`, `abc::` — checked by
     /// [`template_namespace`]. [`OutboundMail::notification`] says which side a mail came from, when
     /// a worker needs to know more than the name.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -197,7 +197,7 @@ pub const TEMPLATE_SEPARATOR: &str = "::";
 ///
 /// One field carries every sender's layout names — umami's own and each app's — so they need a way
 /// not to collide. Every name therefore starts with a namespace: `umami::password-reset`,
-/// `wsc::new-content`, `abc::report-ready`. The rule is enforced rather than documented, because a
+/// `app::new-content`, `abc::report-ready`. The rule is enforced rather than documented, because a
 /// worker keys its layout off this field alone: an unnamespaced `password-reset` from an app would
 /// otherwise be rendered as umami's, and two apps that both invent `digest` would silently share a
 /// layout.
@@ -208,7 +208,7 @@ pub const TEMPLATE_SEPARATOR: &str = "::";
 pub fn template_namespace(template: &str) -> Result<&str, String> {
     let Some((namespace, rest)) = template.split_once(TEMPLATE_SEPARATOR) else {
         return Err(format!(
-            "Template '{template}' has no namespace — write '<yours>{TEMPLATE_SEPARATOR}{template}'              (for example 'wsc{TEMPLATE_SEPARATOR}{template}'), so a worker cannot confuse it with              another sender's layout of the same name"
+            "Template '{template}' has no namespace — write '<yours>{TEMPLATE_SEPARATOR}{template}'              (for example 'app{TEMPLATE_SEPARATOR}{template}'), so a worker cannot confuse it with              another sender's layout of the same name"
         ));
     };
     if namespace.is_empty()
@@ -981,31 +981,31 @@ mod tests {
     /// senders inventing `digest` would otherwise silently share a layout.
     #[test]
     fn a_template_without_a_usable_namespace_is_refused() {
-        assert_eq!(template_namespace("wsc::new-content"), Ok("wsc"));
+        assert_eq!(template_namespace("app::new-content"), Ok("app"));
         assert_eq!(template_namespace("abc-2::report.ready"), Ok("abc-2"));
         // Only the first separator splits; what follows is the sender's own business.
-        assert_eq!(template_namespace("wsc::mail::footer"), Ok("wsc"));
+        assert_eq!(template_namespace("app::mail::footer"), Ok("app"));
 
         assert!(template_namespace("new-content").is_err());
         assert!(template_namespace("::new-content").is_err());
-        assert!(template_namespace("WSC::new-content").is_err());
+        assert!(template_namespace("APP::new-content").is_err());
         assert!(template_namespace("my app::new-content").is_err());
-        assert!(template_namespace("wsc::").is_err());
-        assert!(template_namespace("wsc::new content").is_err());
+        assert!(template_namespace("app::").is_err());
+        assert!(template_namespace("app::new content").is_err());
     }
 
     /// umami's own public base URL, as `UMAMI_ISSUER` yields it — trailing slash included.
-    const BASE_URL: &str = "https://iam.noonu.dev/";
+    const BASE_URL: &str = "https://iam.example.com/";
 
     /// A deployment that has filled in both halves of the mail block.
     fn a_mail_config() -> crate::config::MailConfig {
         let mut config = crate::config::MailConfig::default();
         let _ = config
             .footer
-            .insert("de".to_owned(), "noonu GmbH · Stuttgart".to_owned());
+            .insert("de".to_owned(), "Beispiel GmbH · Stuttgart".to_owned());
         let _ = config
             .global_context
-            .insert("supportMail".to_owned(), "hilfe@noonu.dev".to_owned());
+            .insert("supportMail".to_owned(), "hilfe@example.com".to_owned());
         config
     }
 
@@ -1080,14 +1080,14 @@ mod tests {
             .with_recipient(a_recipient())
             .with_context(Some(serde_json::json!({ "link": "https://example.com/x" })))
             .with_notification(NotificationMeta {
-                type_code: "wsc-new-content".to_owned(),
+                type_code: "new-content".to_owned(),
                 cadence: Some("weekly".to_owned()),
             });
         let json = serde_json::to_value(enriched).unwrap();
         assert_eq!(json["recipient"]["addressableName"], "Frau Dr. Doe");
         assert_eq!(json["context"]["link"], "https://example.com/x");
         // The type travels as `type`, which is what the catalogue and the firing both call it.
-        assert_eq!(json["notification"]["type"], "wsc-new-content");
+        assert_eq!(json["notification"]["type"], "new-content");
     }
 
     /// A template branching on gender needs the stable code; the word beside it is already in the
@@ -1112,8 +1112,8 @@ mod tests {
         let mail = a_mail()
             .with_deployment(&a_mail_config(), BASE_URL)
             .unwrap();
-        assert_eq!(mail.body, "body\n\n-- \nnoonu GmbH · Stuttgart");
-        assert_eq!(mail.footer.as_deref(), Some("noonu GmbH · Stuttgart"));
+        assert_eq!(mail.body, "body\n\n-- \nBeispiel GmbH · Stuttgart");
+        assert_eq!(mail.footer.as_deref(), Some("Beispiel GmbH · Stuttgart"));
 
         // A template-only message has no body to append to, and must not go out as a lone imprint.
         let mut templated = a_mail();
@@ -1122,7 +1122,10 @@ mod tests {
             .with_deployment(&a_mail_config(), BASE_URL)
             .unwrap();
         assert!(templated.body.is_empty());
-        assert_eq!(templated.footer.as_deref(), Some("noonu GmbH · Stuttgart"));
+        assert_eq!(
+            templated.footer.as_deref(),
+            Some("Beispiel GmbH · Stuttgart")
+        );
     }
 
     /// A footer is a template like any other, and the values it renders from are the ones the
@@ -1132,14 +1135,14 @@ mod tests {
         let mut config = a_mail_config();
         let _ = config.footer.insert(
             "de".to_owned(),
-            "noonu GmbH · {{ globalContext.supportMail }} · {{ globalContext.umamiBaseUrl }}/app/"
+            "Beispiel GmbH · {{ globalContext.supportMail }} · {{ globalContext.umamiBaseUrl }}/app/"
                 .to_owned(),
         );
 
         let mail = a_mail().with_deployment(&config, BASE_URL).unwrap();
         assert_eq!(
             mail.footer.as_deref(),
-            Some("noonu GmbH · hilfe@noonu.dev · https://iam.noonu.dev/app/")
+            Some("Beispiel GmbH · hilfe@example.com · https://iam.example.com/app/")
         );
     }
 
@@ -1155,12 +1158,12 @@ mod tests {
             mail.global_context
                 .get(GLOBAL_CONTEXT_BASE_URL)
                 .map(String::as_str),
-            Some("https://iam.noonu.dev")
+            Some("https://iam.example.com")
         );
         // What the deployment configured is still there beside it.
         assert_eq!(
             mail.global_context.get("supportMail").map(String::as_str),
-            Some("hilfe@noonu.dev")
+            Some("hilfe@example.com")
         );
     }
 
@@ -1171,7 +1174,7 @@ mod tests {
         let mut config = a_mail_config();
         let _ = config.footer.insert(
             "de".to_owned(),
-            "noonu GmbH · {{ globalContext.supprtMail }}".to_owned(),
+            "Beispiel GmbH · {{ globalContext.supprtMail }}".to_owned(),
         );
         assert!(a_mail().with_deployment(&config, BASE_URL).is_err());
     }

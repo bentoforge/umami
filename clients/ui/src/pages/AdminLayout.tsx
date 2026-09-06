@@ -132,8 +132,8 @@ export function AdminLayout() {
  */
 // Dark values are literal rather than Tailwind's amber scale: `amber-950`
 // composited over slate-900 lands on rgb(37 24 26) — red dominant, green and blue
-// level — which reads as a dark red rather than as a warning. These are the same
-// amber the noonu app uses, where blue stays clearly lowest.
+// level — which reads as a dark red rather than as a warning — where blue stays
+// clearly lowest.
 function ImpersonationNotice() {
   const { me, activeTenantId, activeTenantName, switchTenant } = useUmami();
   const { t } = useTranslation();

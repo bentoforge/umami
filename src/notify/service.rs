@@ -980,7 +980,7 @@ mod tests {
     /// A type with a rhythm, to check a send against.
     fn rhythmic() -> NotificationTypeDef {
         NotificationTypeDef {
-            code: "wsc-new-content".to_owned(),
+            code: "new-content".to_owned(),
             name: "New content".into(),
             description: None,
             cadences: vec![
@@ -1024,12 +1024,12 @@ mod tests {
         assert!(check_messages(&[with_text(message())], Some(&type_def)).is_ok());
 
         let mut templated = message();
-        templated.template = Some("wsc::new-content".to_owned());
+        templated.template = Some("app::new-content".to_owned());
         assert!(check_messages(&[templated], Some(&type_def)).is_ok());
 
         // Both is the robust combination: a worker that does not know the layout still has text.
         let mut both = with_text(message());
-        both.template = Some("wsc::new-content".to_owned());
+        both.template = Some("app::new-content".to_owned());
         assert!(check_messages(&[both], Some(&type_def)).is_ok());
 
         // Every name is namespaced, and the rule is enforced — otherwise a worker keying off this
@@ -1111,7 +1111,7 @@ mod tests {
         let type_def = rhythmic();
 
         let meta = notification_meta(&type_def, Some(" Weekly "));
-        assert_eq!(meta.type_code, "wsc-new-content");
+        assert_eq!(meta.type_code, "new-content");
         assert_eq!(meta.cadence.as_deref(), Some("weekly"));
 
         assert!(notification_meta(&type_def, None).cadence.is_none());

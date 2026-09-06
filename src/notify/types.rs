@@ -15,7 +15,7 @@
 //!
 //! ## The model
 //!
-//! An app owns its own schedule. wsc already runs a daily job asking "is there new content", and a
+//! An app owns its own schedule. It may already run a daily job asking "is there new content", and a
 //! weekly one, and a monthly one. umami does **not** reproduce that: when a job fires it announces
 //! which cadences that firing represents, and umami answers with the users whose choice matches.
 //! Nothing is accumulated, nothing is grouped, nothing is remembered — the decision is one string
@@ -289,7 +289,7 @@ mod tests {
     /// Case 3: a type with a rhythm.
     fn rhythmic(default: Option<&str>) -> NotificationTypeDef {
         NotificationTypeDef {
-            code: "wsc-new-content".to_owned(),
+            code: "new-content".to_owned(),
             name: "New content".into(),
             description: None,
             cadences: vec![
@@ -305,7 +305,7 @@ mod tests {
     /// Case 2: a type with none.
     fn plain(default: Option<&str>) -> NotificationTypeDef {
         NotificationTypeDef {
-            code: "wsc-build-failed".to_owned(),
+            code: "build-failed".to_owned(),
             name: "Build failed".into(),
             description: None,
             cadences: Vec::new(),

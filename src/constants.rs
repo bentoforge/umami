@@ -14,7 +14,7 @@ pub const MAX_LIST_RESULTS: usize = 250;
 //
 // The route handlers check ONLY these plain permission strings; the mapping from roles/scopes/
 // features/markers to permissions lives entirely in the config `apis` block (see `docs/CONFIG.md`).
-// Product-service permission strings (e.g. dbx-core's `write:blocks`) are defined by those services.
+// Product-service permission strings (e.g. catalog's `write:blocks`) are defined by those services.
 
 /// Read a tenant's audit trail — and nothing else.
 ///

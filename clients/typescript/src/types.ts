@@ -661,7 +661,7 @@ export interface NotificationMessage {
   subject?: string;
   /** Plain-text body. Goes together with `subject`. */
   body?: string;
-  /** Your own name for a layout the worker renders, **namespaced**: `wsc::new-content`, not
+  /** Your own name for a layout the worker renders, **namespaced**: `app::new-content`, not
    * `new-content`. umami forwards it without interpreting it.
    *
    * Every sender writes layout names into this one field, so the namespace is required and checked
