@@ -19,7 +19,6 @@ use crate::tenants::repository::TenantRepository;
 use chrono::Utc;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 use warp::Filter;
@@ -42,12 +41,51 @@ const REQUIRE_READ_LIMITS: &[&str] = &[MANAGE_LIMITS_PERMISSION, VIEW_LIMITS_PER
 /// Permission required to book against a tenant's limits (product-service key).
 const REQUIRE_BOOK_LIMITS: &[&str] = &[BOOK_LIMITS_PERMISSION];
 
-/// A tenant's stored limit settings, keyed by limit code. The definitions (labels, facets) come
-/// separately from `GET /config/catalogue`; a screen merges the two.
+/// The live counters for one limit, as a screen shows them (the internal snapshots and version are
+/// left out). Present only once the limit has been used at least once.
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct LimitStateView {
+    period_year_month: String,
+    monthly_remaining: i64,
+    overuse_remaining: i64,
+    custom_balance: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    daily_remaining: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    gauge_value: Option<i64>,
+}
+
+impl LimitStateView {
+    fn of(state: &LimitState) -> Self {
+        LimitStateView {
+            period_year_month: state.period_year_month.clone(),
+            monthly_remaining: state.monthly_remaining,
+            overuse_remaining: state.overuse_remaining,
+            custom_balance: state.custom_balance,
+            daily_remaining: state.daily_date.as_ref().map(|_| state.daily_remaining),
+            gauge_value: state.gauge_value,
+        }
+    }
+}
+
+/// One of a tenant's limits: its stored settings and, when it has been used, the current counters.
+/// The definitions (labels, facets, watermarks) come separately from `GET /config/catalogue`; a
+/// screen merges the two by `code`.
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct LimitEntry {
+    code: String,
+    settings: LimitSettings,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    state: Option<LimitStateView>,
+}
+
+/// A tenant's limits with their live state.
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct LimitsResponse {
-    limits: BTreeMap<String, LimitSettings>,
+    limits: Vec<LimitEntry>,
 }
 
 // ── Routes ──────────────────────────────────────────────────────────────────────
@@ -56,11 +94,13 @@ struct LimitsResponse {
 /// `view:limits` reads only the caller's own (self-service).
 pub fn list_limits_route(
     tenants: Arc<dyn TenantRepository>,
+    limits: Arc<dyn LimitRepository>,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("tenants" / String / "limits")
         .and(warp::get())
         .and(with_cloneable(tenants))
+        .and(with_cloneable(limits))
         .and(with_user_with_any_permission(
             authenticator,
             REQUIRE_READ_LIMITS,
@@ -97,9 +137,10 @@ pub fn set_limit_settings_route(
 async fn handle_list_limits_route(
     tenant_id: String,
     tenants: Arc<dyn TenantRepository>,
+    limits: Arc<dyn LimitRepository>,
     caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(list_limits(tenant_id, tenants, caller).await)
+    into_response(list_limits(tenant_id, tenants, limits, caller).await)
 }
 
 #[tracing::instrument(
@@ -137,6 +178,7 @@ fn enforce_read_scope(tenant_id: &str, caller: &AuthUser) -> anyhow::Result<()> 
 async fn list_limits(
     tenant_id: String,
     tenants: Arc<dyn TenantRepository>,
+    limits: Arc<dyn LimitRepository>,
     caller: AuthUser,
 ) -> anyhow::Result<LimitsResponse> {
     enforce_read_scope(&tenant_id, &caller)?;
@@ -144,9 +186,26 @@ async fn list_limits(
         Some(tenant) => tenant,
         None => client_bail!("No such tenant"),
     };
-    Ok(LimitsResponse {
-        limits: tenant.limits,
-    })
+    let now = Utc::now();
+    let mut entries = Vec::with_capacity(tenant.limits.len());
+    for (code, settings) in &tenant.limits {
+        // Project the live state to the current month/day in memory (no write), so the screen shows
+        // what is actually left without needing the booking permission.
+        let state = match limits.load_state(&tenant_id, code).await? {
+            Some(state) => {
+                let (view, _closed) =
+                    accounting::rolled_over(Some(state), &tenant_id, code, settings, now);
+                Some(LimitStateView::of(&view))
+            }
+            None => None,
+        };
+        entries.push(LimitEntry {
+            code: code.clone(),
+            settings: settings.clone(),
+            state,
+        });
+    }
+    Ok(LimitsResponse { limits: entries })
 }
 
 async fn set_limit_settings(
@@ -860,6 +919,7 @@ mod tests {
     use crate::tenants::{Tenant, slugify};
     use chrono::Utc;
     use serde_json::json;
+    use std::collections::BTreeMap;
     use wasabi::web::auth::{CLAIM_PERMISSIONS, CLAIM_SUB, CLAIM_TENANT};
 
     /// A `LimitRepository` with no state yet — settings reconciliation then skips (no warnings).
@@ -1082,18 +1142,28 @@ mod tests {
             .returning(|_| Box::pin(async { Ok(Some(tenant("t-1"))) }));
         let tenants = Arc::new(tenants);
 
-        // Own tenant: a view member may read it.
-        list_limits("t-1".to_owned(), tenants.clone(), member("t-1"))
-            .await
-            .expect("own tenant readable");
+        // Own tenant: a view member may read it (the tenant has no limits, so no state is loaded).
+        list_limits(
+            "t-1".to_owned(),
+            tenants.clone(),
+            no_state_limits(),
+            member("t-1"),
+        )
+        .await
+        .expect("own tenant readable");
 
         // Foreign tenant: refused before any store read.
-        list_limits("t-2".to_owned(), tenants.clone(), member("t-1"))
-            .await
-            .expect_err("foreign tenant refused for a view member");
+        list_limits(
+            "t-2".to_owned(),
+            tenants.clone(),
+            no_state_limits(),
+            member("t-1"),
+        )
+        .await
+        .expect_err("foreign tenant refused for a view member");
 
         // A cross-tenant admin reads any tenant.
-        list_limits("t-2".to_owned(), tenants, caller())
+        list_limits("t-2".to_owned(), tenants, no_state_limits(), caller())
             .await
             .expect("admin reads any tenant");
     }
@@ -1472,5 +1542,54 @@ mod tests {
             "{:?}",
             response.warnings
         );
+    }
+
+    #[tokio::test]
+    async fn listing_limits_includes_the_projected_state() {
+        use crate::limits::repository::MockLimitRepository;
+
+        let month = accounting::year_month(Utc::now());
+        let mut tenants = MockTenantRepository::new();
+        tenants
+            .expect_get_tenant()
+            .returning(|_| Box::pin(async { Ok(Some(tenant_with_credits())) }));
+
+        let mut seeded = LimitState::fresh(
+            "t-1",
+            "limit:ai-credits",
+            &month,
+            &LimitSettings {
+                monthly: Some(1000),
+                overuse: Some(200),
+                daily: None,
+                max: None,
+            },
+        );
+        seeded.monthly_remaining = 400;
+        let mut limits = MockLimitRepository::new();
+        limits.expect_load_state().returning(move |_, _| {
+            let state = seeded.clone();
+            Box::pin(async move { Ok(Some(state)) })
+        });
+
+        let response = list_limits(
+            "t-1".to_owned(),
+            Arc::new(tenants),
+            Arc::new(limits),
+            caller(),
+        )
+        .await
+        .expect("listed");
+        let entry = response
+            .limits
+            .iter()
+            .find(|entry| entry.code == "limit:ai-credits")
+            .expect("the credits limit is listed");
+        let state = entry
+            .state
+            .as_ref()
+            .expect("a used limit carries its state");
+        assert_eq!(state.monthly_remaining, 400);
+        assert_eq!(state.overuse_remaining, 200);
     }
 }
