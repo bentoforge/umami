@@ -414,12 +414,13 @@ export interface HomeResponse {
  *
  * Deployment-specific, which is why it is config rather than part of umami's message catalogue. */
 export interface MailConfig {
-  /** Imprint or legal footer, keyed by locale (`de`, `en`, …).
+  /** Imprint or legal footer, in one or more languages.
    *
-   * Appended to the plain-text body of every mail and carried as its own payload field. The lookup
-   * falls back the way the message catalogue does — `de-AT` finds `de` — and a locale with no entry
-   * gets no footer rather than somebody else's language. Locale keys must be lowercase. */
-  footer?: Record<string, string>;
+   * Appended to the plain-text body of every mail and carried as its own payload field. Resolution
+   * is the strict one: the reader's tag, its primary subtag (`de-AT` finds `de`), `*`, and then no
+   * footer at all — an imprint in a language the reader did not ask for is worse than none. A bare
+   * string is the `*` entry, and therefore the one imprint for every language. */
+  footer?: LocalizedText;
   /** Constants every mail carries for a worker's templates — base URLs, a support address.
    *
    * Kept separate from a message's own `context` on the wire, so a key in both cannot silently

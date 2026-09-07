@@ -106,6 +106,10 @@ language should read, which says more than the default, whose job is only to nam
 itself writes in. Map keys are normalized (lowercased) on read, so an uppercase tag in a
 hand-written config still matches a reader.
 
+Steps 4–5 exist so a label never renders as an empty row. One field does **not** take them:
+[`mail.footer`](#7a-what-every-mail-carries-mail) stops after `*` and otherwise adds no footer,
+because a legal imprint in a language the reader did not ask for is worse than none.
+
 A label with no words in it — `""`, or a map of nothing but blanks — is **rejected by `PUT /config`**.
 It would otherwise fail invisibly: the picker renders a row with no text, and the code it stands for
 is shown nowhere.
@@ -505,7 +509,7 @@ the config:
 
 ```jsonc
 "mail": {
-  "footer": {                                  // keyed by locale, and a template
+  "footer": {                                  // translatable, and a template
     "de": "Beispiel GmbH · Musterstraße 1 · 70173 Stuttgart\nFragen: {{ globalContext.supportMail }}",
     "en": "Beispiel GmbH · Musterstraße 1 · 70173 Stuttgart, Germany"
   },
@@ -522,9 +526,18 @@ in a footer block instead of finding it stuck to the end of a body it is not usi
 carries only a `template` and no text gets the field but no appended body — otherwise the mail would
 be a lone imprint.
 
-Keyed by locale because it is appended to a mail written in the reader's language. The lookup falls
-back the way the message catalogue does (`de-AT` finds `de`), and a locale with no entry gets **no
-footer** rather than somebody else's language.
+Translatable like every other authored label — a [`LocalizedText`](#labels-localizedtext): a map picks per
+locale, and a bare string is the whole footer.
+
+```jsonc
+"footer": "Beispiel GmbH · Musterstraße 1 · 70173 Stuttgart"
+```
+
+Resolution is the **strict** variant, because this is text where a borrowed language is worse than
+none: the reader's tag, then its primary subtag (`de-AT` finds `de`), then `*` — and a language none
+of those reaches gets **no footer** rather than somebody else's. A bare string *is* the `*` entry, so
+the spelling above says "this one imprint answers for every language", which is a statement the
+author made rather than a translation borrowed behind their back.
 
 The footer is a **template**, not a fixed string: it is rendered against `globalContext`, so an
 imprint can name the deployment's URLs without repeating them. It sees the constants and nothing
@@ -545,10 +558,9 @@ writing, and a base URL that brings its own is the one that ends up doubled. It 
 config that sets it is refused, because umami already knows the value and a second copy is a second
 thing to keep in step.
 
-`PUT /config` refuses what would fail invisibly: an entry with an empty or non-lowercase locale (the
-lookup normalizes, so an uppercase key is never found), an empty footer (a separator with nothing
-under it), a `globalContext` key outside `[A-Za-z0-9_-]` or the reserved `umamiBaseUrl`, a
-`globalContext` over 4 KB — and **a footer that does not render**. That last one is the point of
+`PUT /config` refuses what would fail invisibly: an entry with no locale at all (nothing looks it
+up), an empty footer (a separator with nothing under it), a `globalContext` key outside
+`[A-Za-z0-9_-]` or the reserved `umamiBaseUrl`, a `globalContext` over 4 KB — and **a footer that does not render**. That last one is the point of
 templating it at all: the footer is the one mail text nobody else checks, so it is rendered once at
 publish time against the values it will actually have. `{{ globalContext.supprtMail }}` is a `400`
 naming the locale, rather than a placeholder in every mail or a password reset that fails to send.

@@ -57,6 +57,24 @@ impl LocalizedText {
             .unwrap_or_default()
     }
 
+    /// The text for `locale` only where the author said so — the exact tag, its primary subtag, or
+    /// `*`. `None` when none of those is written.
+    ///
+    /// The strict counterpart to [`LocalizedText::resolve`], for text where the wrong language is
+    /// worse than none. A label has to render something or the UI shows a blank row; a legal footer
+    /// under a mail in another language reads as a mistake, and `*` is how an author states that one
+    /// text does answer for every language.
+    pub fn resolve_explicit(&self, locale: &str) -> Option<&str> {
+        self.pick(locale).or_else(|| self.get(ANY))
+    }
+
+    /// Every locale/text pair, in key order — for a validator that has to name the offending entry.
+    pub fn entries(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.0
+            .iter()
+            .map(|(key, text)| (key.as_str(), text.as_str()))
+    }
+
     /// A tag and then its primary subtag, both normalized.
     fn pick(&self, locale: &str) -> Option<&str> {
         let tag = normalize(locale);
@@ -97,6 +115,19 @@ impl From<&str> for LocalizedText {
 impl From<String> for LocalizedText {
     fn from(text: String) -> Self {
         LocalizedText(BTreeMap::from([(ANY.to_owned(), text)]))
+    }
+}
+
+impl<const N: usize> From<[(&str, &str); N]> for LocalizedText {
+    /// Locale keys are normalized here as they are on the way in from JSON, so a constructed
+    /// [`LocalizedText`] and a deserialized one resolve identically.
+    fn from(entries: [(&str, &str); N]) -> Self {
+        LocalizedText(
+            entries
+                .into_iter()
+                .map(|(locale, text)| (normalize(locale), text.to_owned()))
+                .collect(),
+        )
     }
 }
 
@@ -214,6 +245,21 @@ mod tests {
     fn an_unwritable_locale_still_renders_something() {
         let text = parse(r#"{"de":"Eigentümer"}"#);
         assert_eq!(text.resolve("fr", "es"), "Eigentümer");
+    }
+
+    /// The strict lookup exists for text where a borrowed language is worse than none — a legal
+    /// footer under a mail. Only what the author wrote answers, and `*` is how they say "any".
+    #[test]
+    fn the_strict_lookup_never_borrows_a_language() {
+        let text = parse(r#"{"de":"Impressum"}"#);
+        assert_eq!(text.resolve_explicit("de-AT"), Some("Impressum"));
+        assert_eq!(text.resolve_explicit("DE"), Some("Impressum"));
+        assert_eq!(text.resolve_explicit("en"), None);
+        assert_eq!(text.resolve_explicit(""), None);
+
+        let any = parse(r#""Impressum""#);
+        assert_eq!(any.resolve_explicit("en"), Some("Impressum"));
+        assert_eq!(any.resolve_explicit("fr-CA"), Some("Impressum"));
     }
 
     #[test]

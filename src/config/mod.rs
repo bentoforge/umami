@@ -237,14 +237,15 @@ const CLAIM_REFERENCES: [&str; 16] = [
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct MailConfig {
-    /// Imprint or legal footer, keyed by locale (`de`, `en`, …).
+    /// Imprint or legal footer, in one or more languages — see [`LocalizedText`].
     ///
-    /// Per locale because it is appended to a mail written in the reader's language, and a German
-    /// paragraph under an English mail reads as a mistake. The lookup falls back the way the message
-    /// catalogue does — `de-AT` finds the `de` entry — and a locale with no entry gets no footer
-    /// rather than somebody else's language.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub footer: BTreeMap<String, String>,
+    /// Translatable because it is appended to a mail written in the reader's language, and a German
+    /// paragraph under an English mail reads as a mistake. Resolution is therefore the **strict**
+    /// one ([`LocalizedText::resolve_explicit`]): the tag, its primary subtag, `*`, and then no
+    /// footer at all. A single deployment-wide imprint is the bare-string spelling, which is the
+    /// `*` entry — the author saying that this one text does answer for every language.
+    #[serde(default, skip_serializing_if = "LocalizedText::is_empty")]
+    pub footer: LocalizedText,
     /// Values every mail carries, for a worker's templates — base URLs, a support address, whatever
     /// a layout needs and umami has no opinion about.
     ///
@@ -261,16 +262,10 @@ pub struct MailConfig {
 }
 
 impl MailConfig {
-    /// The footer for `locale`, falling back to the primary subtag. `None` when nothing matches —
-    /// no footer beats one in a language the reader did not ask for.
+    /// The footer for `locale`, falling back to the primary subtag and then `*`. `None` when
+    /// nothing matches — no footer beats one in a language the reader did not ask for.
     pub fn footer_for(&self, locale: &str) -> Option<&str> {
-        let tag = locale.trim().to_ascii_lowercase();
-        let primary = tag.split(['-', '_']).next().unwrap_or_default();
-        self.footer
-            .get(&tag)
-            .or_else(|| self.footer.get(primary))
-            .map(String::as_str)
-            .filter(|footer| !footer.trim().is_empty())
+        self.footer.resolve_explicit(locale)
     }
 }
 
@@ -284,15 +279,11 @@ const MAX_GLOBAL_CONTEXT_BYTES: usize = 4096;
 /// under it, and a key a template engine cannot address is simply never substituted — the mail goes
 /// out with a placeholder in it, and only the recipient sees that.
 pub fn validate_mail(mail: &MailConfig) -> anyhow::Result<()> {
-    for (locale, footer) in &mail.footer {
+    for (locale, footer) in mail.footer.entries() {
         if locale.trim().is_empty() {
-            client_bail!("The mail footer has an entry with no locale");
-        }
-        if locale != &locale.to_ascii_lowercase() {
             client_bail!(
-                "Mail footer locale '{locale}' must be lowercase — the lookup normalizes the \
-                 reader's tag, so an uppercase entry would never be found (write '{}')",
-                locale.to_ascii_lowercase()
+                "The mail footer has an entry with no locale — write a tag ('de'), or '*' for the \
+                 one imprint that answers for every language"
             );
         }
         if footer.trim().is_empty() {
@@ -341,7 +332,7 @@ pub fn validate_mail(mail: &MailConfig) -> anyhow::Result<()> {
         crate::notify::GLOBAL_CONTEXT_BASE_URL.to_owned(),
         "https://umami.example.com".to_owned(),
     );
-    for (locale, footer) in &mail.footer {
+    for (locale, footer) in mail.footer.entries() {
         if let Err(err) = crate::notify::render::render(
             footer,
             &crate::notify::render::MailContext {
@@ -1175,20 +1166,22 @@ impl Default for Config {
 #[cfg(test)]
 mod tests {
     /// Every one of these fails silently at runtime: an empty footer renders as a separator with
-    /// nothing under it, an uppercase locale is simply never found, and a key a template cannot
+    /// nothing under it, a locale nothing can look up is never found, and a key a template cannot
     /// address leaves a placeholder in a mail only the recipient sees.
     #[test]
     fn the_mail_gate_refuses_what_would_fail_invisibly() {
-        let with_footer = |locale: &str, text: &str| {
-            let mut mail = super::MailConfig::default();
-            let _ = mail.footer.insert(locale.to_owned(), text.to_owned());
-            mail
+        let with_footer = |locale: &str, text: &str| super::MailConfig {
+            footer: [(locale, text)].into(),
+            ..super::MailConfig::default()
         };
         assert!(super::validate_mail(&with_footer("de", "Beispiel GmbH")).is_ok());
         assert!(super::validate_mail(&with_footer("de-at", "Beispiel GmbH")).is_ok());
+        // The one imprint for every language — what a bare string in the config deserializes to.
+        assert!(super::validate_mail(&with_footer("*", "Beispiel GmbH")).is_ok());
+        // An uppercase tag is normalized rather than refused, the way the catalogue labels are.
+        assert!(super::validate_mail(&with_footer("DE", "Beispiel GmbH")).is_ok());
 
         assert!(super::validate_mail(&with_footer("de", "  ")).is_err());
-        assert!(super::validate_mail(&with_footer("DE", "Beispiel GmbH")).is_err());
         assert!(super::validate_mail(&with_footer("", "Beispiel GmbH")).is_err());
 
         let with_key = |key: &str| {
@@ -1222,11 +1215,13 @@ mod tests {
     #[test]
     fn a_footer_that_cannot_render_is_refused_at_publish_time() {
         let footer = |text: &str| {
-            let mut mail = super::MailConfig::default();
+            let mut mail = super::MailConfig {
+                footer: [("de", text)].into(),
+                ..super::MailConfig::default()
+            };
             let _ = mail
                 .global_context
                 .insert("supportMail".to_owned(), "hilfe@example.com".to_owned());
-            let _ = mail.footer.insert("de".to_owned(), text.to_owned());
             mail
         };
 

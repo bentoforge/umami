@@ -999,10 +999,10 @@ mod tests {
 
     /// A deployment that has filled in both halves of the mail block.
     fn a_mail_config() -> crate::config::MailConfig {
-        let mut config = crate::config::MailConfig::default();
-        let _ = config
-            .footer
-            .insert("de".to_owned(), "Beispiel GmbH · Stuttgart".to_owned());
+        let mut config = crate::config::MailConfig {
+            footer: [("de", "Beispiel GmbH · Stuttgart")].into(),
+            ..crate::config::MailConfig::default()
+        };
         let _ = config
             .global_context
             .insert("supportMail".to_owned(), "hilfe@example.com".to_owned());
@@ -1133,11 +1133,11 @@ mod tests {
     #[test]
     fn the_footer_renders_against_the_global_context() {
         let mut config = a_mail_config();
-        let _ = config.footer.insert(
-            "de".to_owned(),
-            "Beispiel GmbH · {{ globalContext.supportMail }} · {{ globalContext.umamiBaseUrl }}/app/"
-                .to_owned(),
-        );
+        config.footer = [(
+            "de",
+            "Beispiel GmbH · {{ globalContext.supportMail }} · {{ globalContext.umamiBaseUrl }}/app/",
+        )]
+            .into();
 
         let mail = a_mail().with_deployment(&config, BASE_URL).unwrap();
         assert_eq!(
@@ -1172,10 +1172,7 @@ mod tests {
     #[test]
     fn an_unknown_placeholder_fails_rather_than_rendering_empty() {
         let mut config = a_mail_config();
-        let _ = config.footer.insert(
-            "de".to_owned(),
-            "Beispiel GmbH · {{ globalContext.supprtMail }}".to_owned(),
-        );
+        config.footer = [("de", "Beispiel GmbH · {{ globalContext.supprtMail }}")].into();
         assert!(a_mail().with_deployment(&config, BASE_URL).is_err());
     }
 
@@ -1183,15 +1180,24 @@ mod tests {
     /// is worse than none.
     #[test]
     fn a_footer_is_never_borrowed_from_another_language() {
-        let mut config = crate::config::MailConfig::default();
-        let _ = config
-            .footer
-            .insert("de".to_owned(), "Impressum".to_owned());
+        let config = crate::config::MailConfig {
+            footer: [("de", "Impressum")].into(),
+            ..crate::config::MailConfig::default()
+        };
 
         assert_eq!(config.footer_for("de-AT"), Some("Impressum"));
         assert_eq!(config.footer_for("DE"), Some("Impressum"));
         assert_eq!(config.footer_for("en"), None);
         assert_eq!(crate::config::MailConfig::default().footer_for("de"), None);
+
+        // What the bare-string spelling deserializes to: one imprint the author has said answers
+        // for every language, which is a statement rather than a borrowed translation.
+        let every = crate::config::MailConfig {
+            footer: "Impressum".into(),
+            ..crate::config::MailConfig::default()
+        };
+        assert_eq!(every.footer_for("en"), Some("Impressum"));
+        assert_eq!(every.footer_for("de-AT"), Some("Impressum"));
     }
 
     /// The console transport must never become the default in a release build: a reset link in a
