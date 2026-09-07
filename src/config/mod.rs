@@ -10,9 +10,9 @@ pub mod text;
 
 use crate::config::text::LocalizedText;
 use crate::constants::{
-    DEFAULT_ACCESS_TTL_SECS, DEFAULT_CONTACT_CHALLENGE_TTL_SECS, DEFAULT_LOGIN_BLOCK_SECS,
-    DEFAULT_LOGIN_MAX_FAILURES, DEFAULT_LOGIN_WINDOW_SECS, DEFAULT_MAIL_SEND_BLOCK_SECS,
-    DEFAULT_MAIL_SEND_MAX_PER_WINDOW, DEFAULT_MAIL_SEND_WINDOW_SECS,
+    BOOTSTRAP_ADMIN_ROLE, DEFAULT_ACCESS_TTL_SECS, DEFAULT_CONTACT_CHALLENGE_TTL_SECS,
+    DEFAULT_LOGIN_BLOCK_SECS, DEFAULT_LOGIN_MAX_FAILURES, DEFAULT_LOGIN_WINDOW_SECS,
+    DEFAULT_MAIL_SEND_BLOCK_SECS, DEFAULT_MAIL_SEND_MAX_PER_WINDOW, DEFAULT_MAIL_SEND_WINDOW_SECS,
     DEFAULT_MESSAGING_CODE_TTL_SECS, DEFAULT_PASSWORD_RESET_TTL_SECS, DEFAULT_PER_IP_BLOCK_SECS,
     DEFAULT_PER_IP_MAX_PER_WINDOW, DEFAULT_PER_IP_WINDOW_SECS, DEFAULT_REFRESH_TTL_SECS,
     DEFAULT_TOKEN_BLOCK_SECS, DEFAULT_TOKEN_MAX_PER_WINDOW, DEFAULT_TOKEN_WINDOW_SECS,
@@ -20,9 +20,9 @@ use crate::constants::{
     MANAGE_PERSONAL_TOKENS_PERMISSION, MANAGE_PROFILE_PERMISSION, MANAGE_SERVICE_KEYS_PERMISSION,
     MANAGE_SESSIONS_PERMISSION, MANAGE_TENANTS_PERMISSION, MANAGE_USERS_PERMISSION,
     MESSAGING_LINK_PERMISSION, MESSAGING_RESOLVE_PERMISSION, NOTIFICATIONS_AUDIENCE_PERMISSION,
-    NOTIFICATIONS_REPORT_PERMISSION, NOTIFICATIONS_SEND_PERMISSION, ROLE_MEMBER, ROLE_OWNER,
-    SWITCH_TENANT_PERMISSION, SYSTEM_TENANT_MARKER, SYSTEM_TENANT_MEMBER_MARKER,
-    VIEW_AUDIT_PERMISSION, VIEW_RATELIMITS_PERMISSION,
+    NOTIFICATIONS_REPORT_PERMISSION, NOTIFICATIONS_SEND_PERMISSION, SWITCH_TENANT_PERMISSION,
+    SYSTEM_TENANT_MARKER, SYSTEM_TENANT_MEMBER_MARKER, VIEW_AUDIT_PERMISSION,
+    VIEW_RATELIMITS_PERMISSION,
 };
 use crate::notify::types::NotificationTypeDef;
 use anyhow::Context;
@@ -1190,11 +1190,11 @@ fn assignable(assignable_if: &Option<String>, set: &BTreeSet<&str>) -> bool {
 
 impl Default for Config {
     fn default() -> Self {
-        let role = |code: &str, name: &str| RoleDef {
+        let role = |code: &str, name: &str, assignable_if: Option<&str>| RoleDef {
             code: code.to_owned(),
             name: name.into(),
             description: None,
-            assignable_if: None,
+            assignable_if: assignable_if.map(str::to_owned),
         };
         let rule = |when: &str, grant: &[&str]| PermissionRule {
             when: when.to_owned(),
@@ -1208,13 +1208,14 @@ impl Default for Config {
         };
         Config {
             version: 1,
-            roles: vec![
-                role(ROLE_OWNER, "Owner"),
-                role("role:admin", "Administrator"),
-                role(ROLE_MEMBER, "Member"),
-                role("role:viewer", "Viewer"),
-                role("role:readonly", "Read-only (blocks self-service edits)"),
-            ],
+            // The single role the bootstrap needs. A deployment's real roles come with its real
+            // config; shipping guesses here (owner, admin, member, …) only produced catalog entries
+            // nobody mapped and codes that ended up on users by default.
+            roles: vec![role(
+                BOOTSTRAP_ADMIN_ROLE,
+                "Platform admin",
+                Some(SYSTEM_TENANT_MARKER),
+            )],
             scopes: vec![
                 // Only assignable to a system-tenant service key (and shown only there).
                 scope(
@@ -1288,9 +1289,9 @@ impl Default for Config {
                             MANAGE_CONTACTS_PERMISSION,
                         ],
                     ),
-                    // Bootstrap owner: full self-tenant administration + config.
+                    // Bootstrap admin: full self-tenant administration + config.
                     rule(
-                        ROLE_OWNER,
+                        BOOTSTRAP_ADMIN_ROLE,
                         &[
                             VIEW_AUDIT_PERMISSION,
                             MANAGE_USERS_PERMISSION,
@@ -1678,20 +1679,20 @@ mod tests {
     #[test]
     fn default_umami_maps_roles_and_system_marker() {
         let umami = Config::default().find_api("umami").unwrap().clone();
-        let owner = umami.resolve(&s(&["role:owner"])).unwrap();
-        assert!(owner.contains(&"view:audit".to_owned()));
-        assert!(owner.contains(&"manage:users".to_owned()));
-        assert!(owner.contains(&"manage:config".to_owned()));
+        let admin = umami.resolve(&s(&[BOOTSTRAP_ADMIN_ROLE])).unwrap();
+        assert!(admin.contains(&"view:audit".to_owned()));
+        assert!(admin.contains(&"manage:users".to_owned()));
+        assert!(admin.contains(&"manage:config".to_owned()));
         // cross-tenant permissions come only from the system-tenant marker, never a plain role
-        assert!(!owner.contains(&"manage:tenants".to_owned()));
-        assert!(!owner.contains(&"switch:tenant".to_owned()));
+        assert!(!admin.contains(&"manage:tenants".to_owned()));
+        assert!(!admin.contains(&"switch:tenant".to_owned()));
         // Cross-tenant admin follows *membership*, not where the token currently acts. Three
         // situations, and the markers tell them apart:
 
         // 1. At home in the system tenant — both markers hold.
         let at_home = umami
             .resolve(&s(&[
-                "role:owner",
+                BOOTSTRAP_ADMIN_ROLE,
                 "is:system-tenant",
                 "is:system-tenant-member",
             ]))
@@ -1703,27 +1704,31 @@ mod tests {
         //    tenant. Keeping `switch:tenant` here is the point of the split: without it the
         //    token in hand cannot switch back.
         let switched = umami
-            .resolve(&s(&["role:owner", "is:system-tenant-member"]))
+            .resolve(&s(&[BOOTSTRAP_ADMIN_ROLE, "is:system-tenant-member"]))
             .unwrap();
         assert!(switched.contains(&"switch:tenant".to_owned()));
 
         // 3. Acting inside the system tenant without being a member grants nothing cross-tenant.
         let acting_only = umami
-            .resolve(&s(&["role:owner", "is:system-tenant"]))
+            .resolve(&s(&[BOOTSTRAP_ADMIN_ROLE, "is:system-tenant"]))
             .unwrap();
         assert!(!acting_only.contains(&"manage:tenants".to_owned()));
         assert!(!acting_only.contains(&"switch:tenant".to_owned()));
-        // Baseline self-service (empty `when`) is granted to any logged-in user, so even an
-        // otherwise-unmapped viewer gets the granular self-service permissions — and there is no
-        // longer a `self:readonly` deny marker.
-        let viewer = umami.resolve(&s(&["role:viewer"])).unwrap();
-        assert!(viewer.contains(&"manage:profile".to_owned()));
-        assert!(viewer.contains(&"manage:passwords".to_owned()));
-        assert!(viewer.contains(&"manage:personal-tokens".to_owned()));
-        assert!(viewer.contains(&"manage:sessions".to_owned()));
-        assert!(!viewer.contains(&"self:readonly".to_owned()));
-        // Tenant administration still requires the owner role, not just the self-service baseline.
-        assert!(!viewer.contains(&"view:audit".to_owned()));
+        // Baseline self-service (empty `when`) is granted to any logged-in user, so a user holding
+        // no role at all — the default for a freshly created user — still gets the granular
+        // self-service permissions, and nothing more.
+        let nobody = umami.resolve(&s(&[])).unwrap();
+        assert!(nobody.contains(&"manage:profile".to_owned()));
+        assert!(nobody.contains(&"manage:passwords".to_owned()));
+        assert!(nobody.contains(&"manage:personal-tokens".to_owned()));
+        assert!(nobody.contains(&"manage:sessions".to_owned()));
+        assert!(!nobody.contains(&"view:audit".to_owned()));
+        // The bootstrap role is only assignable inside the system tenant, where the root user lives.
+        let config = Config::default();
+        assert!(config.can_assign_role(BOOTSTRAP_ADMIN_ROLE, &config.eval_feature_set(&[], true)));
+        assert!(
+            !config.can_assign_role(BOOTSTRAP_ADMIN_ROLE, &config.eval_feature_set(&[], false))
+        );
     }
 
     #[test]

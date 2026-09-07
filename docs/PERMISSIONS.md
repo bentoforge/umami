@@ -200,14 +200,14 @@ token — there is no env-based tenant guard in the route handlers.
 
 ## 7. Storage & migration
 
-- **User:** `roles: Vec<String>` — now namespaced (`role:owner`, …).
+- **User:** `roles: Vec<String>` — namespaced (`role:platform-admin`, …); empty by default.
 - **API key:** service key (`user_id = None`) → `scopes: Vec<String>` (`scope:*`); PAT
   (`user_id = Some`) → `roles: Vec<String>` (`role:*` restriction, intersected with the user's roles;
   empty = full user roles).
 - **Tenant:** carries `features: Vec<String>` — the flat, directly-granted authorization set the
   permission game reads.
-- **Config default** ships `role:owner|admin|member|viewer`, a couple of demo features, and the
-  `apis` mapping that reproduces umami's admin permissions.
+- **Config default** ships a single role (`role:platform-admin`, for the auto-init root user) and
+  the bootstrap `apis` mapping — see CONFIG.md §5. Nothing else is assigned by default.
 - GSI/schema note: existing dev tables predate the namespacing — recreate with a fresh
   `DYNAMO_TABLE_PREFIX` (or wipe), as before.
 

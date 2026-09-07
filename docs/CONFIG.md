@@ -346,30 +346,31 @@ secret: `POST /auth/contacts/verify`, `POST /auth/forgot-password`, `POST /auth/
 ## 5. The built-in default
 
 The built-in default is **deliberately minimal** — a bootstrap-only mapping so the auto-init
-system-tenant owner can log in and administer (and then write the real config). It is *not* a full
-role matrix; see [§6](#6-proposed-standard-config) for that. The default `apis[0]` (`umami`) ships
+root user can log in and administer (and then write the real config). It is *not* a full role
+matrix; see [§6](#6-proposed-standard-config) for that. The default `apis[0]` (`umami`) ships
 (ordered):
 
 | `when` | `grant` |
 |--------|---------|
-| *(empty — always)* | `manage:profile`, `manage:passwords`, `manage:personal-tokens`, `manage:sessions` |
-| `role:owner` | `admin:tenant`, `manage:users`, `manage:service-keys`, `manage:config` |
+| *(empty — always)* | `manage:profile`, `manage:passwords`, `manage:personal-tokens`, `manage:sessions`, `manage:contacts` |
+| `role:platform-admin` | `view:audit`, `manage:users`, `manage:service-keys`, `manage:config` |
 | `is:system-tenant-member` | `manage:tenants`, `switch:tenant`, `view:ratelimits` |
 | `scope:messaging-linker + is:system-tenant` | `messaging:link` |
 | `scope:messaging-resolver + is:system-tenant` | `messaging:resolve` |
 | `scope:notifier + is:system-tenant` | `notifications:audience`, `notifications:send` |
 | `scope:mail-worker + is:system-tenant` | `notifications:report` |
 
-Default **roles**: `role:owner`, `role:admin`, `role:member`, `role:viewer`, `role:readonly`
-(all `assignableIf` omitted). Default **scopes**: `scope:messaging-linker`,
-`scope:messaging-resolver`, `scope:notifier`, `scope:mail-worker` (all
-`assignableIf: "is:system-tenant"`). No default
-features/custom fields.
+Default **roles**: only `role:platform-admin` (`assignableIf: "is:system-tenant"`) — the role the
+auto-init root user is created with, and the **only role umami ever assigns on its own**. A user
+created without `roles` has none; a tenant's first user (`owner` in `POST /tenants`) gets exactly
+the roles the request names, validated like any other assignment. Which roles exist and what they
+mean is the deployment's config, so umami does not guess. Default **scopes**:
+`scope:messaging-linker`, `scope:messaging-resolver`, `scope:notifier`, `scope:mail-worker` (all
+`assignableIf: "is:system-tenant"`). No default features/custom fields.
 
-> ⚠ In the minimal default, **only `role:owner` is mapped** — `role:admin` / `role:member` /
-> `role:viewer` grant nothing until you map them in your config. This is intentional: real
-> deployments define the matrix (see §6). `role:readonly` maps to the deny marker; assign it to a
-> user to block their self-service profile/password edits.
+> The deployments' own configs keep `role:platform-admin` and tighten its rule (typically
+> `+ is:system-tenant-member + is:2fa`), so the root user carries a meaningful role after the real
+> config lands rather than an orphaned bootstrap code.
 
 ---
 

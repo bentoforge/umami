@@ -19,7 +19,6 @@ use crate::tenants::repository::TenantRepository;
 use chrono::Utc;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -70,10 +69,12 @@ pub fn list_limits_route(
         .boxed()
 }
 
-/// `PUT /tenants/{id}/limits/{code}/settings` — set a tenant's values for one limit.
+/// `PUT /tenants/{id}/limits/{code}/settings` — set a tenant's values for one limit, reconciling the
+/// live counters against the change.
 pub fn set_limit_settings_route(
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
+    limits: Arc<dyn LimitRepository>,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("tenants" / String / "limits" / DecodedSegment / "settings")
@@ -81,6 +82,7 @@ pub fn set_limit_settings_route(
         .and(with_body_as_json::<LimitSettings>(MAX_TEXT_BODY_SIZE))
         .and(with_cloneable(tenants))
         .and(with_cloneable(config))
+        .and(with_cloneable(limits))
         .and(with_user_with_any_permission(
             authenticator,
             REQUIRE_MANAGE_LIMITS,
@@ -111,9 +113,12 @@ async fn handle_set_limit_settings_route(
     settings: LimitSettings,
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
+    limits: Arc<dyn LimitRepository>,
     caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(set_limit_settings(tenant_id, code.0, settings, tenants, config, caller).await)
+    into_response(
+        set_limit_settings(tenant_id, code.0, settings, tenants, config, limits, caller).await,
+    )
 }
 
 // ── Business logic ──────────────────────────────────────────────────────────────
@@ -150,8 +155,9 @@ async fn set_limit_settings(
     settings: LimitSettings,
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
+    limits: Arc<dyn LimitRepository>,
     caller: AuthUser,
-) -> anyhow::Result<Value> {
+) -> anyhow::Result<SettingsResponse> {
     let config = config.current().await?;
     config.validate_limit_settings(&code, &settings)?;
 
@@ -159,18 +165,60 @@ async fn set_limit_settings(
         Some(tenant) => tenant,
         None => client_bail!("No such tenant"),
     };
-
-    // Phase 1 stores the values. Reconciling them against live counters (grow when a limit rises,
-    // shrink or cap at current usage when it falls, warn when already over) is the runtime
-    // accounting's job and lands with the state repository — see docs/LIMITS.md.
     if settings == LimitSettings::default() {
         let _ = tenant.limits.remove(&code);
     } else {
-        let _ = tenant.limits.insert(code, settings);
+        let _ = tenant.limits.insert(code.clone(), settings.clone());
     }
     tenant.last_changed_by = Some(caller.user_id()?.to_owned());
     let _ = tenants.put_tenant(tenant).await?;
-    Ok(json!({ "status": "saved" }))
+
+    // The tenant record (L2) is the source of truth and is now written. Reconcile the live counters
+    // (L3) so the change takes effect this month, not just next — grow on a rise, shrink or cap at
+    // usage on a fall, warn when it lands below what is already spent. Only an existing state row
+    // needs this; a never-used limit builds itself from the new settings on its first booking.
+    let warnings = reconcile_limit_state(&limits, &tenant_id, &code, &settings, &caller).await?;
+    Ok(SettingsResponse {
+        status: "saved",
+        warnings,
+    })
+}
+
+/// The result of a settings write: whether it saved, and any advisory reconciliation warnings.
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct SettingsResponse {
+    status: &'static str,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    warnings: Vec<String>,
+}
+
+/// Reconciles an existing state row to changed settings via the CAS loop, recording a `settings`
+/// ledger entry. A no-op (no warnings) when the limit has no state yet.
+async fn reconcile_limit_state(
+    limits: &Arc<dyn LimitRepository>,
+    tenant_id: &str,
+    code: &str,
+    settings: &LimitSettings,
+    caller: &AuthUser,
+) -> anyhow::Result<Vec<String>> {
+    if limits.load_state(tenant_id, code).await?.is_none() {
+        return Ok(Vec::new());
+    }
+    let actor = Actor {
+        user_id: caller.user_id().ok().map(str::to_owned),
+        txn_name: Some(crate::limits::ledger_type::SETTINGS.to_owned()),
+        ..Actor::default()
+    };
+    let now = Utc::now();
+    let entry_id = generate_id();
+    let (_outcome, warnings) = commit_state(limits, tenant_id, code, |existing| {
+        accounting::apply_settings_change(
+            existing, tenant_id, code, settings, now, &entry_id, &actor,
+        )
+    })
+    .await?;
+    Ok(warnings)
 }
 
 // ── Booking (check / consume / report / top-up) ──────────────────────────────────
@@ -566,9 +614,12 @@ async fn consume_limit(
     let actor = request.actor.into_actor();
     let now = Utc::now();
     let entry_id = generate_id();
-    let outcome = commit_state(&limits, &tenant_id, &code, |existing| {
-        accounting::apply_consume(
-            existing, &tenant_id, &code, &settings, amount, now, &entry_id, &actor,
+    let (outcome, ()) = commit_state(&limits, &tenant_id, &code, |existing| {
+        (
+            accounting::apply_consume(
+                existing, &tenant_id, &code, &settings, amount, now, &entry_id, &actor,
+            ),
+            (),
         )
     })
     .await?;
@@ -598,9 +649,12 @@ async fn topup_limit(
     let actor = request.actor.into_actor();
     let now = Utc::now();
     let entry_id = generate_id();
-    let outcome = commit_state(&limits, &tenant_id, &code, |existing| {
-        accounting::apply_topup(
-            existing, &tenant_id, &code, &settings, amount, now, &entry_id, &actor,
+    let (outcome, ()) = commit_state(&limits, &tenant_id, &code, |existing| {
+        (
+            accounting::apply_topup(
+                existing, &tenant_id, &code, &settings, amount, now, &entry_id, &actor,
+            ),
+            (),
         )
     })
     .await?;
@@ -627,34 +681,38 @@ async fn report_gauge(
     let actor = request.actor.into_actor();
     let now = Utc::now();
     let entry_id = generate_id();
-    let outcome = commit_state(&limits, &tenant_id, &code, |existing| {
-        accounting::set_gauge(existing, &tenant_id, &code, value, now, &entry_id, &actor)
+    let (outcome, ()) = commit_state(&limits, &tenant_id, &code, |existing| {
+        (
+            accounting::set_gauge(existing, &tenant_id, &code, value, now, &entry_id, &actor),
+            (),
+        )
     })
     .await?;
     let value = outcome.state.gauge_value.unwrap_or(value);
     Ok(GaugeResponse::new(&def, settings.max, value))
 }
 
-/// The optimistic-concurrency loop, shared by every mutating booking op. `produce` turns the loaded
-/// state (or `None` on first write) into the [`Outcome`] to commit — state, ledger, and any history
-/// a rollover closed. Bounded: after [`LIMIT_CAS_MAX_ATTEMPTS`] version conflicts it fails with a
+/// The optimistic-concurrency loop, shared by every mutating op. `produce` turns the loaded state
+/// (or `None` on first write) into the [`Outcome`] to commit — state, ledger, and any history a
+/// rollover closed — plus an `extra` payload it hands back on success (a settings change's warnings;
+/// `()` for a booking). Bounded: after [`LIMIT_CAS_MAX_ATTEMPTS`] version conflicts it fails with a
 /// 503 rather than spinning.
-async fn commit_state<F>(
+async fn commit_state<T, F>(
     limits: &Arc<dyn LimitRepository>,
     tenant_id: &str,
     code: &str,
     mut produce: F,
-) -> anyhow::Result<Outcome>
+) -> anyhow::Result<(Outcome, T)>
 where
-    F: FnMut(Option<LimitState>) -> Outcome,
+    F: FnMut(Option<LimitState>) -> (Outcome, T),
 {
     for _ in 0..LIMIT_CAS_MAX_ATTEMPTS {
         let existing = limits.load_state(tenant_id, code).await?;
         let expected = existing.as_ref().map(|state| state.version);
-        let mut outcome = produce(existing);
+        let (mut outcome, extra) = produce(existing);
         outcome.state.version = expected.map(|version| version + 1).unwrap_or(1);
         match limits.compare_and_swap(&outcome, expected).await? {
-            CasOutcome::Committed => return Ok(outcome),
+            CasOutcome::Committed => return Ok((outcome, extra)),
             CasOutcome::Conflict => backoff_jitter().await,
         }
     }
@@ -776,7 +834,18 @@ mod tests {
     use crate::tenants::repository::MockTenantRepository;
     use crate::tenants::{Tenant, slugify};
     use chrono::Utc;
+    use serde_json::json;
     use wasabi::web::auth::{CLAIM_PERMISSIONS, CLAIM_SUB, CLAIM_TENANT};
+
+    /// A `LimitRepository` with no state yet — settings reconciliation then skips (no warnings).
+    fn no_state_limits() -> Arc<dyn LimitRepository> {
+        use crate::limits::repository::MockLimitRepository;
+        let mut limits = MockLimitRepository::new();
+        limits
+            .expect_load_state()
+            .returning(|_, _| Box::pin(async { Ok(None) }));
+        Arc::new(limits)
+    }
 
     async fn consumable_config() -> Arc<dyn ConfigRepository> {
         let repository = StaticConfigRepository::with_default();
@@ -898,6 +967,7 @@ mod tests {
             settings,
             Arc::new(tenants),
             consumable_config().await,
+            no_state_limits(),
             caller(),
         )
         .await
@@ -917,6 +987,7 @@ mod tests {
             settings,
             Arc::new(tenants),
             consumable_config().await,
+            no_state_limits(),
             caller(),
         )
         .await
@@ -951,6 +1022,7 @@ mod tests {
             LimitSettings::default(),
             Arc::new(tenants),
             consumable_config().await,
+            no_state_limits(),
             caller(),
         )
         .await
@@ -969,6 +1041,7 @@ mod tests {
             },
             Arc::new(tenants),
             consumable_config().await,
+            no_state_limits(),
             caller(),
         )
         .await
@@ -1297,5 +1370,80 @@ mod tests {
         assert!(!response.allowed);
         assert_eq!(response.remaining.monthly, 1000);
         assert_eq!(response.remaining.daily, Some(0));
+    }
+
+    #[tokio::test]
+    async fn a_settings_change_reconciles_the_live_state_and_warns() {
+        use crate::limits::repository::MockLimitRepository;
+
+        let now = Utc::now();
+        let month = accounting::year_month(now);
+
+        let mut tenants = MockTenantRepository::new();
+        tenants.expect_get_tenant().returning(|_| {
+            Box::pin(async {
+                let mut tenant = tenant("t-1");
+                let _ = tenant.limits.insert(
+                    "limit:ai-credits".to_owned(),
+                    LimitSettings {
+                        monthly: Some(200),
+                        overuse: None,
+                        daily: None,
+                        max: None,
+                    },
+                );
+                Ok(Some(tenant))
+            })
+        });
+        tenants
+            .expect_put_tenant()
+            .returning(|tenant| Box::pin(async move { Ok(tenant) }));
+
+        // Existing state this month: 900 of 1000 already used.
+        let mut seeded = LimitState::fresh(
+            "t-1",
+            "limit:ai-credits",
+            &month,
+            &LimitSettings {
+                monthly: Some(1000),
+                overuse: None,
+                daily: None,
+                max: None,
+            },
+        );
+        seeded.monthly_remaining = 100;
+        let mut limits = MockLimitRepository::new();
+        limits.expect_load_state().returning(move |_, _| {
+            let state = seeded.clone();
+            Box::pin(async move { Ok(Some(state)) })
+        });
+        limits
+            .expect_compare_and_swap()
+            .returning(|_, _| Box::pin(async { Ok(CasOutcome::Committed) }));
+
+        // New monthly 200 is below the 900 already used → capped at 0, with a warning.
+        let response = set_limit_settings(
+            "t-1".to_owned(),
+            "limit:ai-credits".to_owned(),
+            LimitSettings {
+                monthly: Some(200),
+                overuse: None,
+                daily: None,
+                max: None,
+            },
+            Arc::new(tenants),
+            consumable_config().await,
+            Arc::new(limits),
+            caller(),
+        )
+        .await
+        .expect("saved");
+        assert_eq!(response.status, "saved");
+        assert_eq!(response.warnings.len(), 1);
+        assert!(
+            response.warnings[0].contains("monthly"),
+            "{:?}",
+            response.warnings
+        );
     }
 }

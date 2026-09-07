@@ -160,13 +160,16 @@ pub const TOTP_MARKER: &str = "is:totp";
 /// can gate on "2FA present" regardless of the specific method.
 pub const TWO_FACTOR_MARKER: &str = "is:2fa";
 
-// ── Built-in role codes (defined in the default config, namespaced `role:*`) ───
+// ── Bootstrap ─────────────────────────────────────────────────────────────────
 
-/// Role code for a tenant's first/owning user.
-pub const ROLE_OWNER: &str = "role:owner";
-
-/// Default role code assigned to a newly created user.
-pub const ROLE_MEMBER: &str = "role:member";
+/// The one role umami itself assigns: the auto-init root user carries it, and the built-in default
+/// config maps it to enough to write the real config. Everything else about roles is the
+/// deployment's business — nothing is assigned by default, to anyone.
+///
+/// Named after what the deployments call their cross-tenant administrators, so the root user
+/// still holds a meaningful role once the real config replaces the default one, instead of an
+/// orphaned bootstrap code.
+pub const BOOTSTRAP_ADMIN_ROLE: &str = "role:platform-admin";
 
 // ── Body size limits ──────────────────────────────────────────────────────────
 

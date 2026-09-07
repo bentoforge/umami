@@ -13,9 +13,7 @@ use crate::auth::webauthn::repository::WebauthnRepository;
 use crate::bail_i18n;
 use crate::config::Config;
 use crate::config::repository::ConfigRepository;
-use crate::constants::{
-    MANAGE_USERS_PERMISSION, MAX_LIST_RESULTS, MAX_TEXT_BODY_SIZE, ROLE_MEMBER,
-};
+use crate::constants::{MANAGE_USERS_PERMISSION, MAX_LIST_RESULTS, MAX_TEXT_BODY_SIZE};
 use crate::contacts::repository::ContactRepository;
 use crate::messaging::repository::MessagingRepository;
 use crate::tenants::repository::TenantRepository;
@@ -472,10 +470,9 @@ async fn create_user(
     Config::validate_custom_fields(&config.custom_user_fields, &custom_fields)?;
 
     let password_hash = crate::auth::password::hash(&password)?;
-    let roles = request
-        .roles
-        .filter(|roles| !roles.is_empty())
-        .unwrap_or_else(|| vec![ROLE_MEMBER.to_owned()]);
+    // No default role: which roles exist is the deployment's config, and a code umami made up
+    // would either be undefined there or mean something the deployment never intended.
+    let roles = request.roles.unwrap_or_default();
     // A new user holds nothing yet, so every requested role is an addition.
     validate_roles(
         &config,

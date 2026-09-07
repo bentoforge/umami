@@ -244,6 +244,68 @@ pub fn set_gauge(
     }
 }
 
+/// Reconciles the live counters to changed per-tenant `settings`, keeping what is already used this
+/// month.
+///
+/// For monthly and overuse: `remaining = max(0, new_limit - used)` where `used = snapshot -
+/// remaining` — so a rise grows the remaining by the delta, a fall shrinks it, and a fall below what
+/// is already used caps it at zero and warns. The persistent custom balance is never touched (it
+/// moves only via top-ups); a gauge's value stays put but is flagged when it now exceeds its bound.
+/// The daily throttle is not reconciled mid-day — it picks up the new setting at its next reset.
+/// Records a `settings` ledger entry. Returned warnings are advisory admin messages.
+#[allow(clippy::too_many_arguments)]
+pub fn apply_settings_change(
+    existing: Option<LimitState>,
+    tenant_id: &str,
+    code: &str,
+    settings: &LimitSettings,
+    now: DateTime<Utc>,
+    entry_id: &str,
+    actor: &Actor,
+) -> (Outcome, Vec<String>) {
+    let (mut state, history) = rolled_over(existing, tenant_id, code, settings, now);
+    let mut warnings = Vec::new();
+
+    let used_monthly = (state.monthly_snapshot - state.monthly_remaining).max(0);
+    let new_monthly = settings.monthly.unwrap_or(0);
+    state.monthly_snapshot = new_monthly;
+    state.monthly_remaining = (new_monthly - used_monthly).max(0);
+    if new_monthly < used_monthly {
+        warnings.push(format!(
+            "monthly limit {new_monthly} is below the {used_monthly} already used this month; \
+             remaining capped at 0"
+        ));
+    }
+
+    let used_overuse = (state.overuse_snapshot - state.overuse_remaining).max(0);
+    let new_overuse = settings.overuse.unwrap_or(0);
+    state.overuse_snapshot = new_overuse;
+    state.overuse_remaining = (new_overuse - used_overuse).max(0);
+    if new_overuse < used_overuse {
+        warnings.push(format!(
+            "overuse limit {new_overuse} is below the {used_overuse} already used this month; \
+             remaining capped at 0"
+        ));
+    }
+
+    if let (Some(max), Some(value)) = (settings.max, state.gauge_value)
+        && value > max
+    {
+        warnings.push(format!("gauge value {value} now exceeds the max {max}"));
+    }
+
+    let ledger = ledger_base(&state, entry_id, now, ledger_type::SETTINGS, 0, actor);
+
+    (
+        Outcome {
+            state,
+            ledger,
+            history,
+        },
+        warnings,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -474,6 +536,81 @@ mod tests {
         let out = consume(None, &settings(Some(1000), None), 50, at(2026, 9, 7));
         assert_eq!(out.state.daily_remaining, 0);
         assert_eq!(out.state.daily_date, None);
+    }
+
+    /// A state with `used` of this month's budget, for the reconciliation tests.
+    fn used(monthly_snapshot: i64, monthly_remaining: i64) -> LimitState {
+        let mut state = LimitState::fresh(
+            "t1",
+            "limit:ai",
+            "2026-09",
+            &settings(Some(monthly_snapshot), None),
+        );
+        state.monthly_remaining = monthly_remaining;
+        state.custom_balance = 500; // must survive every reconciliation
+        state
+    }
+
+    fn reconcile(state: LimitState, new: &LimitSettings) -> (Outcome, Vec<String>) {
+        apply_settings_change(
+            Some(state),
+            "t1",
+            "limit:ai",
+            new,
+            at(2026, 9, 7),
+            "e1",
+            &Actor::default(),
+        )
+    }
+
+    #[test]
+    fn a_higher_setting_grows_the_remaining() {
+        // 300 used of 1000; raise to 1500 -> 1200 remaining, custom untouched, a settings entry.
+        let (out, warnings) = reconcile(used(1000, 700), &settings(Some(1500), None));
+        assert_eq!(out.state.monthly_snapshot, 1500);
+        assert_eq!(out.state.monthly_remaining, 1200);
+        assert_eq!(out.state.custom_balance, 500);
+        assert!(warnings.is_empty());
+        assert_eq!(out.ledger.entry_type, ledger_type::SETTINGS);
+    }
+
+    #[test]
+    fn a_lower_setting_above_usage_shrinks_the_remaining() {
+        // 300 used; lower to 500 (> used) -> 200 remaining, no warning.
+        let (out, warnings) = reconcile(used(1000, 700), &settings(Some(500), None));
+        assert_eq!(out.state.monthly_remaining, 200);
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn a_setting_below_usage_caps_at_zero_and_warns() {
+        // 300 used; lower to 200 (< used) -> 0 remaining + a warning.
+        let (out, warnings) = reconcile(used(1000, 700), &settings(Some(200), None));
+        assert_eq!(out.state.monthly_remaining, 0);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("monthly"), "{:?}", warnings);
+    }
+
+    #[test]
+    fn lowering_a_gauge_max_below_its_value_warns() {
+        let mut state =
+            LimitState::fresh("t1", "limit:seats", "2026-09", &LimitSettings::default());
+        state.gauge_value = Some(80);
+        let new = LimitSettings {
+            max: Some(50),
+            ..LimitSettings::default()
+        };
+        let (_out, warnings) = apply_settings_change(
+            Some(state),
+            "t1",
+            "limit:seats",
+            &new,
+            at(2026, 9, 7),
+            "e1",
+            &Actor::default(),
+        );
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("gauge"), "{:?}", warnings);
     }
 
     #[test]

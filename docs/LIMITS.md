@@ -102,10 +102,16 @@ gestempelt mit `last_changed_by` + Tenant-OCC-`version`, wie `grant_feature`.
 | `oldMonthly > newMonthly > usedMonthly` | `remaining = newMonthly − usedMonthly` — verkleinern |
 | `newMonthly ≤ usedMonthly` | `remaining = 0` — auf Usage gedeckelt, **Warnung** in der Response |
 
-Analog `overuse`. `customBalance` bleibt unberührt (nur `topup`). Gauge-`max`-Änderung lässt den
-aktuellen Wert stehen (kann danach >100 % sein → Watermark/Warnung). Existiert noch keine
-State-Zeile (Limit nie benutzt), wird nur `Tenant.limits` geschrieben — nichts zu reconcilen.
-Der Settings-Write (L2) und der State-Abgleich (L3) committen atomar per `TransactWriteItems`.
+`used = snapshot − remaining`. Analog `overuse`. `customBalance` bleibt unberührt (nur `topup`).
+Gauge-`max`-Änderung lässt den aktuellen Wert stehen (kann danach >max sein → Warnung). Existiert
+noch keine State-Zeile (Limit nie benutzt), wird nur `Tenant.limits` geschrieben — nichts zu
+reconcilen (der erste Call baut den State aus den neuen Settings).
+
+**Zweistufig, nicht cross-table-atomar**: erst wird `Tenant.limits` (L2, die Quelle der Wahrheit)
+per `put_tenant` geschrieben, dann der L3-State über dieselbe OCC-Schleife + `compare_and_swap`
+abgeglichen (mit `settings`-Ledger-Eintrag). Kein `TransactWriteItems` über beide Tabellen — ein
+Abbruch nach dem L2-Write verzögert die Wirkung höchstens bis zum nächsten Monat (Rollover baut aus
+L2) und der Retry ist idempotent (`used`-basiert). Warnungen kommen sofort in der Response.
 
 ## L3 — State, Ledger, History
 
@@ -346,10 +352,15 @@ den *Dienst*.
   die tatsächlich gebuchte Menge in `consume` (Floor 0). `daily` erscheint in `remaining`, sobald
   der Throttle aktiv ist.
 
+- L3 Reconciliation: `PUT .../settings` gleicht die Live-Zähler an die neuen Werte an
+  (`apply_settings_change`, pur): monthly/overuse **grow/shrink/cap** über `used = snapshot −
+  remaining`, `customBalance` unberührt, Gauge-Wert bleibt (Warnung wenn > neues max),
+  `settings`-Ledger-Eintrag. Warnungen (auf Usage gedeckelt) kommen in der Response. Zweistufig
+  (L2-Write, dann L3-CAS), idempotent.
+
 **Noch offen** (additiv, brechen den Durchstich nicht):
 
 - Rollover-on-read/Sweep-Endpoint (lückenlose History für inaktive Mandanten).
-- Reconciliation beim Settings-Change (grow/shrink/cap + Warnung) — Gerüst steht, greift auf L3.
 - Ledger-Paginierung (Cursor) — aktuell die neuesten 100; GDPR-Schalter `persistActorName`.
 - TS-Client + UI-Card.
 

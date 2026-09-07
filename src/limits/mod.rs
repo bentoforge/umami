@@ -5,9 +5,10 @@
 //! ([`crate::config::LimitDef`]), the per-tenant **values** on the tenant
 //! ([`crate::config::LimitSettings`] in `Tenant.limits`), and the runtime **counters** here.
 //!
-//! This slice covers the booking path — the [`LimitState`] row, the pure [`accounting`] logic, and
-//! the atomic [`repository`] — without the transaction ledger and monthly history, which bolt on as
-//! additional writes inside the same compare-and-swap.
+//! The booking path is a pure [`accounting`] module over a [`LimitState`] row, committed by a thin
+//! [`repository`] whose `compare_and_swap` writes state, ledger entry and (on a rollover) history as
+//! one transaction. The service runs the optimistic-concurrency loop and reconciles settings changes
+//! against the live counters.
 
 pub mod accounting;
 pub mod repository;
@@ -103,6 +104,8 @@ pub mod ledger_type {
     pub const TOPUP: &str = "topup";
     /// A gauge value set.
     pub const GAUGE_SET: &str = "gaugeSet";
+    /// A per-tenant settings change reconciled against the live counters.
+    pub const SETTINGS: &str = "settings";
 }
 
 /// One append-only transaction in a limit's ledger — what came in, what went out, and how much from

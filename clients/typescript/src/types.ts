@@ -221,6 +221,9 @@ export interface CreateTenantRequest {
     /** Owner login username — required and unique. */
     username: string;
     password: string;
+    /** Roles for the first user, validated like any assignment. Omit for none — umami has no
+     * notion of what an "owner" may do, only the deployment's config has. */
+    roles?: string[];
   };
   /** Custom-field values, validated against `customTenantFields`. */
   customFields?: Record<string, unknown>;
