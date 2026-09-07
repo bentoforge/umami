@@ -30,6 +30,10 @@ pub struct Tenant {
     /// Values for the config-defined custom tenant fields.
     #[serde(default)]
     pub custom_fields: BTreeMap<String, Value>,
+    /// Per-tenant limit values, keyed by the config-defined limit code (see `docs/LIMITS.md`). The
+    /// definitions live in the config; the runtime counters in the `limits` repository.
+    #[serde(default)]
+    pub limits: BTreeMap<String, crate::config::LimitSettings>,
     /// Display name.
     pub name: String,
     /// URL-friendly handle derived from the name (a display convenience; not enforced unique).

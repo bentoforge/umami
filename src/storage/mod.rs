@@ -26,6 +26,7 @@ use crate::auth::ratelimit::repository::RateLimitRepository;
 use crate::auth::session::repository::SessionRepository;
 use crate::auth::webauthn::repository::WebauthnRepository;
 use crate::contacts::repository::ContactRepository;
+use crate::limits::repository::LimitRepository;
 use crate::messaging::repository::MessagingRepository;
 use crate::tenants::repository::TenantRepository;
 use crate::users::repository::UserRepository;
@@ -67,6 +68,8 @@ pub struct Repositories {
     pub rate_limits: Arc<dyn RateLimitRepository>,
     /// Registered passkeys and in-flight WebAuthn ceremonies.
     pub webauthn: Arc<dyn WebauthnRepository>,
+    /// Per-tenant limit counters (consumable budgets + gauges).
+    pub limits: Arc<dyn LimitRepository>,
 }
 
 /// Resolves the storage backend and builds its repositories.

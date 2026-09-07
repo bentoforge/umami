@@ -49,6 +49,7 @@ const LIST_PAGE_SIZE: i32 = 100;
 
 /// Persistence interface for tenants.
 #[async_trait]
+#[cfg_attr(test, mockall::automock)]
 pub trait TenantRepository: Send + Sync {
     /// Creates a tenant, returning it. `created_by` records the acting user id (`None` for
     /// system/auto-init).
@@ -166,6 +167,7 @@ impl TenantRepository for DynamoTenantRepository {
             version: 0,
             features: Vec::new(),
             custom_fields: BTreeMap::new(),
+            limits: BTreeMap::new(),
             name: name.to_owned(),
             slug: slug.to_owned(),
             created: now,
