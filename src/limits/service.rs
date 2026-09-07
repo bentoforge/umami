@@ -730,11 +730,27 @@ async fn backoff_jitter() {
 
 // ── Ledger + history (read-only; view:limits own tenant, manage:limits any) ──────
 
-/// A limit's ledger, newest first.
+/// Default ledger page size when the caller names none.
+const LEDGER_DEFAULT_PAGE_SIZE: i32 = 50;
+
+/// Ledger paging query: an opaque `cursor` from a prior page, and a `limit` (clamped by the repo).
+#[derive(Deserialize, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+struct LedgerQuery {
+    #[serde(default)]
+    cursor: Option<String>,
+    #[serde(default)]
+    limit: Option<i32>,
+}
+
+/// A page of a limit's ledger, newest first, with the cursor to fetch the next page (absent at the
+/// end of the trail).
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct LedgerResponse {
     entries: Vec<LedgerEntry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    next_cursor: Option<String>,
 }
 
 /// A limit's closed-month history, newest month first.
@@ -751,6 +767,7 @@ pub fn ledger_route(
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("tenants" / String / "limits" / DecodedSegment / "ledger")
         .and(warp::get())
+        .and(warp::query::<LedgerQuery>())
         .and(with_cloneable(limits))
         .and(with_user_with_any_permission(
             authenticator,
@@ -784,10 +801,11 @@ pub fn history_route(
 async fn handle_ledger_route(
     tenant_id: String,
     code: DecodedSegment,
+    query: LedgerQuery,
     limits: Arc<dyn LimitRepository>,
     caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(ledger(tenant_id, code.0, limits, caller).await)
+    into_response(ledger(tenant_id, code.0, query, limits, caller).await)
 }
 
 #[tracing::instrument(
@@ -807,12 +825,19 @@ async fn handle_history_route(
 async fn ledger(
     tenant_id: String,
     code: String,
+    query: LedgerQuery,
     limits: Arc<dyn LimitRepository>,
     caller: AuthUser,
 ) -> anyhow::Result<LedgerResponse> {
     enforce_read_scope(&tenant_id, &caller)?;
-    let entries = limits.read_ledger(&tenant_id, &code).await?;
-    Ok(LedgerResponse { entries })
+    let limit = query.limit.unwrap_or(LEDGER_DEFAULT_PAGE_SIZE);
+    let (entries, next_cursor) = limits
+        .read_ledger(&tenant_id, &code, query.cursor.as_deref(), limit)
+        .await?;
+    Ok(LedgerResponse {
+        entries,
+        next_cursor,
+    })
 }
 
 async fn history(
@@ -1295,12 +1320,13 @@ mod tests {
         let mut limits = MockLimitRepository::new();
         limits
             .expect_read_ledger()
-            .returning(|_, _| Box::pin(async { Ok(Vec::new()) }));
+            .returning(|_, _, _, _| Box::pin(async { Ok((Vec::new(), None)) }));
         let limits = Arc::new(limits);
 
         ledger(
             "t-1".to_owned(),
             "limit:ai-credits".to_owned(),
+            LedgerQuery::default(),
             limits.clone(),
             member("t-1"),
         )
@@ -1310,6 +1336,7 @@ mod tests {
         ledger(
             "t-2".to_owned(),
             "limit:ai-credits".to_owned(),
+            LedgerQuery::default(),
             limits,
             member("t-1"),
         )

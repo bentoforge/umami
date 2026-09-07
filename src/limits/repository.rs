@@ -14,7 +14,10 @@ use crate::limits::{HistoryRow, LedgerEntry, LimitState};
 use anyhow::Context;
 use async_trait::async_trait;
 use aws_sdk_dynamodb::types::{AttributeValue, BillingMode, Put, TransactWriteItem};
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use futures_util::StreamExt;
+use std::collections::HashMap;
 use wasabi::aws::dynamodb::client::{DynamoClient, ItemBuilder};
 use wasabi::aws::dynamodb::schema::{str_attribute, with_range_index};
 use wasabi::aws::dynamodb::{deserialize_entity, str, stream_all};
@@ -66,11 +69,32 @@ pub trait LimitRepository: Send + Sync {
         expected_version: Option<u64>,
     ) -> anyhow::Result<CasOutcome>;
 
-    /// A limit's ledger, newest first, capped at [`READ_PAGE_SIZE`].
-    async fn read_ledger(&self, tenant_id: &str, code: &str) -> anyhow::Result<Vec<LedgerEntry>>;
+    /// One page of a limit's ledger, newest first. `cursor` resumes after a prior page; `limit` is
+    /// clamped to `[1, READ_PAGE_SIZE]`. Returns the page plus the next cursor (`None` when the trail
+    /// is exhausted).
+    async fn read_ledger(
+        &self,
+        tenant_id: &str,
+        code: &str,
+        cursor: Option<&str>,
+        limit: i32,
+    ) -> anyhow::Result<(Vec<LedgerEntry>, Option<String>)>;
 
     /// A limit's closed-month history, newest month first, capped at [`READ_PAGE_SIZE`].
     async fn read_history(&self, tenant_id: &str, code: &str) -> anyhow::Result<Vec<HistoryRow>>;
+}
+
+/// Opaque page cursor over a limit's ledger — the last-seen ledger sort key (`{code}#{ts}#{id}`),
+/// base64url-encoded so it survives a query string untouched.
+fn encode_ledger_cursor(ledger_sk: &str) -> String {
+    URL_SAFE_NO_PAD.encode(ledger_sk)
+}
+
+fn decode_ledger_cursor(cursor: &str) -> anyhow::Result<String> {
+    let raw = URL_SAFE_NO_PAD
+        .decode(cursor)
+        .context("Invalid ledger cursor")?;
+    String::from_utf8(raw).context("Invalid ledger cursor")
 }
 
 /// DynamoDB-backed implementation of [`LimitRepository`].
@@ -231,8 +255,15 @@ impl LimitRepository for DynamoLimitRepository {
     }
 
     #[tracing::instrument(level = "debug", skip(self), err(Display))]
-    async fn read_ledger(&self, tenant_id: &str, code: &str) -> anyhow::Result<Vec<LedgerEntry>> {
-        let request = self
+    async fn read_ledger(
+        &self,
+        tenant_id: &str,
+        code: &str,
+        cursor: Option<&str>,
+        limit: i32,
+    ) -> anyhow::Result<(Vec<LedgerEntry>, Option<String>)> {
+        // One bounded page via `Limit` + `ExclusiveStartKey`, so we never drain the whole ledger.
+        let mut query = self
             .client
             .query(TABLE_LIMIT_LEDGER)
             .key_condition_expression("#pk = :pk AND begins_with(#sk, :prefix)")
@@ -241,17 +272,35 @@ impl LimitRepository for DynamoLimitRepository {
             .expression_attribute_values(":pk", str(tenant_id))
             .expression_attribute_values(":prefix", str(format!("{code}#")))
             .scan_index_forward(false)
-            .limit(READ_PAGE_SIZE);
+            .limit(limit.clamp(1, READ_PAGE_SIZE));
 
-        let mut stream = stream_all::<LedgerEntry>(request)?;
-        let mut entries = Vec::new();
-        while let Some(entry) = stream.next().await {
-            entries.push(entry.context("Error reading 'limit-ledger' table")?);
-            if entries.len() >= READ_PAGE_SIZE as usize {
-                break;
-            }
+        if let Some(cursor) = cursor {
+            let ledger_sk = decode_ledger_cursor(cursor)?;
+            let start = HashMap::from([
+                (FIELD_TENANT_ID.to_owned(), str(tenant_id)),
+                (FIELD_LEDGER_SK.to_owned(), str(&ledger_sk)),
+            ]);
+            query = query.set_exclusive_start_key(Some(start));
         }
-        Ok(entries)
+
+        let result = query
+            .send()
+            .await
+            .context("Error reading 'limit-ledger' table")?;
+        let has_more = result.last_evaluated_key.is_some();
+        let entries: Vec<LedgerEntry> = result
+            .items
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|item| deserialize_entity::<LedgerEntry>(Some(item)).transpose())
+            .collect::<anyhow::Result<_>>()?;
+
+        // Only offer a next cursor when DynamoDB says more may follow (and we have an anchor).
+        let next = match entries.last() {
+            Some(last) if has_more => Some(encode_ledger_cursor(&ledger_sort_key(last))),
+            _ => None,
+        };
+        Ok((entries, next))
     }
 
     #[tracing::instrument(level = "debug", skip(self), err(Display))]

@@ -358,11 +358,22 @@ den *Dienst*.
   `settings`-Ledger-Eintrag. Warnungen (auf Usage gedeckelt) kommen in der Response. Zweistufig
   (L2-Write, dann L3-CAS), idempotent.
 
-**Noch offen** (additiv, brechen den Durchstich nicht):
+- L3 Ledger-Paginierung: `GET .../ledger?cursor=&limit=` liefert eine Seite (newest-first) plus
+  `nextCursor` (opak, base64url über den letzten `ledgerSk`), via `Limit` + `ExclusiveStartKey` —
+  nie den ganzen Ledger. Default 50, Cap 100.
 
-- Rollover-on-read/Sweep-Endpoint (lückenlose History für inaktive Mandanten).
-- Ledger-Paginierung (Cursor) — aktuell die neuesten 100; GDPR-Schalter `persistActorName`.
+**Noch offen**:
+
 - TS-Client + UI-Card.
+
+**Bewusst weggelassen**:
+
+- **Rollover-Sweep** für inaktive Mandanten — die History entsteht lazy beim ersten Zugriff im
+  neuen Monat; ein Mandant ohne jeden Zugriff hat nichts zu verbuchen, ein leerer Monatsrecord wäre
+  nutzlos. Lücken sind akzeptiert.
+- **`persistActorName`-Deploy-Schalter** — eine strenge Umgebung schickt den Namen einfach nicht
+  (oder TTL't/schwärzt den Ledger); ein zentraler Schalter lohnt erst, wenn er wirklich gebraucht
+  wird.
 
 ## Phasen
 
