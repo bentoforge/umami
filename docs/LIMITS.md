@@ -341,9 +341,14 @@ den *Dienst*.
   als **ein `TransactWriteItems`** (Version-Guard + History-if-not-exists) — kein Drift. Reads:
   `GET .../ledger`, `GET .../history` (self-service `view:limits` / cross-tenant `manage:limits`).
 
+- L3 Daily-Throttle: Tages-Counter (`dailyRemaining`/`dailyDate`) im State, Reset bei Tageswechsel
+  aus dem `daily`-Setting, unabhängiges Gate in `check` (zusätzlich zu den Buckets), Dekrement um
+  die tatsächlich gebuchte Menge in `consume` (Floor 0). `daily` erscheint in `remaining`, sobald
+  der Throttle aktiv ist.
+
 **Noch offen** (additiv, brechen den Durchstich nicht):
 
-- Daily-Throttle (Facette + Bucket), Rollover-on-read/Sweep-Endpoint.
+- Rollover-on-read/Sweep-Endpoint (lückenlose History für inaktive Mandanten).
 - Reconciliation beim Settings-Change (grow/shrink/cap + Warnung) — Gerüst steht, greift auf L3.
 - Ledger-Paginierung (Cursor) — aktuell die neuesten 100; GDPR-Schalter `persistActorName`.
 - TS-Client + UI-Card.

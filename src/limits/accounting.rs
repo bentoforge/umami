@@ -37,6 +37,29 @@ pub fn year_month(now: DateTime<Utc>) -> String {
     format!("{:04}-{:02}", now.year(), now.month())
 }
 
+/// The calendar day a timestamp falls in, as `"YYYY-MM-DD"` — the key the daily throttle resets on.
+fn year_month_day(now: DateTime<Utc>) -> String {
+    format!("{:04}-{:02}-{:02}", now.year(), now.month(), now.day())
+}
+
+/// Resets the daily throttle when the day has turned (or on first use), from the tenant's `daily`
+/// setting. A no-op when the limit has no daily throttle, so its counters stay dormant.
+fn refresh_daily(
+    mut state: LimitState,
+    settings: &LimitSettings,
+    now: DateTime<Utc>,
+) -> LimitState {
+    let Some(daily) = settings.daily else {
+        return state;
+    };
+    let today = year_month_day(now);
+    if state.daily_date.as_deref() != Some(today.as_str()) {
+        state.daily_remaining = daily;
+        state.daily_date = Some(today);
+    }
+    state
+}
+
 /// The state as it applies to `now`'s month, plus the history row if a stale month was closed.
 ///
 /// If the stored period is stale — a real prior month — its aggregates become a [`HistoryRow`] and
@@ -51,7 +74,7 @@ pub fn rolled_over(
     now: DateTime<Utc>,
 ) -> (LimitState, Option<HistoryRow>) {
     let month = year_month(now);
-    match existing {
+    let (state, history) = match existing {
         Some(state) if state.period_year_month == month => (state, None),
         Some(state) => {
             let history = HistoryRow {
@@ -73,13 +96,15 @@ pub fn rolled_over(
                 overuse_remaining: overuse,
                 monthly_snapshot: monthly,
                 overuse_snapshot: overuse,
-                // The persistent balance and the gauge are not monthly and survive the rollover.
+                // The persistent balance, daily throttle and gauge are not monthly and survive the
+                // rollover; the daily throttle is refreshed below on its own (daily) schedule.
                 ..state
             };
             (new_state, Some(history))
         }
         None => (LimitState::fresh(tenant_id, code, &month, settings), None),
-    }
+    };
+    (refresh_daily(state, settings, now), history)
 }
 
 /// A ledger entry pre-filled with identity, timestamp, actor and the post-movement balances.
@@ -144,6 +169,13 @@ pub fn apply_consume(
     let monthly_drawn = draw(&mut state.monthly_remaining, &mut left);
     let custom_drawn = draw(&mut state.custom_balance, &mut left);
     let overuse_drawn = draw(&mut state.overuse_remaining, &mut left);
+
+    // The daily throttle is a parallel usage counter (not a source): what was actually booked is
+    // subtracted from today's allowance, floored at zero. `check` gates on it before the call.
+    if settings.daily.is_some() {
+        let drawn = monthly_drawn + custom_drawn + overuse_drawn;
+        state.daily_remaining = (state.daily_remaining - drawn).max(0);
+    }
 
     let mut ledger = ledger_base(&state, entry_id, now, ledger_type::CONSUME, amount, actor);
     ledger.monthly_drawn = monthly_drawn;
@@ -382,6 +414,66 @@ mod tests {
         assert_eq!(out.ledger.txn_name.as_deref(), Some("qa-answer"));
         assert_eq!(out.ledger.txn_id.as_deref(), Some("req-999"));
         assert_eq!(out.ledger.actor_user_name, None);
+    }
+
+    #[test]
+    fn the_daily_throttle_decrements_and_resets_each_day() {
+        let daily = LimitSettings {
+            monthly: Some(1000),
+            overuse: None,
+            daily: Some(100),
+            max: None,
+        };
+        // First consume today: 100 daily -> 70, and 1000 monthly -> 970.
+        let out = apply_consume(
+            None,
+            "t1",
+            "limit:ai",
+            &daily,
+            30,
+            at(2026, 9, 7),
+            "e1",
+            &Actor::default(),
+        );
+        assert_eq!(out.state.daily_remaining, 70);
+        assert_eq!(out.state.daily_date.as_deref(), Some("2026-09-07"));
+        assert_eq!(out.state.monthly_remaining, 970);
+
+        // Same day, draw the rest of the day's allowance and then some — daily floors at 0.
+        let out = apply_consume(
+            Some(out.state),
+            "t1",
+            "limit:ai",
+            &daily,
+            90,
+            at(2026, 9, 7),
+            "e2",
+            &Actor::default(),
+        );
+        assert_eq!(out.state.daily_remaining, 0);
+
+        // A new day (same month) resets the throttle to 100 without touching the monthly counter.
+        let out = apply_consume(
+            Some(out.state),
+            "t1",
+            "limit:ai",
+            &daily,
+            40,
+            at(2026, 9, 8),
+            "e3",
+            &Actor::default(),
+        );
+        assert_eq!(out.state.daily_date.as_deref(), Some("2026-09-08"));
+        assert_eq!(out.state.daily_remaining, 60);
+        // 1000 - 30 - 90 - 40, carried across both days.
+        assert_eq!(out.state.monthly_remaining, 840);
+    }
+
+    #[test]
+    fn without_a_daily_setting_the_throttle_stays_dormant() {
+        let out = consume(None, &settings(Some(1000), None), 50, at(2026, 9, 7));
+        assert_eq!(out.state.daily_remaining, 0);
+        assert_eq!(out.state.daily_date, None);
     }
 
     #[test]

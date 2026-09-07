@@ -41,6 +41,15 @@ pub struct LimitState {
     pub overuse_snapshot: i64,
     /// Persistent top-up balance — does not expire at month end.
     pub custom_balance: i64,
+    /// Daily throttle: consumption still allowed today. Reset each day from the tenant's `daily`
+    /// setting; a parallel cap, not a spendable bucket. `0` and `daily_date` unset when the limit
+    /// has no daily throttle.
+    #[serde(default)]
+    pub daily_remaining: i64,
+    /// The day (`"YYYY-MM-DD"`) `daily_remaining` belongs to. `None` until a daily throttle is first
+    /// applied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub daily_date: Option<String>,
     /// Gauge: the last value set. `None` until first set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gauge_value: Option<i64>,
@@ -72,6 +81,8 @@ impl LimitState {
             monthly_snapshot: monthly,
             overuse_snapshot: overuse,
             custom_balance: 0,
+            daily_remaining: 0,
+            daily_date: None,
             gauge_value: None,
             gauge_month: None,
             version: 0,

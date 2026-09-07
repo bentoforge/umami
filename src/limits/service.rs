@@ -244,7 +244,9 @@ impl Breakdown {
     }
 }
 
-/// What is still spendable, split by bucket.
+/// What is still spendable, split by bucket. `daily` is the throttle's remaining allowance today —
+/// a cap, not a spendable bucket, so it is not part of `total`; absent when the limit has no daily
+/// throttle.
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct Remaining {
@@ -252,6 +254,8 @@ struct Remaining {
     custom: i64,
     overuse: i64,
     total: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    daily: Option<i64>,
 }
 
 impl Remaining {
@@ -261,6 +265,8 @@ impl Remaining {
             custom: state.custom_balance,
             overuse: state.overuse_remaining,
             total: state.available(),
+            // Present only once a daily throttle has been applied (its date is then set).
+            daily: state.daily_date.as_ref().map(|_| state.daily_remaining),
         }
     }
 }
@@ -531,12 +537,15 @@ async fn check_limit(
         client_bail!("amount must not be negative");
     }
     let settings = consumable_settings(&tenant_id, &code, &tenants, &config).await?;
-    // Read-only: project the current month in memory (rolling a stale period over) without a write.
+    // Read-only: project the current month/day in memory (rolling a stale period over) without a
+    // write.
     let existing = limits.load_state(&tenant_id, &code).await?;
     let (view, _closed) =
         accounting::rolled_over(existing, &tenant_id, &code, &settings, Utc::now());
+    // The daily throttle is an independent gate on top of the spendable buckets.
+    let daily_ok = settings.daily.is_none() || view.daily_remaining >= request.amount;
     Ok(CheckResponse {
-        allowed: view.available() >= request.amount,
+        allowed: view.available() >= request.amount && daily_ok,
         remaining: Remaining::of(&view),
     })
 }
@@ -794,6 +803,18 @@ mod tests {
                 daily: false,
                 low_watermark_percent: Some(70),
                 high_watermark_percent: Some(90),
+                relevant_if: None,
+            },
+            LimitDef {
+                code: "limit:ai-daily".to_owned(),
+                name: "AI (throttled)".into(),
+                description: None,
+                kind: LimitKind::Consumable,
+                overuse: false,
+                custom_balance: false,
+                daily: true,
+                low_watermark_percent: None,
+                high_watermark_percent: None,
                 relevant_if: None,
             },
         ];
@@ -1221,5 +1242,60 @@ mod tests {
         )
         .await
         .expect_err("foreign tenant ledger refused for a view member");
+    }
+
+    #[tokio::test]
+    async fn check_refuses_when_the_daily_throttle_is_spent() {
+        use crate::limits::repository::MockLimitRepository;
+
+        let now = Utc::now();
+        let month = accounting::year_month(now);
+        let today = now.format("%Y-%m-%d").to_string();
+        let daily_settings = LimitSettings {
+            monthly: Some(1000),
+            overuse: None,
+            daily: Some(100),
+            max: None,
+        };
+
+        let mut tenants = MockTenantRepository::new();
+        let tenant_settings = daily_settings.clone();
+        tenants.expect_get_tenant().returning(move |_| {
+            let settings = tenant_settings.clone();
+            Box::pin(async move {
+                let mut tenant = tenant("t-1");
+                let _ = tenant.limits.insert("limit:ai-daily".to_owned(), settings);
+                Ok(Some(tenant))
+            })
+        });
+
+        // State for the current month/day with the monthly budget untouched but the day spent.
+        let mut seeded = LimitState::fresh("t-1", "limit:ai-daily", &month, &daily_settings);
+        seeded.daily_remaining = 0;
+        seeded.daily_date = Some(today);
+        let mut limits = MockLimitRepository::new();
+        limits.expect_load_state().returning(move |_, _| {
+            let state = seeded.clone();
+            Box::pin(async move { Ok(Some(state)) })
+        });
+
+        let response = check_limit(
+            "t-1".to_owned(),
+            "limit:ai-daily".to_owned(),
+            AmountRequest {
+                amount: 10,
+                actor: ActorFields::default(),
+            },
+            Arc::new(tenants),
+            consumable_config().await,
+            Arc::new(limits),
+        )
+        .await
+        .expect("checked");
+
+        // The monthly budget still has 1000, but today's throttle is spent → refused.
+        assert!(!response.allowed);
+        assert_eq!(response.remaining.monthly, 1000);
+        assert_eq!(response.remaining.daily, Some(0));
     }
 }
