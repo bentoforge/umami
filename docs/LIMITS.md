@@ -361,10 +361,14 @@ den *Dienst*.
 - L3 Ledger-Paginierung: `GET .../ledger?cursor=&limit=` liefert eine Seite (newest-first) plus
   `nextCursor` (opak, base64url über den letzten `ledgerSk`), via `Limit` + `ExclusiveStartKey` —
   nie den ganzen Ledger. Default 50, Cap 100.
-
-**Noch offen**:
-
-- TS-Client + UI-Card.
+- Live-State in der Liste: `GET /tenants/{id}/limits` → `{ code, settings, state? }` je Limit
+  (projizierter aktueller Stand, kein Write, ohne `book:limits`) — die Read-Basis der UI.
+- TS-Client (`clients/typescript`): Typen + Methoden (`getTenantLimits`, `setTenantLimitSettings`,
+  `topupLimit`, `getLimitLedger`, `getLimitHistory`, `checkLimit`, `consumeLimit`, `reportGauge`),
+  Katalog um `limits` erweitert.
+- UI (`clients/ui`): `LimitsCard` in `EditTenantPage.tsx` (gespiegelt von `FeaturesCard`) — je Limit
+  Settings-Inputs (facetten-abhängig), Live-State, Gauge-Watermark-Highlight, Top-up, aufklappbare
+  History + paginierter Ledger; i18n en/de.
 
 **Bewusst weggelassen**:
 

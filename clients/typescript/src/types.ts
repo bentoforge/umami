@@ -287,11 +287,34 @@ export interface CatalogueEntry {
   description?: string;
 }
 
+/** Whether a limit is drawn down (`consumable`) or set to a live reading (`gauge`). */
+export type LimitKind = "consumable" | "gauge";
+
+/** One limit definition with its labels resolved into the caller's language, plus the facets and
+ * watermarks that shape its per-tenant editor. Arrives in {@link Catalogue.limits}. */
+export interface LimitCatalogueEntry {
+  code: string;
+  name: string;
+  description?: string;
+  kind: LimitKind;
+  /** Whether a consumable may be drawn past its monthly allowance into a separate overuse budget. */
+  overuse: boolean;
+  /** Whether a consumable carries a top-up (custom) balance that survives the monthly reset. */
+  customBalance: boolean;
+  /** Whether a consumable also enforces a per-day sub-allowance. */
+  daily: boolean;
+  /** A gauge at or above this percent of its max is a "warning". */
+  lowWatermarkPercent?: number;
+  /** A gauge at or above this percent of its max is "critical". */
+  highWatermarkPercent?: number;
+}
+
 /** The label catalogues, resolved (`GET /config/catalogue`). */
 export interface Catalogue {
   roles: CatalogueEntry[];
   scopes: CatalogueEntry[];
   features: CatalogueEntry[];
+  limits: LimitCatalogueEntry[];
 }
 
 export interface CustomFieldDef {
@@ -791,6 +814,141 @@ export interface RateLimitBlockPage {
   since: string;
   /** The policies that were queried. */
   policies: string[];
+}
+
+// ── Limits (per-tenant quotas) ────────────────────────────────────────────────
+
+/** The per-tenant settings for one limit. Which fields apply depends on the limit's
+ * {@link LimitCatalogueEntry.kind} and facets: a consumable reads `monthly`/`overuse`/`daily`, a
+ * gauge reads `max`. Every field is optional — an unset one leaves the server's default in place. */
+export interface LimitSettings {
+  /** Consumable: the monthly allowance that resets each period. */
+  monthly?: number;
+  /** Consumable: the separate overuse budget drawn on once the monthly allowance is exhausted. */
+  overuse?: number;
+  /** Consumable: the per-day sub-allowance. */
+  daily?: number;
+  /** Gauge: the ceiling the live reading is measured against. */
+  max?: number;
+}
+
+/** The live state of one limit for a tenant, within the current period. */
+export interface LimitStateView {
+  /** The period this state belongs to, `YYYY-MM`. */
+  periodYearMonth: string;
+  monthlyRemaining: number;
+  overuseRemaining: number;
+  /** The top-up balance that carries across periods. */
+  customBalance: number;
+  /** Present only when the limit enforces a daily sub-allowance. */
+  dailyRemaining?: number;
+  /** Present only for a gauge. */
+  gaugeValue?: number;
+}
+
+/** One tenant's configured limit: its settings, and its live state when the period has begun. */
+export interface LimitEntry {
+  code: string;
+  settings: LimitSettings;
+  state?: LimitStateView;
+}
+
+/** A tenant's configured limits (`GET /tenants/{id}/limits`). */
+export interface LimitsListResponse {
+  limits: LimitEntry[];
+}
+
+/** How much of a limit is left, broken out by the budget it comes from. */
+export interface LimitRemaining {
+  monthly: number;
+  custom: number;
+  overuse: number;
+  total: number;
+  /** Present only when the limit enforces a daily sub-allowance. */
+  daily?: number;
+}
+
+/** How a consume was drawn across the budgets. */
+export interface LimitBreakdown {
+  monthlyDrawn: number;
+  customDrawn: number;
+  overuseDrawn: number;
+  overdrawn: number;
+}
+
+/** One entry in a limit's transaction ledger. */
+export interface LedgerEntry {
+  tenantId: string;
+  limitCode: string;
+  id: string;
+  /** RFC3339 event time. */
+  timestamp: string;
+  type: string;
+  amount: number;
+  monthlyDrawn: number;
+  customDrawn: number;
+  overuseDrawn: number;
+  overdrawn: number;
+  customAdded: number;
+  /** Present only for a gauge report. */
+  gaugeValue?: number;
+  resultingMonthly: number;
+  resultingCustom: number;
+  resultingOveruse: number;
+  actorUserId?: string;
+  actorUserName?: string;
+  txnName?: string;
+  txnId?: string;
+  reference?: string;
+}
+
+/** One page of a limit's ledger, newest first (absent `nextCursor` when exhausted). */
+export interface LedgerPage {
+  entries: LedgerEntry[];
+  nextCursor?: string;
+}
+
+/** One month in a limit's usage history. */
+export interface LimitHistoryRow {
+  tenantId: string;
+  limitCode: string;
+  /** `YYYY-MM`. */
+  yearMonth: string;
+  monthlyIncluded: number;
+  monthlyUsed: number;
+  monthlyForfeited: number;
+  overuseLimit: number;
+  overuseUsed: number;
+  endingCustomBalance: number;
+}
+
+/** A limit's usage history, month by month (`GET /tenants/{id}/limits/{code}/history`). */
+export interface LimitHistory {
+  months: LimitHistoryRow[];
+}
+
+/** Result of saving a limit's settings — `warnings` flag e.g. a lowered limit capped at current
+ * usage. */
+export interface SettingsSaveResult {
+  status: string;
+  warnings?: string[];
+}
+
+/** A gauge reading against its ceiling (`POST .../report`). */
+export interface GaugeReport {
+  value: number;
+  max?: number;
+  percent?: number;
+  status: string;
+}
+
+/** Who and what a consume / report / top-up is attributed to. Flattened into the request body. */
+export interface ActorContext {
+  actorUserId?: string;
+  actorUserName?: string;
+  txnName?: string;
+  txnId?: string;
+  reference?: string;
 }
 
 /** Result of an admin password reset — `temporaryPassword` is set (once) only when generated. */
