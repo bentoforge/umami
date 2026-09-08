@@ -12,9 +12,9 @@ use wasabi::aws::dynamodb::generate_id;
 /// No-op unless auto-init is enabled and **zero** tenants exist. Creates the system tenant — with a
 /// caller-supplied `UMAMI_SYSTEM_TENANT_ID` when set (so the owner is immediately a system admin),
 /// otherwise a freshly generated id — and a root user (`UMAMI_ROOT_USERNAME`, default `root`) holding
-/// [`BOOTSTRAP_ADMIN_ROLE`], with a **randomly generated** one-time password. The tenant id, username and password are logged once,
-/// prominently; no credentials are hard-coded. Intended for first-run/dev, not steady-state
-/// provisioning.
+/// [`BOOTSTRAP_ADMIN_ROLE`], with a **randomly generated** one-time password. The tenant id,
+/// username and password are logged once, prominently; no credentials are hard-coded. Intended for
+/// first-run/dev, not steady-state provisioning.
 #[tracing::instrument(skip_all, err(Display))]
 pub async fn maybe_auto_init(platform: &Platform) -> anyhow::Result<()> {
     let tenants = &platform.repos.tenants;
