@@ -192,6 +192,7 @@ pub fn create_user_route(
     users: Arc<dyn UserRepository>,
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
+    audit: Arc<dyn AuditRepository>,
     system_tenant_id: Option<String>,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
@@ -201,11 +202,13 @@ pub fn create_user_route(
         .and(with_cloneable(users))
         .and(with_cloneable(tenants))
         .and(with_cloneable(config))
+        .and(with_cloneable(audit))
         .and(with_cloneable(system_tenant_id))
         .and(with_user_with_any_permission(
             authenticator,
             REQUIRE_MANAGE_USERS,
         ))
+        .and(client_ip())
         .and_then(handle_create_user_route)
         .boxed()
 }
@@ -278,15 +281,18 @@ pub fn patch_user_route(
 /// `DELETE /users/{id}` — hard-delete a user within the caller's tenant (requires `manage:users`).
 pub fn delete_user_route(
     deps: DeleteUserDeps,
+    audit: Arc<dyn AuditRepository>,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("users" / String)
         .and(warp::delete())
         .and(with_cloneable(deps))
+        .and(with_cloneable(audit))
         .and(with_user_with_any_permission(
             authenticator,
             REQUIRE_MANAGE_USERS,
         ))
+        .and(client_ip())
         .and_then(handle_delete_user_route)
         .boxed()
 }
@@ -341,15 +347,30 @@ pub fn reset_password_route(
 // ── Handlers ─────────────────────────────────────────────────────────────────
 
 #[tracing::instrument(level = "debug", name = "POST /users", skip_all)]
+#[allow(clippy::too_many_arguments)]
 async fn handle_create_user_route(
     request: CreateUserRequest,
     users: Arc<dyn UserRepository>,
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
+    audit: Arc<dyn AuditRepository>,
     system_tenant_id: Option<String>,
     caller: AuthUser,
+    ip: Option<String>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(create_user(request, users, tenants, config, system_tenant_id, caller).await)
+    into_response(
+        create_user(
+            request,
+            users,
+            tenants,
+            config,
+            audit,
+            system_tenant_id,
+            caller,
+            ip,
+        )
+        .await,
+    )
 }
 
 #[tracing::instrument(level = "debug", name = "GET /users", skip_all)]
@@ -416,9 +437,11 @@ async fn handle_patch_user_route(
 async fn handle_delete_user_route(
     user_id: String,
     deps: DeleteUserDeps,
+    audit: Arc<dyn AuditRepository>,
     caller: AuthUser,
+    ip: Option<String>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(delete_user(user_id, deps, caller).await)
+    into_response(delete_user(user_id, deps, audit, caller, ip).await)
 }
 
 #[tracing::instrument(level = "debug", name = "POST /users/{id}/password", skip_all)]
@@ -436,13 +459,16 @@ async fn handle_reset_password_route(
 
 // ── Business logic ──────────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 async fn create_user(
     request: CreateUserRequest,
     users: Arc<dyn UserRepository>,
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
+    audit: Arc<dyn AuditRepository>,
     system_tenant_id: Option<String>,
     caller: AuthUser,
+    ip: Option<String>,
 ) -> anyhow::Result<CreateUserResponse> {
     let tenant_id = caller.tenant_id()?.to_owned();
 
@@ -499,6 +525,22 @@ async fn create_user(
             password_generated: generated,
         })
         .await?;
+
+    record_best_effort(
+        &audit,
+        NewAuditEntry::new(
+            AuditSeverity::Neutral,
+            Some(user.tenant_id.clone()),
+            Some(user.user_id.clone()),
+            format!(
+                "User '{}' created by admin {}",
+                user.username,
+                caller.user_id()?
+            ),
+        )
+        .with_ip(ip),
+    )
+    .await;
 
     Ok(CreateUserResponse {
         user: UserView::build(user, &config.default_locale),
@@ -588,6 +630,8 @@ async fn patch_user(
     };
     // Remember whether this request flips the lock state — a security event worth auditing.
     let lock_event = request.locked.filter(|&locked| locked != user.locked);
+    // Same for the login name, which has to be read before the rename overwrites it.
+    let previous_username = user.username.clone();
 
     let config = config.current().await?;
     if let Some(username) = request.username {
@@ -646,6 +690,25 @@ async fn patch_user(
 
     let updated = users.put_user(user).await?;
 
+    if updated.username != previous_username {
+        record_best_effort(
+            &audit,
+            NewAuditEntry::new(
+                AuditSeverity::Neutral,
+                Some(updated.tenant_id.clone()),
+                Some(updated.user_id.clone()),
+                format!(
+                    "Username changed from '{}' to '{}' by admin {}",
+                    previous_username,
+                    updated.username,
+                    caller.user_id()?
+                ),
+            )
+            .with_ip(ip.clone()),
+        )
+        .await;
+    }
+
     // Audit a lock/unlock (best-effort). Locking reads as "bad" (access removed), unlocking "good".
     if let Some(locked) = lock_event {
         let action = if locked { "locked" } else { "unlocked" };
@@ -676,7 +739,9 @@ async fn patch_user(
 async fn delete_user(
     user_id: String,
     deps: DeleteUserDeps,
+    audit: Arc<dyn AuditRepository>,
     caller: AuthUser,
+    ip: Option<String>,
 ) -> anyhow::Result<Value> {
     let tenant_id = caller.tenant_id()?;
 
@@ -718,6 +783,27 @@ async fn delete_user(
     deps.users
         .delete_user(&user.user_id, &user.username)
         .await?;
+
+    // Recorded after the fact, and deliberately verbose: the row is the only trace left of an
+    // account nothing else can be asked about any more. "Bad" like a lock, for the same reason —
+    // access was taken away, only permanently.
+    record_best_effort(
+        &audit,
+        NewAuditEntry::new(
+            AuditSeverity::Bad,
+            Some(user.tenant_id.clone()),
+            Some(user.user_id.clone()),
+            format!(
+                "User '{}' deleted by admin {} (contacts {contacts}, messaging links {links}, \
+                 sessions {sessions}, passkeys {passkeys}, personal access tokens {tokens})",
+                user.username,
+                caller.user_id()?
+            ),
+        )
+        .with_ip(ip),
+    )
+    .await;
+
     Ok(json!({
         "status": "deleted",
         "deleted": {
@@ -965,6 +1051,7 @@ async fn logout_user(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::audit::repository::MockAuditRepository;
     use crate::auth::apikeys::repository::MockApiKeyRepository;
     use crate::auth::session::repository::MockSessionRepository;
     use crate::auth::webauthn::repository::MockWebauthnRepository;
@@ -1014,6 +1101,16 @@ mod tests {
             preferred_contact: None,
             notification_choices: Default::default(),
         }
+    }
+
+    /// An audit log that accepts whatever it is handed: the delete records one entry, and these
+    /// tests are about the cascade, not about its wording.
+    fn a_recording_audit() -> Arc<dyn crate::audit::repository::AuditRepository> {
+        let mut audit = MockAuditRepository::new();
+        let _ = audit
+            .expect_record()
+            .returning(|_| Box::pin(async { Ok(()) }));
+        Arc::new(audit)
     }
 
     /// The three repositories a test does not vary: they always report a fixed count, so an
@@ -1074,7 +1171,9 @@ mod tests {
         let result = delete_user(
             "user-1".to_owned(),
             deps(users, contacts, messaging),
+            a_recording_audit(),
             an_admin(),
+            None,
         )
         .await
         .unwrap();
@@ -1109,7 +1208,9 @@ mod tests {
             delete_user(
                 "user-1".to_owned(),
                 deps(users, contacts, messaging),
-                an_admin()
+                a_recording_audit(),
+                an_admin(),
+                None
             )
             .await
             .is_err()

@@ -17,6 +17,7 @@ pub fn routes(platform: &Platform) -> BoxedFilter<(impl warp::Reply + use<>,)> {
             platform.repos.users.clone(),
             platform.repos.tenants.clone(),
             platform.config.clone(),
+            platform.repos.audit.clone(),
             platform.system_tenant_id.clone(),
             platform.authenticator.clone()
         ),
@@ -38,7 +39,11 @@ pub fn routes(platform: &Platform) -> BoxedFilter<(impl warp::Reply + use<>,)> {
             platform.system_tenant_id.clone(),
             platform.authenticator.clone()
         ),
-        delete_user_route(platform.delete_user_deps(), platform.authenticator.clone()),
+        delete_user_route(
+            platform.delete_user_deps(),
+            platform.repos.audit.clone(),
+            platform.authenticator.clone()
+        ),
         reset_password_route(
             platform.repos.users.clone(),
             platform.config.clone(),
