@@ -15,6 +15,8 @@ pub fn routes(platform: &Platform) -> BoxedFilter<(impl warp::Reply + use<>,)> {
     routes![
         list_limits_route(
             platform.repos.tenants.clone(),
+            platform.config.clone(),
+            platform.system_tenant_id.clone(),
             platform.repos.limits.clone(),
             platform.authenticator.clone()
         ),

@@ -163,6 +163,8 @@
     "dailyRemaining": "Daily left",
     "gaugeValue": "Current",
     "save": "Save",
+    "remove": "Remove",
+    "orphaned": "No longer defined — remove to clean up",
     "topup": "Top up",
     "topupPlaceholder": "Amount",
     "showActivity": "Show activity",

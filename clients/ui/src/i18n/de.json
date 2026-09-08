@@ -163,6 +163,8 @@
     "dailyRemaining": "Täglich übrig",
     "gaugeValue": "Aktuell",
     "save": "Speichern",
+    "remove": "Entfernen",
+    "orphaned": "Nicht mehr definiert — zum Aufräumen entfernen",
     "topup": "Aufladen",
     "topupPlaceholder": "Menge",
     "showActivity": "Aktivität anzeigen",

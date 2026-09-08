@@ -416,20 +416,31 @@ function LimitsCard({ tenant, onError }: { tenant: Tenant; onError: (msg: string
       <h2 className="font-medium text-slate-800 dark:text-slate-200">{t("limits.title")}</h2>
       {defs === null ? (
         <Loader />
-      ) : defs.length === 0 ? (
+      ) : entries.length === 0 ? (
         <span className="text-xs text-slate-400">{t("limits.none")}</span>
       ) : (
         <ul className="divide-y divide-slate-100 dark:divide-slate-700/50">
-          {defs.map((def) => (
-            <LimitRow
-              key={def.code}
-              tenantId={tenant.tenantId}
-              def={def}
-              entry={entries.find((e) => e.code === def.code)}
-              onChanged={loadLimits}
-              onError={onError}
-            />
-          ))}
+          {entries.map((entry) => {
+            const def = defs.find((d) => d.code === entry.code);
+            return def ? (
+              <LimitRow
+                key={entry.code}
+                tenantId={tenant.tenantId}
+                def={def}
+                entry={entry}
+                onChanged={loadLimits}
+                onError={onError}
+              />
+            ) : (
+              <OrphanedLimitRow
+                key={entry.code}
+                tenantId={tenant.tenantId}
+                entry={entry}
+                onChanged={loadLimits}
+                onError={onError}
+              />
+            );
+          })}
         </ul>
       )}
     </section>
@@ -637,6 +648,48 @@ function LimitRow({
       </div>
 
       {expanded && <LimitDetails tenantId={tenantId} code={def.code} />}
+    </li>
+  );
+}
+
+/** A limit stored on the tenant whose definition has been removed from the config — shown only so an
+ * admin can clean it up. No typed inputs (there is no definition to shape them), just a Remove. */
+function OrphanedLimitRow({
+  tenantId,
+  entry,
+  onChanged,
+  onError,
+}: {
+  tenantId: string;
+  entry: LimitEntry;
+  onChanged: () => void;
+  onError: (msg: string) => void;
+}) {
+  const { client } = useUmami();
+  const { t } = useTranslation();
+  const [removing, setRemoving] = useState(false);
+
+  const remove = async () => {
+    setRemoving(true);
+    try {
+      await client.setTenantLimitSettings(tenantId, entry.code, {});
+      onChanged();
+    } catch (err) {
+      onError(errMsg(err));
+    } finally {
+      setRemoving(false);
+    }
+  };
+
+  return (
+    <li className="flex flex-wrap items-center justify-between gap-2 py-4">
+      <div>
+        <div className="text-sm font-semibold text-slate-900 dark:text-white">{entry.code}</div>
+        <div className="text-xs text-slate-400 dark:text-slate-500">{t("limits.orphaned")}</div>
+      </div>
+      <button className={ghostButton} disabled={removing} onClick={() => void remove()}>
+        {t("limits.remove")}
+      </button>
     </li>
   );
 }

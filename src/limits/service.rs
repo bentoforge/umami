@@ -19,6 +19,7 @@ use crate::tenants::repository::TenantRepository;
 use chrono::Utc;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 use warp::Filter;
@@ -94,12 +95,16 @@ struct LimitsResponse {
 /// `view:limits` reads only the caller's own (self-service).
 pub fn list_limits_route(
     tenants: Arc<dyn TenantRepository>,
+    config: Arc<dyn ConfigRepository>,
+    system_tenant_id: Option<String>,
     limits: Arc<dyn LimitRepository>,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("tenants" / String / "limits")
         .and(warp::get())
         .and(with_cloneable(tenants))
+        .and(with_cloneable(config))
+        .and(with_cloneable(system_tenant_id))
         .and(with_cloneable(limits))
         .and(with_user_with_any_permission(
             authenticator,
@@ -137,10 +142,12 @@ pub fn set_limit_settings_route(
 async fn handle_list_limits_route(
     tenant_id: String,
     tenants: Arc<dyn TenantRepository>,
+    config: Arc<dyn ConfigRepository>,
+    system_tenant_id: Option<String>,
     limits: Arc<dyn LimitRepository>,
     caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(list_limits(tenant_id, tenants, limits, caller).await)
+    into_response(list_limits(tenant_id, tenants, config, system_tenant_id, limits, caller).await)
 }
 
 #[tracing::instrument(
@@ -178,6 +185,8 @@ fn enforce_read_scope(tenant_id: &str, caller: &AuthUser) -> anyhow::Result<()> 
 async fn list_limits(
     tenant_id: String,
     tenants: Arc<dyn TenantRepository>,
+    config: Arc<dyn ConfigRepository>,
+    system_tenant_id: Option<String>,
     limits: Arc<dyn LimitRepository>,
     caller: AuthUser,
 ) -> anyhow::Result<LimitsResponse> {
@@ -186,22 +195,33 @@ async fn list_limits(
         Some(tenant) => tenant,
         None => client_bail!("No such tenant"),
     };
+
+    // The codes to show: every limit **relevant** to this tenant (its `relevantIf` holds), plus
+    // every limit the tenant already carries settings for — so a limit that stopped being relevant,
+    // or lost its definition entirely, stays visible and removable. BTreeSet dedupes and orders.
+    let config = config.current().await?;
+    let is_system = system_tenant_id.as_deref() == Some(tenant_id.as_str());
+    let features = config.eval_feature_set(&tenant.features, is_system);
+    let mut codes: BTreeSet<String> = config.relevant_limits(&features).into_iter().collect();
+    codes.extend(tenant.limits.keys().cloned());
+
     let now = Utc::now();
-    let mut entries = Vec::with_capacity(tenant.limits.len());
-    for (code, settings) in &tenant.limits {
+    let mut entries = Vec::with_capacity(codes.len());
+    for code in codes {
+        let settings = tenant.limits.get(&code).cloned().unwrap_or_default();
         // Project the live state to the current month/day in memory (no write), so the screen shows
         // what is actually left without needing the booking permission.
-        let state = match limits.load_state(&tenant_id, code).await? {
+        let state = match limits.load_state(&tenant_id, &code).await? {
             Some(state) => {
                 let (view, _closed) =
-                    accounting::rolled_over(Some(state), &tenant_id, code, settings, now);
+                    accounting::rolled_over(Some(state), &tenant_id, &code, &settings, now);
                 Some(LimitStateView::of(&view))
             }
             None => None,
         };
         entries.push(LimitEntry {
-            code: code.clone(),
-            settings: settings.clone(),
+            code,
+            settings,
             state,
         });
     }
@@ -218,13 +238,19 @@ async fn set_limit_settings(
     caller: AuthUser,
 ) -> anyhow::Result<SettingsResponse> {
     let config = config.current().await?;
-    config.validate_limit_settings(&code, &settings)?;
+    // Clearing (empty settings) removes the entry and is allowed for *any* code — that is how an
+    // orphaned limit, whose definition has since been removed from the config, gets cleaned up.
+    // Setting actual values is validated against the definition.
+    let clearing = settings == LimitSettings::default();
+    if !clearing {
+        config.validate_limit_settings(&code, &settings)?;
+    }
 
     let mut tenant = match tenants.get_tenant(&tenant_id).await? {
         Some(tenant) => tenant,
         None => client_bail!("No such tenant"),
     };
-    if settings == LimitSettings::default() {
+    if clearing {
         let _ = tenant.limits.remove(&code);
     } else {
         let _ = tenant.limits.insert(code.clone(), settings.clone());
@@ -1142,10 +1168,12 @@ mod tests {
             .returning(|_| Box::pin(async { Ok(Some(tenant("t-1"))) }));
         let tenants = Arc::new(tenants);
 
-        // Own tenant: a view member may read it (the tenant has no limits, so no state is loaded).
+        // Own tenant: a view member may read it.
         list_limits(
             "t-1".to_owned(),
             tenants.clone(),
+            consumable_config().await,
+            None,
             no_state_limits(),
             member("t-1"),
         )
@@ -1156,6 +1184,8 @@ mod tests {
         list_limits(
             "t-2".to_owned(),
             tenants.clone(),
+            consumable_config().await,
+            None,
             no_state_limits(),
             member("t-1"),
         )
@@ -1163,9 +1193,16 @@ mod tests {
         .expect_err("foreign tenant refused for a view member");
 
         // A cross-tenant admin reads any tenant.
-        list_limits("t-2".to_owned(), tenants, no_state_limits(), caller())
-            .await
-            .expect("admin reads any tenant");
+        list_limits(
+            "t-2".to_owned(),
+            tenants,
+            consumable_config().await,
+            None,
+            no_state_limits(),
+            caller(),
+        )
+        .await
+        .expect("admin reads any tenant");
     }
 
     /// A tenant carrying a consumable AI-credits budget.
@@ -1567,14 +1604,17 @@ mod tests {
         );
         seeded.monthly_remaining = 400;
         let mut limits = MockLimitRepository::new();
-        limits.expect_load_state().returning(move |_, _| {
-            let state = seeded.clone();
-            Box::pin(async move { Ok(Some(state)) })
+        // Only the credits limit has state; the other (relevant, unset) catalogue limits have none.
+        limits.expect_load_state().returning(move |_, code| {
+            let state = (code == "limit:ai-credits").then(|| seeded.clone());
+            Box::pin(async move { Ok(state) })
         });
 
         let response = list_limits(
             "t-1".to_owned(),
             Arc::new(tenants),
+            consumable_config().await,
+            None,
             Arc::new(limits),
             caller(),
         )
@@ -1591,5 +1631,78 @@ mod tests {
             .expect("a used limit carries its state");
         assert_eq!(state.monthly_remaining, 400);
         assert_eq!(state.overuse_remaining, 200);
+    }
+
+    #[tokio::test]
+    async fn the_listing_unions_relevant_and_stored_limits() {
+        use crate::limits::repository::MockLimitRepository;
+
+        // A catalogue with one always-relevant limit and one gated behind `feature:ai`.
+        let repository = StaticConfigRepository::with_default();
+        let gated = |code: &str, relevant_if: Option<&str>| LimitDef {
+            code: code.to_owned(),
+            name: code.into(),
+            description: None,
+            kind: LimitKind::Consumable,
+            overuse: false,
+            custom_balance: false,
+            daily: false,
+            low_watermark_percent: None,
+            high_watermark_percent: None,
+            relevant_if: relevant_if.map(str::to_owned),
+        };
+        let current = repository.current().await.expect("seeded");
+        repository
+            .save(
+                Config {
+                    version: current.version,
+                    limits: vec![
+                        gated("limit:always", None),
+                        gated("limit:ai-only", Some("feature:ai")),
+                    ],
+                    ..Config::default()
+                },
+                current.version,
+            )
+            .await
+            .expect("saved");
+        let config: Arc<dyn ConfigRepository> = Arc::new(repository);
+
+        // The tenant lacks `feature:ai` but carries a stored limit whose definition is gone.
+        let mut tenants = MockTenantRepository::new();
+        tenants.expect_get_tenant().returning(|_| {
+            Box::pin(async {
+                let mut tenant = tenant("t-1");
+                let _ = tenant.limits.insert(
+                    "limit:legacy".to_owned(),
+                    LimitSettings {
+                        monthly: Some(5),
+                        ..LimitSettings::default()
+                    },
+                );
+                Ok(Some(tenant))
+            })
+        });
+        let mut limits = MockLimitRepository::new();
+        limits
+            .expect_load_state()
+            .returning(|_, _| Box::pin(async { Ok(None) }));
+
+        let response = list_limits(
+            "t-1".to_owned(),
+            Arc::new(tenants),
+            config,
+            None,
+            Arc::new(limits),
+            caller(),
+        )
+        .await
+        .expect("listed");
+        let codes: Vec<&str> = response.limits.iter().map(|e| e.code.as_str()).collect();
+        // Relevant-to-all is shown, and the stored orphan is shown so it can be cleaned up …
+        assert!(codes.contains(&"limit:always"), "{codes:?}");
+        assert!(codes.contains(&"limit:legacy"), "{codes:?}");
+        // … but a limit that is neither relevant nor stored is not.
+        assert!(!codes.contains(&"limit:ai-only"), "{codes:?}");
     }
 }

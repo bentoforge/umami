@@ -1068,6 +1068,20 @@ impl Config {
             .find(|feature| feature.code == code)
             .and_then(|feature| feature.assignable_if.as_deref())
     }
+
+    /// Limit codes **relevant** to a tenant with the given feature set — those whose `relevantIf`
+    /// holds. A display filter (which limits a screen surfaces), not a gate: an irrelevant limit is
+    /// still booked if it carries settings and state. A tenant's own stored limits are shown on top
+    /// of this (so a limit that stopped being relevant, or lost its definition, stays visible and
+    /// removable). See `docs/LIMITS.md`.
+    pub fn relevant_limits(&self, features: &EffectiveFeatures) -> Vec<String> {
+        let set = features.as_set();
+        self.limits
+            .iter()
+            .filter(|def| assignable(&def.relevant_if, &set))
+            .map(|def| def.code.clone())
+            .collect()
+    }
 }
 
 /// Whether a synthetic marker (`is:*`, computed and never stored, so never grantable/revocable).
