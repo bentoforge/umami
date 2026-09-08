@@ -30,16 +30,7 @@ import {
   RoleToggleList,
 } from "../components";
 import { RateLimitCard, RateLimitDisclosure } from "../ratelimit";
-import {
-  card,
-  dangerButton,
-  ghostButton,
-  input,
-  primaryButton,
-  spanHalf,
-  spanName,
-  spanNamePart,
-} from "../ui";
+import { card, dangerButton, ghostButton, input, primaryButton, spanSixth, spanThird } from "../ui";
 
 /** Page size for the audit "load more" list. */
 const AUDIT_PAGE = 10;
@@ -633,7 +624,7 @@ function BaseDataCard() {
       {editing ? (
         <>
           <div className="grid grid-cols-12 gap-3">
-            <Field label={t("users.salutation")} className={spanNamePart}>
+            <Field label={t("users.salutation")} className={spanSixth}>
               <select
                 className={input}
                 value={salutation}
@@ -644,24 +635,24 @@ function BaseDataCard() {
                 <option value="MADAM">{t("users.salutationMadam")}</option>
               </select>
             </Field>
-            <Field label={t("users.nameTitle")} className={spanNamePart}>
+            <Field label={t("users.nameTitle")} className={spanSixth}>
               <input className={input} value={title} onChange={(e) => setTitle(e.target.value)} />
             </Field>
-            <Field label={t("users.firstname")} className={spanName}>
+            <Field label={t("users.firstname")} className={spanThird}>
               <input
                 className={input}
                 value={firstname}
                 onChange={(e) => setFirstname(e.target.value)}
               />
             </Field>
-            <Field label={t("users.lastname")} className={spanName}>
+            <Field label={t("users.lastname")} className={spanThird}>
               <input
                 className={input}
                 value={lastname}
                 onChange={(e) => setLastname(e.target.value)}
               />
             </Field>
-            <Field label={t("users.locale")} className={spanHalf}>
+            <Field label={t("users.locale")} className={spanThird}>
               <select className={input} value={locale} onChange={(e) => setLocale(e.target.value)}>
                 {/* Empty = no preference, which lets the browser's Accept-Language decide and
                     falls back to the deployment default. */}
@@ -678,7 +669,7 @@ function BaseDataCard() {
                 defs={editableDefs}
                 values={values}
                 onChange={setValues}
-                fieldClassName={spanHalf}
+                fieldClassName={spanThird}
               />
             )}
           </div>

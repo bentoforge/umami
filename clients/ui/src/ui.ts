@@ -49,14 +49,11 @@ export const th =
 export const td = "px-3 py-2 text-sm text-slate-800 dark:text-slate-200 align-middle";
 
 /**
- * Column spans for the person-name row inside a `grid-cols-12` form.
+ * Column spans for a `grid-cols-12` form, named after the width they take on a wide screen.
  *
- * Salutation and title hold a word each, the names hold as much as someone chose to be called —
- * so on a wide screen the four sit in one row as 2/2/4/4. At `md` they pair up into halves, and
- * below that each field owns its row: a 12-column grid on a phone is four unreadable columns.
+ * Both collapse the same way: halves at `md`, one field per row below that — a 12-column grid on a
+ * phone is a handful of unreadable columns. Salutation and title hold a word each and take a
+ * sixth, everything else a third.
  */
-export const spanNamePart = "col-span-12 md:col-span-6 lg:col-span-2";
-export const spanName = "col-span-12 md:col-span-6 lg:col-span-4";
-
-/** Half a row from `md` up, a full one below — for the fields following the name row. */
-export const spanHalf = "col-span-12 md:col-span-6";
+export const spanSixth = "col-span-12 md:col-span-6 lg:col-span-2";
+export const spanThird = "col-span-12 md:col-span-6 lg:col-span-4";

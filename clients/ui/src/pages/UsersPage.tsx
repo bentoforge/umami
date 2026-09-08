@@ -16,7 +16,7 @@ import {
   roleCatalog,
   Tag,
 } from "../components";
-import { card, input, primaryButton, spanHalf, spanName, spanNamePart, td, th } from "../ui";
+import { card, input, primaryButton, spanSixth, spanThird, td, th } from "../ui";
 
 /** Own-tenant screen: list / create / edit / suspend / delete users. */
 export function UsersPage() {
@@ -329,7 +329,7 @@ function CreateUser({
         <input className={input} value={username} onChange={(e) => setUsername(e.target.value)} />
       </Field>
       <div className="grid grid-cols-12 gap-3">
-        <Field label={t("users.salutation")} className={spanNamePart}>
+        <Field label={t("users.salutation")} className={spanSixth}>
           <select
             className={input}
             value={salutation}
@@ -340,20 +340,20 @@ function CreateUser({
             <option value="MADAM">{t("users.salutationMadam")}</option>
           </select>
         </Field>
-        <Field label={t("users.nameTitle")} className={spanNamePart}>
+        <Field label={t("users.nameTitle")} className={spanSixth}>
           <input className={input} value={title} onChange={(e) => setTitle(e.target.value)} />
         </Field>
-        <Field label={t("users.firstname")} className={spanName}>
+        <Field label={t("users.firstname")} className={spanThird}>
           <input
             className={input}
             value={firstname}
             onChange={(e) => setFirstname(e.target.value)}
           />
         </Field>
-        <Field label={t("users.lastname")} className={spanName}>
+        <Field label={t("users.lastname")} className={spanThird}>
           <input className={input} value={lastname} onChange={(e) => setLastname(e.target.value)} />
         </Field>
-        <Field label={t("users.locale")} className={spanHalf}>
+        <Field label={t("users.locale")} className={spanThird}>
           <select className={input} value={locale} onChange={(e) => setLocale(e.target.value)}>
             <option value="">{t("users.localeAuto")}</option>
             {locales.map((code) => (
@@ -367,7 +367,7 @@ function CreateUser({
           defs={fieldDefs}
           values={fields}
           onChange={setFields}
-          fieldClassName={spanHalf}
+          fieldClassName={spanThird}
         />
       </div>
       <div>
