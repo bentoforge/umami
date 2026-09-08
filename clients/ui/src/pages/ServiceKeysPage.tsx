@@ -1,18 +1,9 @@
 import type { ApiKeyView, CatalogueEntry } from "@bentoforge/umami-iam";
 import { ChartBarIcon, TrashIcon } from "@heroicons/react/24/outline";
-import { type ReactNode, useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useUmami } from "../auth/UmamiProvider";
-import {
-  Banner,
-  DetailChip,
-  DropdownMenu,
-  errMsg,
-  Field,
-  formatDateTime,
-  Loader,
-  Toggle,
-} from "../components";
+import { Banner, DropdownMenu, errMsg, Field, formatDateTime, Loader, Toggle } from "../components";
 import { RateLimitDetails } from "../ratelimit";
 import { card, ghostButton, input, primaryButton, td, th } from "../ui";
 
@@ -120,8 +111,20 @@ export function ServiceKeysPage() {
             <thead>
               <tr className="border-b border-slate-200 dark:border-slate-700">
                 <th className={th}>{t("serviceKeys.name")}</th>
-                <th className={th}>{t("serviceKeys.details")}</th>
-                <th className={th}>{t("serviceKeys.lastUsed")}</th>
+                {/* Each header names both of its lines, in the order the cell prints them —
+                    otherwise the muted second line is a value without a question. */}
+                <th className={th}>
+                  <StackedHeader
+                    main={t("serviceKeys.scopes")}
+                    second={t("serviceKeys.allowedOrigins")}
+                  />
+                </th>
+                <th className={th}>
+                  <StackedHeader
+                    main={t("serviceKeys.lastUsed")}
+                    second={t("serviceKeys.expires")}
+                  />
+                </th>
                 <th className={`${th} w-0`} />
               </tr>
             </thead>
@@ -144,11 +147,19 @@ export function ServiceKeysPage() {
                       </div>
                     )}
                   </td>
-                  <td className={`${tdTop} text-sm`}>
-                    <Details keyView={key} scopeLabel={scopeLabel} />
+                  <td className={tdTop}>
+                    <div>{key.scopes.map(scopeLabel).join(", ") || "—"}</div>
+                    {/* Muted, not smaller: grey already costs contrast, and shrinking it on top
+                        is where readability goes. */}
+                    <div className="text-slate-400">{key.allowedOrigins.join(", ") || "—"}</div>
                   </td>
                   <td className={`${tdTop} whitespace-nowrap`}>
-                    {key.lastUsedAt ? formatDateTime(key.lastUsedAt) : t("serviceKeys.neverUsed")}
+                    <div>
+                      {key.lastUsedAt ? formatDateTime(key.lastUsedAt) : t("serviceKeys.neverUsed")}
+                    </div>
+                    <div className="text-slate-400">
+                      {key.expiresAt ? formatDateTime(key.expiresAt) : "—"}
+                    </div>
                   </td>
                   <td className={`${tdTop} text-right`}>
                     <DropdownMenu
@@ -180,45 +191,14 @@ export function ServiceKeysPage() {
   );
 }
 
-/** The details cell: one chip per fact the key actually carries — scopes, expiry, allowed origins.
- * An absent one is left out rather than shown as an em dash; three dashes say nothing and read like
- * a defect. */
-function Details({
-  keyView,
-  scopeLabel,
-}: {
-  keyView: ApiKeyView;
-  scopeLabel: (code: string) => string;
-}) {
-  const { t } = useTranslation();
-  const items: ReactNode[] = [];
-
-  if (keyView.scopes.length > 0) {
-    items.push(
-      <DetailChip key="scopes" label={t("serviceKeys.scopes")}>
-        {keyView.scopes.map(scopeLabel).join(", ")}
-      </DetailChip>,
-    );
-  }
-  if (keyView.expiresAt) {
-    items.push(
-      <DetailChip key="expires" label={t("serviceKeys.expires")}>
-        {formatDateTime(keyView.expiresAt)}
-      </DetailChip>,
-    );
-  }
-  if (keyView.allowedOrigins.length > 0) {
-    items.push(
-      <DetailChip key="origins" label={t("serviceKeys.allowedOrigins")}>
-        {keyView.allowedOrigins.join(", ")}
-      </DetailChip>,
-    );
-  }
-
-  if (items.length === 0) {
-    return <span className="text-slate-400">—</span>;
-  }
-  return <div className="flex flex-wrap gap-1.5">{items}</div>;
+/** A column header over a two-line cell: the main label, and the muted one below it. */
+function StackedHeader({ main, second }: { main: string; second: string }) {
+  return (
+    <>
+      <div>{main}</div>
+      <div className="font-normal text-slate-400">{second}</div>
+    </>
+  );
 }
 
 function CreateKey({

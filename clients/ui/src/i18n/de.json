@@ -253,7 +253,6 @@
     "empty": "Keine Service-Keys vorhanden.",
     "newKey": "Neuer Service-Key",
     "name": "Name",
-    "details": "Details",
     "scopes": "Scopes",
     "allowedOrigins": "Erlaubte Origins",
     "scopesEmpty": "Keine Scopes zuweisbar.",
