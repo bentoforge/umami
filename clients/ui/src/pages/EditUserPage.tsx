@@ -169,7 +169,7 @@ export function EditUserPage() {
       {resetPw && (
         <div className="rounded-lg border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950 p-3">
           <p className="text-xs text-emerald-700 dark:text-emerald-300 mb-1">
-            {t("users.resetPassword")} — <strong>{name()}</strong>:
+            {t("users.tempPassword", { name: name() })}
           </p>
           <code className="block break-all text-sm text-slate-900 dark:text-slate-100">
             {resetPw}

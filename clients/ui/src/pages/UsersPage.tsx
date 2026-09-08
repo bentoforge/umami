@@ -98,7 +98,7 @@ export function UsersPage() {
     setNotice(null);
     try {
       await client.deleteUser(user.userId);
-      setNotice(`Deleted "${user.name || user.username}".`);
+      setNotice(t("users.deleted", { name: user.name || user.username }));
       await load();
     } catch (err) {
       setError(errMsg(err));
@@ -125,7 +125,7 @@ export function UsersPage() {
       {resetPw && (
         <div className="rounded-lg border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950 p-3">
           <p className="text-xs text-emerald-700 dark:text-emerald-300 mb-1">
-            Temporary password for <strong>{resetPw.user}</strong> — shown only once:
+            {t("users.tempPassword", { name: resetPw.user })}
           </p>
           <code className="block break-all text-sm text-slate-900 dark:text-slate-100">
             {resetPw.pw}
@@ -134,7 +134,7 @@ export function UsersPage() {
       )}
       {truncated && (
         <p className="text-xs text-amber-600 dark:text-amber-400">
-          Showing the first 250 matches — refine your search to narrow the list.
+          {t("users.truncated", { count: users?.length ?? 0 })}
         </p>
       )}
 
@@ -144,7 +144,7 @@ export function UsersPage() {
           locales={locales}
           onDone={async (res) => {
             setCreating(false);
-            setNotice("User created.");
+            setNotice(t("users.createdNotice"));
             if (res.temporaryPassword) {
               setResetPw({ user: res.username, pw: res.temporaryPassword });
             }
