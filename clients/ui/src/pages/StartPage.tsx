@@ -6,12 +6,13 @@ import { Link } from "react-router-dom";
 import { useUmami } from "../auth/UmamiProvider";
 import { Banner, errMsg } from "../components";
 import { card } from "../ui";
+import { LimitsView } from "./LimitsView";
 
 /** Landing page — route `/app` (index). Two sections: the apps this deployment fronts (launch
  * cards, opened in a new tab) and umami's own account-hygiene tasks. Both come resolved and
  * per-user-gated from `GET /auth/me/home`, so this only lays them out. */
 export function StartPage() {
-  const { client } = useUmami();
+  const { client, me, activeTenantId } = useUmami();
   const { t } = useTranslation();
   const [apps, setApps] = useState<AppCard[]>([]);
   const [tasks, setTasks] = useState<TaskCard[]>([]);
@@ -50,6 +51,14 @@ export function StartPage() {
             ))}
           </div>
         </section>
+      )}
+
+      {client.hasPermission("view:limits") && (activeTenantId ?? me?.user.tenantId) && (
+        <LimitsView
+          tenantId={(activeTenantId ?? me?.user.tenantId) as string}
+          title={t("limits.selfTitle")}
+          readOnly
+        />
       )}
     </div>
   );
