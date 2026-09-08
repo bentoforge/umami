@@ -192,7 +192,8 @@ impl WebauthnRepository for DynamoWebauthnRepository {
             .query(TABLE_CREDENTIALS)
             .key_condition_expression("#userId = :userId")
             .expression_attribute_names("#userId", FIELD_USER_ID)
-            .expression_attribute_values(":userId", str(user_id));
+            .expression_attribute_values(":userId", str(user_id))
+            .limit(50);
         let records: Vec<CredentialRecord> = find_all(query)
             .await
             .context("Error listing a departing user's 'webauthn-credentials'")?;
