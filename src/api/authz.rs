@@ -14,7 +14,6 @@ pub fn routes(platform: &Platform) -> BoxedFilter<(impl warp::Reply + use<>,)> {
     routes![
         // authorization management (assignable roles/scopes/features + feature grant/revoke)
         assignable_roles_route(
-            platform.repos.users.clone(),
             platform.repos.tenants.clone(),
             platform.config.clone(),
             platform.system_tenant_id.clone(),

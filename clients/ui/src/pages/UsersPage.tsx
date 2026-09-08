@@ -256,7 +256,7 @@ function CreateUser({
   onDone: (res: UserView & { temporaryPassword?: string | null }) => Promise<void>;
   onError: (msg: string) => void;
 }) {
-  const { client, me } = useUmami();
+  const { client, activeTenantId } = useUmami();
   const { t } = useTranslation();
   const [username, setUsername] = useState("");
   const [roles, setRoles] = useState<string[]>([]);
@@ -277,14 +277,15 @@ function CreateUser({
       .catch(() => setRoleDefs([]));
   }, [client]);
 
-  // Assignable roles are per-tenant; resolve via the caller's own id (same tenant as new users).
+  // The tenant the new user will land in — the active one, which after a tenant switch is not
+  // the admin's own.
   useEffect(() => {
-    if (!me) return;
+    if (!activeTenantId) return;
     client
-      .assignableRoles(me.user.userId)
+      .assignableRoles(activeTenantId)
       .then((r) => setAssignable(r.codes))
       .catch(() => setAssignable([]));
-  }, [client, me]);
+  }, [client, activeTenantId]);
 
   const toggleRole = (code: string, assigned: boolean) =>
     setRoles((prev) => (assigned ? prev.filter((r) => r !== code) : [...prev, code]));

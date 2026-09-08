@@ -411,10 +411,10 @@ function RolesCard({
 
   useEffect(() => {
     client
-      .assignableRoles(user.userId)
+      .assignableRoles(user.tenantId)
       .then((r) => setAssignable(r.codes))
       .catch(() => setAssignable([]));
-  }, [client, user.userId]);
+  }, [client, user.tenantId]);
 
   const toggle = async (code: string, assigned: boolean) => {
     const next = assigned ? user.roles.filter((r) => r !== code) : [...user.roles, code];

@@ -17,7 +17,6 @@ use crate::constants::{
     MANAGE_SERVICE_KEYS_PERMISSION, MANAGE_TENANTS_PERMISSION, MANAGE_USERS_PERMISSION,
 };
 use crate::tenants::repository::TenantRepository;
-use crate::users::repository::UserRepository;
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
@@ -31,7 +30,7 @@ use wasabi::web::auth::user::User as AuthUser;
 use wasabi::web::auth::with_user_with_any_permission;
 use wasabi::web::warp::{DecodedSegment, into_response, with_cloneable};
 
-/// Permission required to read a user's assignable roles.
+/// Permission required to read a tenant's assignable user roles.
 const REQUIRE_MANAGE_USERS: &[&str] = &[MANAGE_USERS_PERMISSION];
 
 /// Permission required to read a tenant's assignable service-key scopes.
@@ -48,17 +47,18 @@ struct CodesResponse {
 
 // ── Routes ──────────────────────────────────────────────────────────────────────
 
-/// `GET /users/{id}/assignable-roles` — roles that may be assigned to a user in the caller's tenant.
+/// `GET /tenants/{id}/assignable-roles` — roles that may be assigned to a user in that tenant.
+///
+/// Keyed by tenant, not by user: the answer depends only on the tenant's feature set, and a
+/// create form has no user to ask about yet.
 pub fn assignable_roles_route(
-    users: Arc<dyn UserRepository>,
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
     system_tenant_id: Option<String>,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
-    warp::path!("users" / String / "assignable-roles")
+    warp::path!("tenants" / String / "assignable-roles")
         .and(warp::get())
-        .and(with_cloneable(users))
         .and(with_cloneable(tenants))
         .and(with_cloneable(config))
         .and(with_cloneable(system_tenant_id))
@@ -150,16 +150,15 @@ pub fn revoke_feature_route(
 
 // ── Handlers ─────────────────────────────────────────────────────────────────
 
-#[tracing::instrument(level = "debug", name = "GET /users/{id}/assignable-roles", skip_all)]
+#[tracing::instrument(level = "debug", name = "GET /tenants/{id}/assignable-roles", skip_all)]
 async fn handle_assignable_roles_route(
-    user_id: String,
-    users: Arc<dyn UserRepository>,
+    tenant_id: String,
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
     system_tenant_id: Option<String>,
     caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(assignable_roles(user_id, users, tenants, config, system_tenant_id, caller).await)
+    into_response(assignable_roles(tenant_id, tenants, config, system_tenant_id, caller).await)
 }
 
 #[tracing::instrument(
@@ -230,22 +229,18 @@ fn enforce_own(tenant_id: &str, caller: &AuthUser) -> anyhow::Result<()> {
 }
 
 async fn assignable_roles(
-    user_id: String,
-    users: Arc<dyn UserRepository>,
+    tenant_id: String,
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
     system_tenant_id: Option<String>,
     caller: AuthUser,
 ) -> anyhow::Result<CodesResponse> {
-    let tenant_id = caller.tenant_id()?;
-    // Scope strictly to the caller's tenant — a foreign user reads as "not found".
-    let user = match users.get_user(&user_id).await? {
-        Some(user) if user.tenant_id == tenant_id => user,
-        _ => client_bail!("No such user in this tenant"),
-    };
-    let features = tenant_features(&tenants, &user.tenant_id).await?;
+    enforce_own(&tenant_id, &caller)?;
+    let features = tenant_features(&tenants, &tenant_id).await?;
     let config = config.current().await?;
-    let is_system = system_tenant_id.as_deref() == Some(user.tenant_id.as_str());
+    // Synthetic markers included, or every `is:system-tenant`-gated role would read as
+    // unassignable inside the system tenant itself.
+    let is_system = system_tenant_id.as_deref() == Some(tenant_id.as_str());
     let set = config.eval_feature_set(&features, is_system);
     let codes = config.assignable_roles(&set);
     Ok(CodesResponse { codes })
@@ -367,4 +362,85 @@ async fn tenant_features(
         .await?
         .map(|tenant| tenant.features)
         .unwrap_or_default())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::repository::StaticConfigRepository;
+    use crate::config::{Config, RoleDef};
+    use crate::tenants::repository::MockTenantRepository;
+    use wasabi::web::auth::user::User as WasabiUser;
+    use wasabi::web::auth::{CLAIM_SUB, CLAIM_TENANT};
+
+    /// A system admin who has switched into `tenant-2`: the token names the target tenant, while
+    /// the admin's own user row stays in the system tenant.
+    fn a_switched_admin() -> AuthUser {
+        WasabiUser::builder()
+            .with_string(CLAIM_SUB, "admin-1")
+            .with_string(CLAIM_TENANT, "tenant-2")
+            .build()
+    }
+
+    /// A config whose single role is assignable everywhere, so an empty answer can only mean the
+    /// tenant was resolved wrongly.
+    async fn a_config_with_an_ungated_role() -> Arc<dyn ConfigRepository> {
+        let repository = StaticConfigRepository::with_default();
+        let config = Config {
+            roles: vec![RoleDef {
+                code: "role:member".to_owned(),
+                name: "Member".into(),
+                description: None,
+                assignable_if: None,
+            }],
+            ..Config::default()
+        };
+        let _ = repository.save(config, 1).await.unwrap();
+        Arc::new(repository)
+    }
+
+    fn tenants_without_features() -> Arc<dyn TenantRepository> {
+        let mut tenants = MockTenantRepository::new();
+        let _ = tenants
+            .expect_get_tenant()
+            .returning(|_| Box::pin(async { Ok(None) }));
+        Arc::new(tenants)
+    }
+
+    /// The answer follows the tenant in the path, not a user row. This is what a create form needs:
+    /// it has no user to ask about, and after a tenant switch the admin's own row names the wrong
+    /// tenant.
+    #[tokio::test]
+    async fn assignable_roles_follow_the_acting_tenant() {
+        let response = assignable_roles(
+            "tenant-2".to_owned(),
+            tenants_without_features(),
+            a_config_with_an_ungated_role().await,
+            Some("system".to_owned()),
+            a_switched_admin(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(response.codes, vec!["role:member".to_owned()]);
+    }
+
+    /// Reading another tenant's roles needs a switch into it first — the token decides, not the path.
+    #[tokio::test]
+    async fn a_foreign_tenant_is_refused() {
+        let error = assignable_roles(
+            "tenant-3".to_owned(),
+            tenants_without_features(),
+            a_config_with_an_ungated_role().await,
+            Some("system".to_owned()),
+            a_switched_admin(),
+        )
+        .await
+        .expect_err("a foreign tenant must not be readable");
+
+        let status = error
+            .downcast_ref::<wasabi::web::error::ApiError>()
+            .map(|api_error| api_error.status);
+        assert_eq!(status, Some(StatusCode::FORBIDDEN));
+    }
 }

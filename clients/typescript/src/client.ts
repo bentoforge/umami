@@ -430,9 +430,9 @@ export class UmamiClient {
 
   // ── authorization: assignable roles/scopes/features + feature grant/revoke ─────
 
-  /** Role codes assignable to a user given their tenant's features (feeds the UI role picker). */
-  assignableRoles(userId: string): Promise<{ codes: string[] }> {
-    return this.request<{ codes: string[] }>(`/users/${enc(userId)}/assignable-roles`);
+  /** Role codes assignable to a user of the given tenant (feeds the UI role picker). */
+  assignableRoles(tenantId: string): Promise<{ codes: string[] }> {
+    return this.request<{ codes: string[] }>(`/tenants/${enc(tenantId)}/assignable-roles`);
   }
   /** Scope codes assignable to a service key in the given tenant. */
   assignableScopes(tenantId: string): Promise<{ codes: string[] }> {

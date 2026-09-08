@@ -166,7 +166,9 @@ A role is **assignable to a user** iff its `assignableIf` holds against the **te
 (`feature:*` ∪ `is:*`) — only tenant features are checkable here, never the user's other roles. A
 missing `assignableIf` means "always assignable".
 
-- `GET /users/{id}/assignable-roles` → the role codes assignable in that user's tenant (for edit UIs).
+- `GET /tenants/{id}/assignable-roles` → the role codes assignable in that tenant (for the role pickers).
+  Keyed by tenant, not by user: the answer depends only on the tenant's feature set, and a create form
+  has no user to ask about yet.
 - Creating/patching a user validates every assigned role exists **and** is assignable; otherwise 4xx.
 
 ### Scopes → API service keys

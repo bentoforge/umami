@@ -34,7 +34,7 @@ const REQUIRE_MANAGE_CONFIG: &[&str] = &[MANAGE_CONFIG_PERMISSION];
 /// Roles, scopes and features are the same shape and are rendered by the same components, so they
 /// arrive as the same type — the difference between them is which list they came in, not what a
 /// picker does with them. `assignableIf` is deliberately absent: assignability is answered by
-/// `/users/{id}/assignable-roles` and its siblings against a *specific* tenant, so shipping the
+/// `/tenants/{id}/assignable-roles` and its siblings against a *specific* tenant, so shipping the
 /// expression here would only invite a client to evaluate it against the wrong feature set.
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]

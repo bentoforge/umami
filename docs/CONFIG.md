@@ -307,7 +307,7 @@ define their own.
 | `manage:tenants` | `GET/POST /tenants`, `DELETE /tenants/{id}`, `GET /tenants/{id}/assignable-features`, `POST`/`DELETE /tenants/{id}/features/{code}` (cross-tenant) |
 | `switch:tenant` | `POST /auth/switch-tenant` |
 | `admin:tenant` | `GET`/`PATCH /tenants/{id}` (name + custom fields), `GET /tenants/{id}/audit` (own tenant) |
-| `manage:users` | users CRUD + admin password reset, `GET /users/{id}/assignable-roles` |
+| `manage:users` | users CRUD + admin password reset, `GET /tenants/{id}/assignable-roles` |
 | `manage:service-keys` | service-key create/list/revoke, `GET /tenants/{id}/assignable-scopes` |
 | `manage:config` | `GET`/`PUT /config` |
 | `view:ratelimits` | `GET /rate-limits/blocks` — the deployment-wide rate-limit overview (§8) |
