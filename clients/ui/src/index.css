@@ -2,6 +2,15 @@
 @tailwind components;
 @tailwind utilities;
 
+/* The UA paints things the app cannot reach — a button's own surface, scrollbars, autofill, the
+   canvas behind the page — and `color-scheme` is what tells it which palette to use. Declaring
+   `light dark` hands that decision to the OS, which is wrong here: the theme is the app's, and an
+   enforced light theme on a dark desktop then ends up with UA-dark surfaces under app-dark text.
+   Follow the resolved theme instead — the same `dark` class Tailwind reads (see theme.ts). */
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
+}
+
+:root.dark {
+  color-scheme: dark;
 }
