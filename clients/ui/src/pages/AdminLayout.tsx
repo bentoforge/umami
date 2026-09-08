@@ -57,7 +57,7 @@ export function AdminLayout() {
     { to: "/config", label: t("nav.config"), show: can("manage:config") },
   ].filter((item) => item.show);
 
-  const fullName = me?.user.fullName?.trim() || me?.user.username || "";
+  const displayName = me?.user.name?.trim() || me?.user.username || "";
   const tenantName = activeTenantName ?? me?.tenant?.name ?? me?.user.tenantId ?? "";
 
   return (
@@ -85,7 +85,7 @@ export function AdminLayout() {
               </div>
             )}
             <div className="hidden md:block">
-              <UserMenu fullName={fullName} tenantName={tenantName} items={menuItems} />
+              <UserMenu displayName={displayName} tenantName={tenantName} items={menuItems} />
             </div>
             <button
               type="button"
@@ -246,13 +246,13 @@ function ThemeSwitcher() {
   );
 }
 
-/** Icon-only user menu: full name + tenant, opening the account items plus a way out. */
+/** Icon-only user menu: name + tenant, opening the account items plus a way out. */
 function UserMenu({
-  fullName,
+  displayName,
   tenantName,
   items,
 }: {
-  fullName: string;
+  displayName: string;
   tenantName: string;
   items: NavItem[];
 }) {
@@ -283,7 +283,7 @@ function UserMenu({
       >
         <UserCircleIcon className="h-7 w-7 text-header-muted shrink-0" />
         <span className="hidden lg:flex flex-col text-left leading-tight">
-          <span className="text-sm font-medium text-header-text">{fullName}</span>
+          <span className="text-sm font-medium text-header-text">{displayName}</span>
           <span className="text-xs text-header-muted">{tenantName}</span>
         </span>
         <ChevronDownIcon className="h-4 w-4 text-header-muted" />
@@ -291,7 +291,7 @@ function UserMenu({
       {open && (
         <div className={`${popoverSurface} absolute right-0 mt-2 w-56 z-20 p-2 shadow-lg`}>
           <div className="px-3 py-1.5 lg:hidden">
-            <div className="text-sm font-medium text-slate-900 dark:text-white">{fullName}</div>
+            <div className="text-sm font-medium text-slate-900 dark:text-white">{displayName}</div>
             <div className="text-xs text-slate-500">{tenantName}</div>
           </div>
           {items.map((item) => (

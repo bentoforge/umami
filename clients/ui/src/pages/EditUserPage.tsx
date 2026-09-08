@@ -76,7 +76,7 @@ export function EditUserPage() {
   }, [client]);
 
   const isSelf = user?.userId === me?.user.userId;
-  const name = () => user?.fullName || user?.username || "";
+  const name = () => user?.name || user?.username || "";
 
   const onReset = async () => {
     if (!user || !window.confirm(t("users.resetConfirm", { name: name() }))) {
@@ -356,7 +356,7 @@ function DetailsCard({
         <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-2 text-sm">
           <DetailRow label={t("users.username")}>{user.username}</DetailRow>
           <DetailRow label={t("users.name")}>
-            {user.firstname || user.lastname ? user.fullName : "—"}
+            {user.firstname || user.lastname ? user.name : "—"}
           </DetailRow>
           <DetailRow label={t("users.locale")}>
             {user.locale
@@ -532,7 +532,7 @@ function SessionsCard({ user, onError }: { user: UserView; onError: (msg: string
   useEffect(() => load(), [load]);
 
   const logoutAll = async () => {
-    const name = user.fullName || user.username;
+    const name = user.name || user.username;
     if (!window.confirm(t("users.logoutAllConfirm", { name }))) {
       return;
     }

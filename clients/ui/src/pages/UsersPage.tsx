@@ -49,7 +49,7 @@ export function UsersPage() {
   }, [client]);
 
   const resetPassword = async (user: UserView) => {
-    if (!window.confirm(t("users.resetConfirm", { name: user.fullName || user.username }))) {
+    if (!window.confirm(t("users.resetConfirm", { name: user.name || user.username }))) {
       return;
     }
     setError(null);
@@ -91,14 +91,14 @@ export function UsersPage() {
   };
 
   const onDelete = async (user: UserView) => {
-    if (!window.confirm(t("users.deleteConfirm", { name: user.fullName || user.username }))) {
+    if (!window.confirm(t("users.deleteConfirm", { name: user.name || user.username }))) {
       return;
     }
     setError(null);
     setNotice(null);
     try {
       await client.deleteUser(user.userId);
-      setNotice(`Deleted "${user.fullName || user.username}".`);
+      setNotice(`Deleted "${user.name || user.username}".`);
       await load();
     } catch (err) {
       setError(errMsg(err));
@@ -179,8 +179,8 @@ export function UsersPage() {
             <tbody>
               {users.map((user) => {
                 const isSelf = user.userId === myId;
-                const displayName = user.fullName || user.username;
-                const sub = user.fullName ? user.username : "";
+                const displayName = user.name || user.username;
+                const sub = user.name ? user.username : "";
                 return (
                   <tr
                     key={user.userId}
