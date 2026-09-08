@@ -116,9 +116,9 @@ export function RateLimitMeter({ state }: { state: RateLimitState }) {
       <div className="space-y-1">
         <div className="flex items-baseline justify-between gap-3">
           <span className="text-sm font-medium text-slate-800 dark:text-slate-200">{label}</span>
-          <span className="text-xs text-slate-400">{t("rateLimits.disabled")}</span>
+          <span className="text-slate-400">{t("rateLimits.disabled")}</span>
         </div>
-        <p className="text-xs text-slate-400">{t("rateLimits.disabledHint")}</p>
+        <p className="text-slate-400">{t("rateLimits.disabledHint")}</p>
       </div>
     );
   }
@@ -157,7 +157,7 @@ export function RateLimitMeter({ state }: { state: RateLimitState }) {
         />
       </div>
 
-      <div className="text-xs text-slate-400">
+      <div className="text-slate-400">
         {t("rateLimits.window", { window: formatDuration(state.windowSecs) })}
         {state.windowEndsAt && !blocked && (
           <> · {t("rateLimits.resets", { at: formatDateTime(state.windowEndsAt) })}</>
@@ -185,10 +185,10 @@ export function RateLimitDetails({ target }: { target: RateLimitTarget }) {
     return <p className="text-xs text-red-600 dark:text-red-400">{error}</p>;
   }
   if (states === null) {
-    return <p className="text-xs text-slate-400">{t("common.loading")}</p>;
+    return <p className="text-slate-400">{t("common.loading")}</p>;
   }
   if (states.length === 0) {
-    return <p className="text-xs text-slate-400">{t("rateLimits.none")}</p>;
+    return <p className="text-slate-400">{t("rateLimits.none")}</p>;
   }
   return (
     <div className="space-y-3">

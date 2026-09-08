@@ -371,9 +371,7 @@ function FeaturesCard({
                 <div className="text-sm font-semibold text-slate-900 dark:text-white">
                   {def.name}
                 </div>
-                {subtitle && (
-                  <div className="text-xs text-slate-400 dark:text-slate-500">{subtitle}</div>
-                )}
+                {subtitle && <div className="text-slate-400 dark:text-slate-500">{subtitle}</div>}
               </div>
             </li>
           );

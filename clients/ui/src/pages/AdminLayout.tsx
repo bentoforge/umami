@@ -292,7 +292,7 @@ function UserMenu({
         <div className={`${popoverSurface} absolute right-0 mt-2 w-56 z-20 p-2 shadow-lg`}>
           <div className="px-3 py-1.5 lg:hidden">
             <div className="text-sm font-medium text-slate-900 dark:text-white">{displayName}</div>
-            <div className="text-xs text-slate-500">{tenantName}</div>
+            <div className="text-slate-500">{tenantName}</div>
           </div>
           {items.map((item) => (
             <Fragment key={item.to}>
@@ -479,7 +479,7 @@ function TenantSwitcher() {
           />
           {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
           {results.length === 0 ? (
-            <p className="text-xs text-slate-400 px-1">{t("layout.noTenants")}</p>
+            <p className="text-slate-400 px-1">{t("layout.noTenants")}</p>
           ) : (
             <ul className="space-y-0.5">
               {results.map((tenant) => (
@@ -495,7 +495,7 @@ function TenantSwitcher() {
                     }`}
                   >
                     <div className="font-medium">{tenant.name}</div>
-                    <div className="text-xs text-slate-400 font-mono">{tenant.tenantId}</div>
+                    <div className="text-slate-400 font-mono">{tenant.tenantId}</div>
                   </button>
                 </li>
               ))}

@@ -116,7 +116,7 @@ export function AuditPage() {
                       <div className="text-slate-700 dark:text-slate-200">
                         {formatDateTime(e.timestamp)}
                       </div>
-                      <div className="font-mono text-xs text-slate-400">{meta || "—"}</div>
+                      <div className="font-mono text-slate-400">{meta || "—"}</div>
                     </td>
                     <td className={tdTop}>{e.message}</td>
                   </tr>

@@ -69,7 +69,7 @@ export function RateLimitsPage() {
           <p className="text-slate-500">{t("rateLimits.noBlocks")}</p>
         ) : (
           <>
-            <p className="mb-3 text-xs text-slate-400">
+            <p className="mb-3 text-slate-400">
               {t("rateLimits.summary", { total: blocks.length, active: activeCount })}
             </p>
             <table className="w-full border-collapse">
@@ -107,7 +107,7 @@ export function RateLimitsPage() {
                     <td className={`${tdTop} font-mono text-xs break-all`}>{block.subject}</td>
                     <td className={`${tdTop} whitespace-nowrap`}>
                       <div>{formatDateTime(block.blockedUntil)}</div>
-                      <div className="text-xs text-slate-400">
+                      <div className="text-slate-400">
                         {block.active && block.retryAfter !== undefined
                           ? t("rateLimits.remaining", {
                               duration: formatDuration(block.retryAfter),

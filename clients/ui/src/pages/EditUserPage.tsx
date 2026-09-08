@@ -583,7 +583,7 @@ function SessionsCard({ user, onError }: { user: UserView; onError: (msg: string
               <div className="text-sm text-slate-800 dark:text-slate-200 truncate">
                 {session.userAgent || "—"}
               </div>
-              <div className="text-xs text-slate-400">
+              <div className="text-slate-400">
                 {session.ip ? `${session.ip} · ` : ""}
                 {formatDateTime(session.lastSeen)}
               </div>

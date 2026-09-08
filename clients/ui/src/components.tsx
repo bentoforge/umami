@@ -103,7 +103,7 @@ export function AuditList({ entries }: { entries: AuditEntry[] }) {
           />
           <div className="min-w-0">
             <div className="text-sm text-slate-800 dark:text-slate-200">{entry.message}</div>
-            <div className="text-xs text-slate-400">
+            <div className="text-slate-400">
               {formatDateTime(entry.timestamp)}
               {entry.ip && <span className="font-mono"> · {entry.ip}</span>}
             </div>
@@ -288,7 +288,7 @@ export function RoleToggleList({
   empty?: string;
 }) {
   if (roles.length === 0) {
-    return <span className="text-xs text-slate-400">{empty}</span>;
+    return <span className="text-slate-400">{empty}</span>;
   }
   return (
     <ul className="divide-y divide-slate-100 dark:divide-slate-700/50">
@@ -307,9 +307,7 @@ export function RoleToggleList({
             </div>
             <div className="min-w-0">
               <div className="text-sm font-semibold text-slate-900 dark:text-white">{def.name}</div>
-              {subtitle && (
-                <div className="text-xs text-slate-400 dark:text-slate-500">{subtitle}</div>
-              )}
+              {subtitle && <div className="text-slate-400 dark:text-slate-500">{subtitle}</div>}
             </div>
           </li>
         );
@@ -492,7 +490,7 @@ export function PatList({
           <li key={pat.keyId} className="flex items-start justify-between gap-3 py-3">
             <div className="min-w-0">
               <div className="text-sm font-medium text-slate-900 dark:text-white">{pat.name}</div>
-              <div className="text-xs text-slate-400">
+              <div className="text-slate-400">
                 {roles} · {lastUsed} · {t("pats.created")}: {formatDateTime(pat.created)}
               </div>
               {renderDetails && <div className="mt-2">{renderDetails(pat)}</div>}
@@ -541,7 +539,7 @@ export function MessagingLinkList({
           <li key={link.linkKey} className="flex items-start justify-between gap-3 py-3">
             <div className="min-w-0">
               <div className="text-sm font-medium text-slate-900 dark:text-white">{platform}</div>
-              <div className="truncate text-xs text-slate-400">
+              <div className="truncate text-slate-400">
                 <span className="font-mono">{link.externalId}</span> · {t("messaging.linkedOn")}:{" "}
                 {formatDateTime(link.created)}
               </div>
@@ -600,11 +598,11 @@ export function ContactList({
             <div className="min-w-0 space-y-1">
               <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-slate-900 dark:text-white">
                 <span className="truncate">{contact.address}</span>
-                {contact.label && <span className="text-xs text-slate-400">{contact.label}</span>}
+                {contact.label && <span className="text-slate-400">{contact.label}</span>}
                 {isPreferred && <Tag tone="info">{t("contacts.preferred")}</Tag>}
                 {!contact.verified && <Tag tone="warn">{t("contacts.unverified")}</Tag>}
               </div>
-              <div className="text-xs text-slate-400">
+              <div className="text-slate-400">
                 {t("contacts.addedOn")}: {formatDateTime(contact.created)}
               </div>
             </div>

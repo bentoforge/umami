@@ -194,7 +194,7 @@ export function UsersPage() {
                       >
                         {displayName}
                       </Link>
-                      {sub && <div className="text-xs text-slate-400">{sub}</div>}
+                      {sub && <div className="text-slate-400">{sub}</div>}
                     </td>
                     {tableDefs.map((def) => (
                       <td key={def.code} className={td}>

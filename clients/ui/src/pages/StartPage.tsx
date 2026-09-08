@@ -78,7 +78,7 @@ function AppTile({ app }: { app: AppCard }) {
         <ArrowTopRightOnSquareIcon className="h-4 w-4 shrink-0 text-slate-400 group-hover:text-primary" />
       </div>
       {app.description && <p className="text-sm text-slate-500">{app.description}</p>}
-      <span className="mt-2 truncate font-mono text-xs text-slate-400">{app.url}</span>
+      <span className="mt-2 truncate font-mono text-slate-400">{app.url}</span>
     </a>
   );
 }

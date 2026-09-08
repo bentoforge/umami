@@ -139,7 +139,7 @@ export function TenantsPage() {
                         {t("tenants.system")}
                       </span>
                     )}
-                    <div className="text-xs text-slate-400 font-mono">{tenant.tenantId}</div>
+                    <div className="text-slate-400 font-mono">{tenant.tenantId}</div>
                   </td>
                   {tableDefs.map((def) => (
                     <td key={def.code} className={td}>

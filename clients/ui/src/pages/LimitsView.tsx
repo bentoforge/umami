@@ -198,7 +198,7 @@ function NameCell({ row }: { row: Row }) {
       <div>
         <div className="font-medium text-slate-900 dark:text-white">{row.def.name}</div>
         {row.def.description && (
-          <div className="text-xs text-slate-400 dark:text-slate-500">{row.def.description}</div>
+          <div className="text-slate-400 dark:text-slate-500">{row.def.description}</div>
         )}
       </div>
     );
@@ -206,9 +206,7 @@ function NameCell({ row }: { row: Row }) {
   return (
     <div>
       <div className="font-mono text-slate-900 dark:text-white">{row.entry.code}</div>
-      <div className="text-xs text-slate-400 dark:text-slate-500">
-        {t("limits.noLongerDefined")}
-      </div>
+      <div className="text-slate-400 dark:text-slate-500">{t("limits.noLongerDefined")}</div>
     </div>
   );
 }
@@ -810,7 +808,7 @@ function ViewHeader({
     <div>
       <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{context}</div>
       <h3 className="font-medium text-slate-800 dark:text-slate-200">{name}</h3>
-      {description && <p className="text-xs text-slate-400 dark:text-slate-500">{description}</p>}
+      {description && <p className="text-slate-400 dark:text-slate-500">{description}</p>}
     </div>
   );
 }

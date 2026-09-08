@@ -153,7 +153,7 @@ function SessionsPanel() {
                     </span>
                   )}
                 </div>
-                <div className="text-xs text-slate-400">
+                <div className="text-slate-400">
                   {session.ip ? `${session.ip} · ` : ""}
                   {formatDateTime(session.lastSeen)}
                 </div>
@@ -252,9 +252,7 @@ function NotificationsPanel() {
                 <div className="text-sm font-medium text-slate-900 dark:text-white">
                   {type.name}
                 </div>
-                {type.description && (
-                  <div className="text-xs text-slate-400">{type.description}</div>
-                )}
+                {type.description && <div className="text-slate-400">{type.description}</div>}
               </div>
               <select
                 className={`${input} w-auto`}
@@ -438,7 +436,7 @@ function ContactsPanel() {
 
       <div>
         {contacts.length === 0 ? (
-          <span className="text-xs text-slate-400">{t("contacts.empty")}</span>
+          <span className="text-slate-400">{t("contacts.empty")}</span>
         ) : (
           <ContactList
             contacts={contacts}
@@ -506,7 +504,7 @@ function MessagingPanel() {
 
       <div>
         {links.length === 0 ? (
-          <span className="text-xs text-slate-400">{t("messaging.empty")}</span>
+          <span className="text-slate-400">{t("messaging.empty")}</span>
         ) : (
           <MessagingLinkList links={links} onDelete={unlink} />
         )}
@@ -891,7 +889,7 @@ function SecurityAction({
           </span>
         )}
       </button>
-      <p className="text-xs text-slate-500">{desc}</p>
+      <p className="text-slate-500">{desc}</p>
     </div>
   );
 }
@@ -1204,7 +1202,7 @@ function PatsPanel() {
             <div className="text-sm font-medium text-slate-800 dark:text-slate-200">
               {t("pats.rolesLabel")}
             </div>
-            <p className="text-xs text-slate-500">{t("pats.rolesHint")}</p>
+            <p className="text-slate-500">{t("pats.rolesHint")}</p>
             <div className="mt-2">
               <RoleToggleList
                 roles={roleCatalog}

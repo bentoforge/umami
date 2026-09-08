@@ -133,7 +133,7 @@ export function ServiceKeysPage() {
                 <tr key={key.keyId} className="border-b border-slate-100 dark:border-slate-700/50">
                   <td className={`${tdTop}`}>
                     <div className="font-medium text-slate-900 dark:text-white">{key.name}</div>
-                    <div className="text-xs text-slate-400 font-mono">{key.keyId}</div>
+                    <div className="text-slate-400 font-mono">{key.keyId}</div>
                     {/* The override is on the key itself, so flagging it costs no extra request —
                         the meter behind the disclosure then shows the values it resolves to. */}
                     {key.rateLimit && (
@@ -294,7 +294,7 @@ function CreateKey({
           {t("serviceKeys.scopes")}
         </div>
         {scopeCatalog.length === 0 ? (
-          <p className="mt-1 text-xs text-slate-400">{t("serviceKeys.scopesEmpty")}</p>
+          <p className="mt-1 text-slate-400">{t("serviceKeys.scopesEmpty")}</p>
         ) : (
           <ul className="mt-2 divide-y divide-slate-100 dark:divide-slate-700/50">
             {scopeCatalog.map((def) => (
@@ -312,9 +312,7 @@ function CreateKey({
                     {def.name}
                   </div>
                   {def.description && (
-                    <div className="text-xs text-slate-400 dark:text-slate-500">
-                      {def.description}
-                    </div>
+                    <div className="text-slate-400 dark:text-slate-500">{def.description}</div>
                   )}
                 </div>
               </li>
@@ -354,7 +352,7 @@ function CreateKey({
           <div className="text-sm font-medium text-slate-800 dark:text-slate-200">
             {t("serviceKeys.allowSecretLogin")}
           </div>
-          <div className="text-xs text-slate-400 dark:text-slate-500">
+          <div className="text-slate-400 dark:text-slate-500">
             {t("serviceKeys.allowSecretLoginHint")}
           </div>
         </div>
