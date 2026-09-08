@@ -425,6 +425,28 @@ mod tests {
         assert_eq!(response.codes, vec!["role:member".to_owned()]);
     }
 
+    /// The home case, which the switched one must not have cost: an admin sitting in the system
+    /// tenant reads its roles, and the synthetic marker does not narrow the ungated ones away.
+    #[tokio::test]
+    async fn assignable_roles_in_the_system_tenant() {
+        let caller = WasabiUser::builder()
+            .with_string(CLAIM_SUB, "admin-1")
+            .with_string(CLAIM_TENANT, "system")
+            .build();
+
+        let response = assignable_roles(
+            "system".to_owned(),
+            tenants_without_features(),
+            a_config_with_an_ungated_role().await,
+            Some("system".to_owned()),
+            caller,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(response.codes, vec!["role:member".to_owned()]);
+    }
+
     /// Reading another tenant's roles needs a switch into it first — the token decides, not the path.
     #[tokio::test]
     async fn a_foreign_tenant_is_refused() {
