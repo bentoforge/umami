@@ -144,7 +144,9 @@ export function EditTenantPage() {
             onError={setError}
           />
           <FeaturesCard tenant={tenant} onChanged={reload} onError={setError} />
-          <LimitsCard tenant={tenant} onError={setError} />
+          {client.hasPermission("manage:limits") && (
+            <LimitsCard tenant={tenant} onError={setError} />
+          )}
           <MetaBox tenant={tenant} />
         </>
       )}
