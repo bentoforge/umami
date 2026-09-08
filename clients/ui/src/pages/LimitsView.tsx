@@ -6,18 +6,19 @@ import type {
   LimitKind,
   LimitSettings,
 } from "@bentoforge/umami-iam";
-import {
-  ArrowLeftIcon,
-  ClockIcon,
-  PencilSquareIcon,
-  PlusCircleIcon,
-  QueueListIcon,
-  TrashIcon,
-} from "@heroicons/react/24/outline";
-import { type ComponentType, useCallback, useEffect, useState } from "react";
+import { ArrowLeftIcon, PencilSquareIcon } from "@heroicons/react/24/outline";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useUmami } from "../auth/UmamiProvider";
-import { Banner, DropdownMenu, errMsg, Field, formatDateTime, Loader } from "../components";
+import {
+  Banner,
+  DropdownMenu,
+  errMsg,
+  Field,
+  formatDateTime,
+  Loader,
+  type MenuAction,
+} from "../components";
 import { card, ghostButton, input, primaryButton, td, th } from "../ui";
 
 const LEDGER_PAGE = 10;
@@ -104,8 +105,7 @@ export function LimitsView({
       : [];
 
   const selected = "code" in mode ? rows.find((r) => r.entry.code === mode.code) : undefined;
-  const consumables = rows.filter((r) => r.kind === "consumable");
-  const gauges = rows.filter((r) => r.kind === "gauge");
+  const selectedName = selected ? (selected.def?.name ?? selected.entry.code) : "";
 
   return (
     <section className={`${card} space-y-4`}>
@@ -116,24 +116,12 @@ export function LimitsView({
       {defs === null || entries === null ? (
         <Loader />
       ) : mode.view === "list" ? (
-        <div className="space-y-6">
-          {consumables.length > 0 && (
-            <ConsumableTable
-              rows={consumables}
-              readOnly={readOnly}
-              onAction={(view, code) => setMode({ view, code })}
-              onDelete={(code) => void deleteLimit(client, tenantId, code, t, loadLimits, setError)}
-            />
-          )}
-          {gauges.length > 0 && (
-            <GaugeTable
-              rows={gauges}
-              readOnly={readOnly}
-              onAction={(view, code) => setMode({ view, code })}
-              onDelete={(code) => void deleteLimit(client, tenantId, code, t, loadLimits, setError)}
-            />
-          )}
-        </div>
+        <LimitsTable
+          rows={rows}
+          readOnly={readOnly}
+          onAction={(view, code) => setMode({ view, code })}
+          onDelete={(code) => void deleteLimit(client, tenantId, code, t, loadLimits, setError)}
+        />
       ) : selected === undefined ? (
         <BackButton onClick={backToList} />
       ) : mode.view === "edit" ? (
@@ -148,15 +136,27 @@ export function LimitsView({
         <TopupForm
           tenantId={tenantId}
           code={selected.entry.code}
-          name={selected.def?.name ?? selected.entry.code}
+          name={selectedName}
           onDone={reloadAndList}
           onCancel={backToList}
           onError={setError}
         />
       ) : mode.view === "ledger" ? (
-        <LedgerView tenantId={tenantId} code={selected.entry.code} onBack={backToList} />
+        <LedgerView
+          tenantId={tenantId}
+          code={selected.entry.code}
+          name={selectedName}
+          description={selected.def?.description}
+          onBack={backToList}
+        />
       ) : (
-        <HistoryView tenantId={tenantId} code={selected.entry.code} onBack={backToList} />
+        <HistoryView
+          tenantId={tenantId}
+          code={selected.entry.code}
+          name={selectedName}
+          description={selected.def?.description}
+          onBack={backToList}
+        />
       )}
     </section>
   );
@@ -206,7 +206,10 @@ function NameCell({ row }: { row: Row }) {
   );
 }
 
-function ConsumableTable({
+/** The single limits table — consumables and gauges together, no sub-headings. Each row shows the
+ * current value in bold (with unit), a muted budget/limit summary, an edit pencil in the name (when
+ * editable) and the remaining actions behind a 3-dots menu. */
+function LimitsTable({
   rows,
   readOnly,
   onAction,
@@ -219,148 +222,117 @@ function ConsumableTable({
 }) {
   const { t } = useTranslation();
   return (
-    <div>
-      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-        {t("limits.consumableTitle")}
-      </h3>
-      <div className="overflow-x-auto">
-        <table className="w-full border-collapse">
-          <thead>
-            <tr className="border-b border-slate-200 dark:border-slate-700">
-              <th className={th}>{t("limits.name")}</th>
-              <th className={th}>{t("limits.usageBudget")}</th>
-              <th className={th}>{t("limits.customBudget")}</th>
-              <th className={th}>{t("limits.overuseMax")}</th>
-              <th className={`${th} text-right`}>{t("limits.actions")}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => {
-              const s = row.entry.settings;
-              const st = row.entry.state;
-              const unit = unitSuffix(row.def?.unit);
-              const budget = s.monthly ?? 0;
-              const usedMonth = st ? Math.max(0, budget - st.monthlyRemaining) : 0;
-              const customBudget = st?.customBalance ?? 0;
-              const maxOveruse = s.overuse ?? 0;
-              const overuseUsed = st ? Math.max(0, (s.overuse ?? 0) - st.overuseRemaining) : 0;
-              const showDaily = row.def?.daily ?? false;
-              const budgetToday = s.daily ?? 0;
-              const usedToday =
-                st?.dailyRemaining != null ? Math.max(0, (s.daily ?? 0) - st.dailyRemaining) : 0;
-              return (
-                <tr
-                  key={row.entry.code}
-                  className="border-b border-slate-100 dark:border-slate-700/50"
-                >
-                  <td className={td}>
-                    <NameCell row={row} />
-                  </td>
-                  <td className={td}>
-                    <div>
-                      {usedMonth} / {budget}
-                      {unit}
-                    </div>
-                    {showDaily && (
-                      <div className="text-xs text-slate-400 dark:text-slate-500">
-                        {t("limits.today")}: {usedToday} / {budgetToday}
-                        {unit}
-                      </div>
-                    )}
-                  </td>
-                  <td className={td}>
-                    {customBudget}
-                    {unit}
-                  </td>
-                  <td className={td}>
-                    {overuseUsed} / {maxOveruse}
-                    {unit}
-                  </td>
-                  <td className={`${td} text-right`}>
-                    <RowActions
-                      row={row}
-                      readOnly={readOnly}
-                      onAction={onAction}
-                      onDelete={onDelete}
-                    />
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+    <div className="overflow-x-auto">
+      <table className="w-full border-collapse">
+        <thead>
+          <tr className="border-b border-slate-200 dark:border-slate-700">
+            <th className={th}>{t("limits.name")}</th>
+            <th className={th}>{t("limits.value")}</th>
+            <th className={th} />
+            <th className={`${th} text-right`} />
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <LimitRow
+              key={row.entry.code}
+              row={row}
+              readOnly={readOnly}
+              onAction={onAction}
+              onDelete={onDelete}
+            />
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
 
-function GaugeTable({
-  rows,
+function LimitRow({
+  row,
   readOnly,
   onAction,
   onDelete,
 }: {
-  rows: Row[];
+  row: Row;
   readOnly: boolean;
   onAction: (view: "edit" | "ledger" | "history" | "topup", code: string) => void;
   onDelete: (code: string) => void;
 }) {
   const { t } = useTranslation();
+  const code = row.entry.code;
+  const editable = !readOnly && row.def != null;
+  const unit = unitSuffix(row.def?.unit);
+  const s = row.entry.settings;
+  const st = row.entry.state;
+
+  let value: string;
+  let details: string;
+  if (row.kind === "gauge") {
+    value = st?.gaugeValue != null ? `${st.gaugeValue}${unit}` : "—";
+    details = `${t("limits.limitMax")}: ${s.max != null ? `${s.max}${unit}` : "—"}`;
+  } else {
+    const budget = s.monthly ?? 0;
+    const usedMonth = st ? Math.max(0, budget - st.monthlyRemaining) : 0;
+    value = `${usedMonth}${unit}`;
+    const parts: string[] = [`${t("limits.monthlyBudget")}: ${budget}${unit}`];
+    if (row.def?.daily && (s.daily ?? 0) > 0) {
+      const budgetToday = s.daily ?? 0;
+      const usedToday =
+        st?.dailyRemaining != null ? Math.max(0, budgetToday - st.dailyRemaining) : 0;
+      const daily = usedToday === 0 ? `${budgetToday}` : `${usedToday} / ${budgetToday}`;
+      parts.push(`${t("limits.dailyBudget")}: ${daily}${unit}`);
+    }
+    const balance = st?.customBalance ?? 0;
+    if (balance > 0) {
+      parts.push(`${t("limits.balance")}: ${balance}${unit}`);
+    }
+    if (row.def?.overuse && (s.overuse ?? 0) > 0) {
+      const maxOveruse = s.overuse ?? 0;
+      const usedOveruse = st ? Math.max(0, maxOveruse - st.overuseRemaining) : 0;
+      const over = usedOveruse === 0 ? `${maxOveruse}` : `${usedOveruse} / ${maxOveruse}`;
+      parts.push(`${t("limits.overusage")}: ${over}${unit}`);
+    }
+    details = parts.join(", ");
+  }
+
   return (
-    <div>
-      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-        {t("limits.gaugeTitle")}
-      </h3>
-      <div className="overflow-x-auto">
-        <table className="w-full border-collapse">
-          <thead>
-            <tr className="border-b border-slate-200 dark:border-slate-700">
-              <th className={th}>{t("limits.name")}</th>
-              <th className={th}>{t("limits.value")}</th>
-              <th className={th}>{t("limits.limitMax")}</th>
-              <th className={`${th} text-right`}>{t("limits.actions")}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => {
-              const unit = unitSuffix(row.def?.unit);
-              const value = row.entry.state?.gaugeValue;
-              const max = row.entry.settings.max;
-              return (
-                <tr
-                  key={row.entry.code}
-                  className="border-b border-slate-100 dark:border-slate-700/50"
-                >
-                  <td className={td}>
-                    <NameCell row={row} />
-                  </td>
-                  <td className={td}>
-                    <div className="flex items-center gap-2">
-                      <Bobble
-                        value={value}
-                        max={max}
-                        low={row.def?.lowWatermarkPercent}
-                        high={row.def?.highWatermarkPercent}
-                      />
-                      <span>{value != null ? `${value}${unit}` : "—"}</span>
-                    </div>
-                  </td>
-                  <td className={td}>{max != null ? `${max}${unit}` : "—"}</td>
-                  <td className={`${td} text-right`}>
-                    <RowActions
-                      row={row}
-                      readOnly={readOnly}
-                      onAction={onAction}
-                      onDelete={onDelete}
-                    />
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
+    <tr className="border-b border-slate-100 dark:border-slate-700/50">
+      <td className={td}>
+        <div className="flex items-start gap-2">
+          {editable && (
+            <button
+              type="button"
+              title={t("limits.edit")}
+              onClick={() => onAction("edit", code)}
+              className="mt-0.5 shrink-0 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+            >
+              <PencilSquareIcon className="h-4 w-4" />
+            </button>
+          )}
+          <NameCell row={row} />
+        </div>
+      </td>
+      <td className={`${td} font-semibold`}>
+        {row.kind === "gauge" ? (
+          <span className="inline-flex items-center gap-2">
+            <Bobble
+              value={st?.gaugeValue}
+              max={s.max}
+              low={row.def?.lowWatermarkPercent}
+              high={row.def?.highWatermarkPercent}
+            />
+            {value}
+          </span>
+        ) : (
+          value
+        )}
+      </td>
+      <td className={`${td} text-slate-400 dark:text-slate-500`}>{details}</td>
+      <td className={`${td} text-right`}>
+        <RowMenu row={row} readOnly={readOnly} onAction={onAction} onDelete={onDelete} />
+      </td>
+    </tr>
   );
 }
 
@@ -391,19 +363,10 @@ function Bobble({
   return <span className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${color}`} />;
 }
 
-interface Action {
-  key: string;
-  label: string;
-  icon: ComponentType<{ className?: string }>;
-  onSelect: () => void;
-  danger?: boolean;
-}
-
-/** The per-row actions. On `sm` and up they are inline icon+label buttons; below that they collapse
- * into a vertical 3-dots {@link DropdownMenu}. Read-only rows offer only the ledger and history
- * switches; an orphan offers only Delete; a defined limit offers Edit, ledger, history, and — for a
- * consumable with a top-up balance — a credit action. */
-function RowActions({
+/** The non-edit actions, always behind a 3-dots menu (edit is the pencil in the name). A consumable
+ * offers its ledger and history, and — when writable and it carries a top-up balance — a credit; an
+ * orphan offers Delete. Gauges have no transactions, so a defined gauge shows no menu at all. */
+function RowMenu({
   row,
   readOnly,
   onAction,
@@ -417,87 +380,23 @@ function RowActions({
   const { t } = useTranslation();
   const code = row.entry.code;
 
-  const ledger: Action = {
-    key: "ledger",
-    label: t("limits.ledger"),
-    icon: QueueListIcon,
-    onSelect: () => onAction("ledger", code),
-  };
-  const history: Action = {
-    key: "history",
-    label: t("limits.history"),
-    icon: ClockIcon,
-    onSelect: () => onAction("history", code),
-  };
-
-  let actions: Action[];
-  if (readOnly) {
-    actions = [ledger, history];
-  } else if (!row.def) {
-    actions = [
-      {
-        key: "delete",
-        label: t("limits.delete"),
-        icon: TrashIcon,
-        danger: true,
-        onSelect: () => onDelete(code),
-      },
-    ];
-  } else {
-    actions = [
-      {
-        key: "edit",
-        label: t("limits.edit"),
-        icon: PencilSquareIcon,
-        onSelect: () => onAction("edit", code),
-      },
-      ledger,
-      history,
-    ];
-    if (row.def.kind === "consumable" && row.def.customBalance) {
-      actions.push({
-        key: "topup",
-        label: t("limits.credit"),
-        icon: PlusCircleIcon,
-        onSelect: () => onAction("topup", code),
-      });
+  const actions: MenuAction[] = [];
+  if (row.def) {
+    if (row.def.kind === "consumable") {
+      actions.push({ label: t("limits.ledger"), onSelect: () => onAction("ledger", code) });
+      actions.push({ label: t("limits.history"), onSelect: () => onAction("history", code) });
+      if (!readOnly && row.def.customBalance) {
+        actions.push({ label: t("limits.credit"), onSelect: () => onAction("topup", code) });
+      }
     }
+  } else if (!readOnly) {
+    actions.push({ label: t("limits.delete"), danger: true, onSelect: () => onDelete(code) });
   }
 
-  return (
-    <>
-      <div className="hidden sm:flex items-center justify-end gap-1">
-        {actions.map((action) => {
-          const Icon = action.icon;
-          return (
-            <button
-              key={action.key}
-              type="button"
-              onClick={action.onSelect}
-              className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium ${
-                action.danger
-                  ? "text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950"
-                  : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
-              }`}
-            >
-              <Icon className="h-4 w-4" />
-              {action.label}
-            </button>
-          );
-        })}
-      </div>
-      <div className="sm:hidden flex justify-end">
-        <DropdownMenu
-          label={t("limits.actions")}
-          actions={actions.map((a) => ({
-            label: a.label,
-            danger: a.danger,
-            onSelect: a.onSelect,
-          }))}
-        />
-      </div>
-    </>
-  );
+  if (actions.length === 0) {
+    return null;
+  }
+  return <DropdownMenu label={t("limits.actions")} actions={actions} />;
 }
 
 /** A full-card editor for one limit's settings, shaped by kind and facets: a consumable edits its
@@ -682,14 +581,19 @@ function TopupForm({
   );
 }
 
-/** A limit's transaction ledger, newest-first and paged via `nextCursor`. */
+/** A limit's transaction ledger, newest-first and paged via `nextCursor`. Headed by the limit's name
+ * and description so the expanded view keeps its context. */
 function LedgerView({
   tenantId,
   code,
+  name,
+  description,
   onBack,
 }: {
   tenantId: string;
   code: string;
+  name: string;
+  description?: string;
   onBack: () => void;
 }) {
   const { client } = useUmami();
@@ -734,7 +638,7 @@ function LedgerView({
 
   return (
     <div className="space-y-4">
-      <h3 className="font-medium text-slate-800 dark:text-slate-200">{t("limits.ledgerTitle")}</h3>
+      <ViewHeader name={name} description={description} context={t("limits.ledgerTitle")} />
       {entries === null ? (
         <Loader />
       ) : entries.length === 0 ? (
@@ -784,14 +688,19 @@ function LedgerView({
   );
 }
 
-/** A limit's month-by-month usage history, the most recent {@link HISTORY_MONTHS} months. */
+/** A limit's month-by-month usage history, the most recent {@link HISTORY_MONTHS} months. Headed by
+ * the limit's name and description. */
 function HistoryView({
   tenantId,
   code,
+  name,
+  description,
   onBack,
 }: {
   tenantId: string;
   code: string;
+  name: string;
+  description?: string;
   onBack: () => void;
 }) {
   const { client } = useUmami();
@@ -819,7 +728,7 @@ function HistoryView({
 
   return (
     <div className="space-y-4">
-      <h3 className="font-medium text-slate-800 dark:text-slate-200">{t("limits.historyTitle")}</h3>
+      <ViewHeader name={name} description={description} context={t("limits.historyTitle")} />
       {months === null ? (
         <Loader />
       ) : months.length === 0 ? (
@@ -858,6 +767,26 @@ function HistoryView({
         </div>
       )}
       <BackButton onClick={onBack} />
+    </div>
+  );
+}
+
+/** The header of an expanded sub-view: the view's context label (transactions / history) over the
+ * selected limit's name and its description, so the swapped-in body keeps its bearings. */
+function ViewHeader({
+  name,
+  description,
+  context,
+}: {
+  name: string;
+  description?: string;
+  context: string;
+}) {
+  return (
+    <div>
+      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{context}</div>
+      <h3 className="font-medium text-slate-800 dark:text-slate-200">{name}</h3>
+      {description && <p className="text-xs text-slate-400 dark:text-slate-500">{description}</p>}
     </div>
   );
 }
