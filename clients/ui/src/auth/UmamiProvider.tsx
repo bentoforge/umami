@@ -39,6 +39,15 @@ export function UmamiProvider({ baseUrl, children }: { baseUrl: string; children
   const refreshMe = async () => {
     try {
       const profile = await client.getMe();
+      // The language travels with the profile, so it has to be in place *before* the profile is
+      // published. Everything that renders on the strength of `me` would otherwise render once in
+      // the language guessed from the browser, and whatever does not re-render afterwards would
+      // keep it — the header has no state of its own and so kept a German menu around an English
+      // page. The browser's guess stands only while nobody has stated a preference.
+      const preferred = profile.user.locale;
+      if (preferred && preferred !== i18n.language) {
+        await i18n.changeLanguage(preferred);
+      }
       setMe(profile);
       // Both come from the session, not from an assumption about it: a switch is
       // durable, so a reload can land straight inside another tenant. The id is
@@ -81,16 +90,6 @@ export function UmamiProvider({ baseUrl, children }: { baseUrl: string; children
       cancelled = true;
     };
   }, [client]);
-
-  // The user's stated language wins over the browser's, for the interface exactly as it does for
-  // the server's messages — otherwise someone who chose German on an English laptop reads a
-  // German error inside an English page. No preference set: the browser's guess stands.
-  useEffect(() => {
-    const preferred = me?.user.locale;
-    if (preferred && preferred !== i18n.language) {
-      void i18n.changeLanguage(preferred);
-    }
-  }, [me?.user.locale]);
 
   return (
     <AuthContext.Provider
