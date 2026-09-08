@@ -347,42 +347,44 @@ function FeaturesCard({
       .map((code) => ({ code, name: code })),
   ];
 
+  // Nothing to grant and nothing granted — a deployment that does not use features. Omit the card
+  // rather than showing an empty box.
+  if (catalog.length === 0) {
+    return null;
+  }
+
   return (
     <section className={`${card} space-y-3`}>
       <h2 className="font-medium text-slate-800 dark:text-slate-200">
         {t("tenants.featuresTitle")}
       </h2>
-      {catalog.length === 0 ? (
-        <span className="text-xs text-slate-400">{t("tenants.featuresNone")}</span>
-      ) : (
-        <ul className="divide-y divide-slate-100 dark:divide-slate-700/50">
-          {catalog.map((def) => {
-            const granted = tenant.features.includes(def.code);
-            const canToggle = granted || grantable.includes(def.code);
-            const subtitle = def.description || def.code;
-            return (
-              <li key={def.code} className="flex items-start gap-3 py-3">
-                <div className="pt-0.5">
-                  <Toggle
-                    checked={granted}
-                    disabled={busy || !canToggle}
-                    label={def.name}
-                    onChange={() => void toggle(def.code, granted)}
-                  />
+      <ul className="divide-y divide-slate-100 dark:divide-slate-700/50">
+        {catalog.map((def) => {
+          const granted = tenant.features.includes(def.code);
+          const canToggle = granted || grantable.includes(def.code);
+          const subtitle = def.description || def.code;
+          return (
+            <li key={def.code} className="flex items-start gap-3 py-3">
+              <div className="pt-0.5">
+                <Toggle
+                  checked={granted}
+                  disabled={busy || !canToggle}
+                  label={def.name}
+                  onChange={() => void toggle(def.code, granted)}
+                />
+              </div>
+              <div className="min-w-0">
+                <div className="text-sm font-semibold text-slate-900 dark:text-white">
+                  {def.name}
                 </div>
-                <div className="min-w-0">
-                  <div className="text-sm font-semibold text-slate-900 dark:text-white">
-                    {def.name}
-                  </div>
-                  {subtitle && (
-                    <div className="text-xs text-slate-400 dark:text-slate-500">{subtitle}</div>
-                  )}
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      )}
+                {subtitle && (
+                  <div className="text-xs text-slate-400 dark:text-slate-500">{subtitle}</div>
+                )}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
     </section>
   );
 }
@@ -413,13 +415,17 @@ function LimitsCard({ tenant, onError }: { tenant: Tenant; onError: (msg: string
 
   useEffect(() => loadLimits(), [loadLimits]);
 
+  // No relevant or stored limits for this tenant — a deployment that does not use limits (or a
+  // tenant none apply to). Omit the card rather than showing an empty box.
+  if (defs !== null && entries.length === 0) {
+    return null;
+  }
+
   return (
     <section className={`${card} space-y-3`}>
       <h2 className="font-medium text-slate-800 dark:text-slate-200">{t("limits.title")}</h2>
       {defs === null ? (
         <Loader />
-      ) : entries.length === 0 ? (
-        <span className="text-xs text-slate-400">{t("limits.none")}</span>
       ) : (
         <ul className="divide-y divide-slate-100 dark:divide-slate-700/50">
           {entries.map((entry) => {
