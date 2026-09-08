@@ -183,10 +183,13 @@ export function CustomFieldsForm({
   defs,
   values,
   onChange,
+  fieldClassName,
 }: {
   defs: CustomFieldView[];
   values: Record<string, unknown>;
   onChange: (next: Record<string, unknown>) => void;
+  /** Grid placement of each rendered field — the parent grid decides, not this component. */
+  fieldClassName?: string;
 }) {
   if (defs.length === 0) return null;
   const set = (key: string, value: unknown) => onChange({ ...values, [key]: value });
@@ -197,7 +200,7 @@ export function CustomFieldsForm({
         const value = values[def.code];
         const label = def.required ? `${def.label} *` : def.label;
         return (
-          <Field key={def.code} label={label}>
+          <Field key={def.code} label={label} className={fieldClassName}>
             {def.type === "select" ? (
               <select
                 className={input}
@@ -242,9 +245,18 @@ export function CustomFieldsForm({
 }
 
 /** A labelled form field wrapper. */
-export function Field({ label, children }: { label: string; children: ReactNode }) {
+export function Field({
+  label,
+  className = "block",
+  children,
+}: {
+  label: string;
+  /** Grid placement of the field inside its parent (e.g. `col-span-12 md:col-span-6`). */
+  className?: string;
+  children: ReactNode;
+}) {
   return (
-    <label className="block">
+    <label className={className}>
       <span className="text-xs text-slate-500">{label}</span>
       <div className="mt-1">{children}</div>
     </label>

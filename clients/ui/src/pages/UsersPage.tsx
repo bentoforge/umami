@@ -16,7 +16,7 @@ import {
   roleCatalog,
   Tag,
 } from "../components";
-import { card, input, primaryButton, td, th } from "../ui";
+import { card, input, primaryButton, spanHalf, spanName, spanNamePart, td, th } from "../ui";
 
 /** Own-tenant screen: list / create / edit / suspend / delete users. */
 export function UsersPage() {
@@ -328,34 +328,32 @@ function CreateUser({
       <Field label={t("users.username")}>
         <input className={input} value={username} onChange={(e) => setUsername(e.target.value)} />
       </Field>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <Field label={t("users.salutation")}>
-            <select
-              className={input}
-              value={salutation}
-              onChange={(e) => setSalutation(e.target.value as Salutation)}
-            >
-              <option value="">—</option>
-              <option value="SIR">{t("users.salutationSir")}</option>
-              <option value="MADAM">{t("users.salutationMadam")}</option>
-            </select>
-          </Field>
-          <Field label={t("users.nameTitle")}>
-            <input className={input} value={title} onChange={(e) => setTitle(e.target.value)} />
-          </Field>
-        </div>
-        <Field label={t("users.firstname")}>
+      <div className="grid grid-cols-12 gap-3">
+        <Field label={t("users.salutation")} className={spanNamePart}>
+          <select
+            className={input}
+            value={salutation}
+            onChange={(e) => setSalutation(e.target.value as Salutation)}
+          >
+            <option value="">—</option>
+            <option value="SIR">{t("users.salutationSir")}</option>
+            <option value="MADAM">{t("users.salutationMadam")}</option>
+          </select>
+        </Field>
+        <Field label={t("users.nameTitle")} className={spanNamePart}>
+          <input className={input} value={title} onChange={(e) => setTitle(e.target.value)} />
+        </Field>
+        <Field label={t("users.firstname")} className={spanName}>
           <input
             className={input}
             value={firstname}
             onChange={(e) => setFirstname(e.target.value)}
           />
         </Field>
-        <Field label={t("users.lastname")}>
+        <Field label={t("users.lastname")} className={spanName}>
           <input className={input} value={lastname} onChange={(e) => setLastname(e.target.value)} />
         </Field>
-        <Field label={t("users.locale")}>
+        <Field label={t("users.locale")} className={spanHalf}>
           <select className={input} value={locale} onChange={(e) => setLocale(e.target.value)}>
             <option value="">{t("users.localeAuto")}</option>
             {locales.map((code) => (
@@ -365,7 +363,12 @@ function CreateUser({
             ))}
           </select>
         </Field>
-        <CustomFieldsForm defs={fieldDefs} values={fields} onChange={setFields} />
+        <CustomFieldsForm
+          defs={fieldDefs}
+          values={fields}
+          onChange={setFields}
+          fieldClassName={spanHalf}
+        />
       </div>
       <div>
         <div className="text-sm font-medium text-slate-800 dark:text-slate-200">

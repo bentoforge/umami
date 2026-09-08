@@ -30,7 +30,7 @@ import {
   roleCatalog,
 } from "../components";
 import { RateLimitCard, RateLimitDisclosure } from "../ratelimit";
-import { card, ghostButton, input, primaryButton } from "../ui";
+import { card, ghostButton, input, primaryButton, spanHalf, spanName, spanNamePart } from "../ui";
 
 /** Page size for the audit "load more" list. */
 const AUDIT_PAGE = 10;
@@ -300,38 +300,38 @@ function DetailsCard({
               onChange={(e) => setUsername(e.target.value)}
             />
           </Field>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <Field label={t("users.salutation")}>
-                <select
-                  className={input}
-                  value={salutation}
-                  onChange={(e) => setSalutation(e.target.value as Salutation)}
-                >
-                  <option value="">—</option>
-                  <option value="SIR">{t("users.salutationSir")}</option>
-                  <option value="MADAM">{t("users.salutationMadam")}</option>
-                </select>
-              </Field>
-              <Field label={t("users.nameTitle")}>
-                <input className={input} value={title} onChange={(e) => setTitle(e.target.value)} />
-              </Field>
-            </div>
-            <Field label={t("users.firstname")}>
+          {/* One row of name parts on a wide screen: salutation and title are short, the names
+              carry the width. Halves at md, stacked below. */}
+          <div className="grid grid-cols-12 gap-3">
+            <Field label={t("users.salutation")} className={spanNamePart}>
+              <select
+                className={input}
+                value={salutation}
+                onChange={(e) => setSalutation(e.target.value as Salutation)}
+              >
+                <option value="">—</option>
+                <option value="SIR">{t("users.salutationSir")}</option>
+                <option value="MADAM">{t("users.salutationMadam")}</option>
+              </select>
+            </Field>
+            <Field label={t("users.nameTitle")} className={spanNamePart}>
+              <input className={input} value={title} onChange={(e) => setTitle(e.target.value)} />
+            </Field>
+            <Field label={t("users.firstname")} className={spanName}>
               <input
                 className={input}
                 value={firstname}
                 onChange={(e) => setFirstname(e.target.value)}
               />
             </Field>
-            <Field label={t("users.lastname")}>
+            <Field label={t("users.lastname")} className={spanName}>
               <input
                 className={input}
                 value={lastname}
                 onChange={(e) => setLastname(e.target.value)}
               />
             </Field>
-            <Field label={t("users.locale")}>
+            <Field label={t("users.locale")} className={spanHalf}>
               <select className={input} value={locale} onChange={(e) => setLocale(e.target.value)}>
                 <option value="">{t("users.localeAuto")}</option>
                 {locales.map((code) => (
@@ -341,7 +341,12 @@ function DetailsCard({
                 ))}
               </select>
             </Field>
-            <CustomFieldsForm defs={defs} values={fields} onChange={setFields} />
+            <CustomFieldsForm
+              defs={defs}
+              values={fields}
+              onChange={setFields}
+              fieldClassName={spanHalf}
+            />
           </div>
           <div className="flex gap-2">
             <button className={primaryButton} disabled={saving} onClick={() => void save()}>
