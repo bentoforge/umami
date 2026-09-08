@@ -15,7 +15,7 @@
 
 use crate::config::repository::ConfigRepository;
 use crate::config::text::LocalizedText;
-use crate::config::{Config, CustomFieldDef};
+use crate::config::{Config, CustomFieldDef, LimitDef, LimitKind};
 use crate::constants::{MANAGE_CONFIG_PERMISSION, MAX_TEXT_BODY_SIZE};
 use serde::Serialize;
 use std::sync::Arc;
@@ -62,6 +62,45 @@ impl CatalogueEntry {
     }
 }
 
+/// One limit as a screen shows it: its labels resolved, plus the facets a form needs to render the
+/// right inputs (a gauge shows `max` + watermarks; a consumable shows monthly/overuse/daily).
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct LimitCatalogueEntry {
+    code: String,
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    kind: LimitKind,
+    overuse: bool,
+    custom_balance: bool,
+    daily: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    low_watermark_percent: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    high_watermark_percent: Option<u8>,
+}
+
+impl LimitCatalogueEntry {
+    /// Resolves one limit's labels into `locale`, carrying its facets through verbatim.
+    fn new(def: &LimitDef, locale: &str, default_locale: &str) -> Self {
+        LimitCatalogueEntry {
+            code: def.code.clone(),
+            name: def.name.resolve(locale, default_locale).to_owned(),
+            description: def
+                .description
+                .as_ref()
+                .map(|text| text.resolve(locale, default_locale).to_owned()),
+            kind: def.kind,
+            overuse: def.overuse,
+            custom_balance: def.custom_balance,
+            daily: def.daily,
+            low_watermark_percent: def.low_watermark_percent,
+            high_watermark_percent: def.high_watermark_percent,
+        }
+    }
+}
+
 /// The label catalogues, in the caller's language.
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -69,6 +108,7 @@ struct CatalogueResponse {
     roles: Vec<CatalogueEntry>,
     scopes: Vec<CatalogueEntry>,
     features: Vec<CatalogueEntry>,
+    limits: Vec<LimitCatalogueEntry>,
 }
 
 /// One custom-field schema with its label resolved — otherwise [`CustomFieldDef`] verbatim.
@@ -242,6 +282,11 @@ async fn catalogue(
             .iter()
             .map(|def| entries(&def.code, &def.name, def.description.as_ref()))
             .collect(),
+        limits: config
+            .limits
+            .iter()
+            .map(|def| LimitCatalogueEntry::new(def, locale, default_locale))
+            .collect(),
     })
 }
 
@@ -266,6 +311,7 @@ async fn put_config(request: Config, config: Arc<dyn ConfigRepository>) -> anyho
     // that silently resolves to nobody.
     crate::notify::types::validate_catalogue(&request.notification_types)?;
     crate::config::validate_labels(&request)?;
+    crate::config::validate_limits(&request)?;
     for api in &request.apis {
         crate::config::validate_claims(&api.code, &api.claims)?;
     }

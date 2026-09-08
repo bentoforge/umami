@@ -11,8 +11,7 @@ use crate::bail_i18n;
 use crate::config::Config;
 use crate::config::repository::ConfigRepository;
 use crate::constants::{
-    MANAGE_TENANTS_PERMISSION, MAX_LIST_RESULTS, MAX_TEXT_BODY_SIZE, ROLE_OWNER,
-    SWITCH_TENANT_PERMISSION,
+    MANAGE_TENANTS_PERMISSION, MAX_LIST_RESULTS, MAX_TEXT_BODY_SIZE, SWITCH_TENANT_PERMISSION,
 };
 use crate::tenants::repository::TenantRepository;
 use crate::tenants::{Tenant, slugify};
@@ -66,6 +65,10 @@ struct OwnerSpec {
     firstname: Option<String>,
     #[serde(default)]
     lastname: Option<String>,
+    /// Roles for the first user, validated like any assignment. Absent = none: umami has no
+    /// notion of what an "owner" may do, only the deployment's config has.
+    #[serde(default)]
+    roles: Option<Vec<String>>,
 }
 
 /// Request body for self-serve tenant creation.
@@ -307,9 +310,18 @@ async fn create_tenant(
             };
             config.validate_password(&owner.password)?;
             let password_hash = crate::auth::password::hash(&owner.password)?;
+            // A tenant that does not exist yet has no features and is never the system tenant,
+            // so only roles assignable in an empty tenant qualify.
+            let roles = owner.roles.unwrap_or_default();
+            let features = config.eval_feature_set(&[], false);
+            for role in &roles {
+                if !config.can_assign_role(role, &features) {
+                    client_bail!("Role '{role}' is not assignable in a new tenant");
+                }
+            }
             Some(NewUser {
                 tenant_id: String::new(), // filled in once the tenant exists
-                roles: vec![ROLE_OWNER.to_owned()],
+                roles,
                 username,
                 title: owner.title,
                 salutation: owner.salutation.unwrap_or_default(),

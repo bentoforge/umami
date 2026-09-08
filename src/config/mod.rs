@@ -10,9 +10,9 @@ pub mod text;
 
 use crate::config::text::LocalizedText;
 use crate::constants::{
-    DEFAULT_ACCESS_TTL_SECS, DEFAULT_CONTACT_CHALLENGE_TTL_SECS, DEFAULT_LOGIN_BLOCK_SECS,
-    DEFAULT_LOGIN_MAX_FAILURES, DEFAULT_LOGIN_WINDOW_SECS, DEFAULT_MAIL_SEND_BLOCK_SECS,
-    DEFAULT_MAIL_SEND_MAX_PER_WINDOW, DEFAULT_MAIL_SEND_WINDOW_SECS,
+    BOOTSTRAP_ADMIN_ROLE, DEFAULT_ACCESS_TTL_SECS, DEFAULT_CONTACT_CHALLENGE_TTL_SECS,
+    DEFAULT_LOGIN_BLOCK_SECS, DEFAULT_LOGIN_MAX_FAILURES, DEFAULT_LOGIN_WINDOW_SECS,
+    DEFAULT_MAIL_SEND_BLOCK_SECS, DEFAULT_MAIL_SEND_MAX_PER_WINDOW, DEFAULT_MAIL_SEND_WINDOW_SECS,
     DEFAULT_MESSAGING_CODE_TTL_SECS, DEFAULT_PASSWORD_RESET_TTL_SECS, DEFAULT_PER_IP_BLOCK_SECS,
     DEFAULT_PER_IP_MAX_PER_WINDOW, DEFAULT_PER_IP_WINDOW_SECS, DEFAULT_REFRESH_TTL_SECS,
     DEFAULT_TOKEN_BLOCK_SECS, DEFAULT_TOKEN_MAX_PER_WINDOW, DEFAULT_TOKEN_WINDOW_SECS,
@@ -20,9 +20,9 @@ use crate::constants::{
     MANAGE_PERSONAL_TOKENS_PERMISSION, MANAGE_PROFILE_PERMISSION, MANAGE_SERVICE_KEYS_PERMISSION,
     MANAGE_SESSIONS_PERMISSION, MANAGE_TENANTS_PERMISSION, MANAGE_USERS_PERMISSION,
     MESSAGING_LINK_PERMISSION, MESSAGING_RESOLVE_PERMISSION, NOTIFICATIONS_AUDIENCE_PERMISSION,
-    NOTIFICATIONS_REPORT_PERMISSION, NOTIFICATIONS_SEND_PERMISSION, ROLE_MEMBER, ROLE_OWNER,
-    SWITCH_TENANT_PERMISSION, SYSTEM_TENANT_MARKER, SYSTEM_TENANT_MEMBER_MARKER,
-    VIEW_AUDIT_PERMISSION, VIEW_RATELIMITS_PERMISSION,
+    NOTIFICATIONS_REPORT_PERMISSION, NOTIFICATIONS_SEND_PERMISSION, SWITCH_TENANT_PERMISSION,
+    SYSTEM_TENANT_MARKER, SYSTEM_TENANT_MEMBER_MARKER, VIEW_AUDIT_PERMISSION,
+    VIEW_RATELIMITS_PERMISSION,
 };
 use crate::notify::types::NotificationTypeDef;
 use anyhow::Context;
@@ -446,6 +446,76 @@ pub struct FeatureDef {
     pub assignable_if: Option<String>,
 }
 
+/// What a limit counts and how it is read/written — see [`LimitDef`] and `docs/LIMITS.md`.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum LimitKind {
+    /// A budget booked down on every call (AI credits, tokens): a monthly included allowance, an
+    /// optional overuse ceiling beyond it, and an optional persistent top-up balance.
+    Consumable,
+    /// An absolute upper bound whose current value is only ever *set* (never booked), read back with
+    /// its watermark status.
+    Gauge,
+}
+
+/// A limit: a per-tenant quota. The definition lives here; the per-tenant values on the tenant
+/// ([`LimitSettings`] in `Tenant.limits`); the runtime counters in the `limits` repository. See
+/// `docs/LIMITS.md`.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct LimitDef {
+    /// Stable code the tenant's [`LimitSettings`] and the runtime state are keyed by.
+    pub code: String,
+    /// Human-readable name, in one or more languages — see [`LocalizedText`].
+    pub name: LocalizedText,
+    /// Optional human-readable description (shown muted under the name in the admin UI).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<LocalizedText>,
+    /// What this limit counts and how it is read/written.
+    pub kind: LimitKind,
+    /// Consumable only: whether an overuse ceiling beyond the monthly allowance is available.
+    #[serde(default)]
+    pub overuse: bool,
+    /// Consumable only: whether a persistent, non-expiring top-up balance can be granted.
+    #[serde(default)]
+    pub custom_balance: bool,
+    /// Consumable only: whether a per-day throttle is checked in addition to the monthly budget.
+    #[serde(default)]
+    pub daily: bool,
+    /// Gauge only: percent of `max` at/above which the UI marks the value as low. `0..=100`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_watermark_percent: Option<u8>,
+    /// Gauge only: percent of `max` at/above which the UI marks the value as high. `0..=100`, above
+    /// [`Self::low_watermark_percent`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub high_watermark_percent: Option<u8>,
+    /// DSL over the tenant's features (`feature:*`/`is:*`) marking whether this limit is **relevant**
+    /// to a tenant — a display hint (which limits to surface in the UI), **not** an eligibility or
+    /// enforcement gate. A limit with settings and state is booked regardless of this. `None` =
+    /// relevant to every tenant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relevant_if: Option<String>,
+}
+
+/// A tenant's values for one limit (keyed by [`LimitDef::code`] in `Tenant.limits`). Which fields
+/// may carry a value is decided by the limit's [`LimitDef`] — see [`Config::validate_limit_settings`].
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LimitSettings {
+    /// Consumable: included allowance per calendar month.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub monthly: Option<i64>,
+    /// Consumable: additional allowance tolerated beyond `monthly`, per month.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overuse: Option<i64>,
+    /// Consumable: per-day throttle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub daily: Option<i64>,
+    /// Gauge: the absolute upper bound.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<i64>,
+}
+
 /// A custom-field schema entry (tenant- or user-level).
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -701,6 +771,9 @@ pub struct Config {
     /// Feature catalog (granted to tenants).
     #[serde(default)]
     pub features: Vec<FeatureDef>,
+    /// Limit catalog — per-tenant quotas (see [`LimitDef`] and `docs/LIMITS.md`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub limits: Vec<LimitDef>,
     /// Custom tenant field schemas.
     #[serde(default)]
     pub custom_tenant_fields: Vec<CustomFieldDef>,
@@ -851,6 +924,63 @@ impl Config {
         Ok(())
     }
 
+    /// Validates a tenant's [`LimitSettings`] for one limit against its [`LimitDef`]: the code must
+    /// be defined, only the facets the definition enables may carry a value, and every value must be
+    /// non-negative. `max` belongs to a gauge; `monthly`/`overuse`/`daily` to a consumable.
+    pub fn validate_limit_settings(
+        &self,
+        code: &str,
+        settings: &LimitSettings,
+    ) -> anyhow::Result<()> {
+        let def = match self.limits.iter().find(|def| def.code == code) {
+            Some(def) => def,
+            None => client_bail!("Unknown limit '{code}'"),
+        };
+        for (label, value) in [
+            ("monthly", settings.monthly),
+            ("overuse", settings.overuse),
+            ("daily", settings.daily),
+            ("max", settings.max),
+        ] {
+            if let Some(value) = value
+                && value < 0
+            {
+                client_bail!("Limit '{code}' {label} must not be negative");
+            }
+        }
+        match def.kind {
+            LimitKind::Consumable => {
+                if settings.max.is_some() {
+                    client_bail!("Limit '{code}' is consumable; 'max' applies only to a gauge");
+                }
+                if settings.overuse.is_some() && !def.overuse {
+                    client_bail!(
+                        "Limit '{code}' has no overuse — enable it on the definition first"
+                    );
+                }
+                if settings.daily.is_some() && !def.daily {
+                    client_bail!(
+                        "Limit '{code}' has no daily throttle — enable it on the definition first"
+                    );
+                }
+            }
+            LimitKind::Gauge => {
+                for (label, value) in [
+                    ("monthly", settings.monthly),
+                    ("overuse", settings.overuse),
+                    ("daily", settings.daily),
+                ] {
+                    if value.is_some() {
+                        client_bail!(
+                            "Limit '{code}' is a gauge; '{label}' applies only to a consumable"
+                        );
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// The role codes assignable to a user in a tenant with the given (namespaced) feature set —
     /// i.e. those whose `assignableIf` holds against `feature:*`/`is:*`.
     pub fn assignable_roles(&self, features: &EffectiveFeatures) -> Vec<String> {
@@ -963,7 +1093,8 @@ pub fn validate_labels(config: &Config) -> anyhow::Result<()> {
         .features
         .iter()
         .map(|d| ("Feature", &d.code, &d.name));
-    for (kind, code, name) in roles.chain(scopes).chain(features) {
+    let limits = config.limits.iter().map(|d| ("Limit", &d.code, &d.name));
+    for (kind, code, name) in roles.chain(scopes).chain(features).chain(limits) {
         if name.is_empty() {
             client_bail!("{kind} '{code}' needs a 'name' to show in a picker");
         }
@@ -996,6 +1127,59 @@ pub fn validate_labels(config: &Config) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Rejects a limit catalogue entry whose facets contradict its kind, at publish time.
+///
+/// A consumable's overuse/custom-balance/daily and a gauge's watermarks describe different
+/// machinery; a watermark on a consumable, or an overuse flag on a gauge, is a config that cannot
+/// mean what it says. Duplicate codes are refused too — the tenant's settings and the runtime state
+/// are keyed by code, so two definitions sharing one would be ambiguous.
+pub fn validate_limits(config: &Config) -> anyhow::Result<()> {
+    let mut seen = BTreeSet::new();
+    for def in &config.limits {
+        if !seen.insert(def.code.as_str()) {
+            client_bail!("Limit '{}' is defined more than once", def.code);
+        }
+        match def.kind {
+            LimitKind::Consumable => {
+                if def.low_watermark_percent.is_some() || def.high_watermark_percent.is_some() {
+                    client_bail!(
+                        "Limit '{}' is consumable; watermarks apply only to a gauge",
+                        def.code
+                    );
+                }
+            }
+            LimitKind::Gauge => {
+                if def.overuse || def.custom_balance || def.daily {
+                    client_bail!(
+                        "Limit '{}' is a gauge; overuse, customBalance and daily apply only to a \
+                         consumable",
+                        def.code
+                    );
+                }
+            }
+        }
+        for (label, percent) in [
+            ("lowWatermarkPercent", def.low_watermark_percent),
+            ("highWatermarkPercent", def.high_watermark_percent),
+        ] {
+            if let Some(value) = percent
+                && value > 100
+            {
+                client_bail!("Limit '{}' {label} is {value}, over 100", def.code);
+            }
+        }
+        if let (Some(low), Some(high)) = (def.low_watermark_percent, def.high_watermark_percent)
+            && low >= high
+        {
+            client_bail!(
+                "Limit '{}' lowWatermarkPercent ({low}) must be below highWatermarkPercent ({high})",
+                def.code
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Evaluates an optional `assignableIf` against a feature set — `None` means always assignable.
 fn assignable(assignable_if: &Option<String>, set: &BTreeSet<&str>) -> bool {
     match assignable_if {
@@ -1006,11 +1190,11 @@ fn assignable(assignable_if: &Option<String>, set: &BTreeSet<&str>) -> bool {
 
 impl Default for Config {
     fn default() -> Self {
-        let role = |code: &str, name: &str| RoleDef {
+        let role = |code: &str, name: &str, assignable_if: Option<&str>| RoleDef {
             code: code.to_owned(),
             name: name.into(),
             description: None,
-            assignable_if: None,
+            assignable_if: assignable_if.map(str::to_owned),
         };
         let rule = |when: &str, grant: &[&str]| PermissionRule {
             when: when.to_owned(),
@@ -1024,13 +1208,14 @@ impl Default for Config {
         };
         Config {
             version: 1,
-            roles: vec![
-                role(ROLE_OWNER, "Owner"),
-                role("role:admin", "Administrator"),
-                role(ROLE_MEMBER, "Member"),
-                role("role:viewer", "Viewer"),
-                role("role:readonly", "Read-only (blocks self-service edits)"),
-            ],
+            // The single role the bootstrap needs. A deployment's real roles come with its real
+            // config; shipping guesses here (owner, admin, member, …) only produced catalog entries
+            // nobody mapped and codes that ended up on users by default.
+            roles: vec![role(
+                BOOTSTRAP_ADMIN_ROLE,
+                "Platform admin",
+                Some(SYSTEM_TENANT_MARKER),
+            )],
             scopes: vec![
                 // Only assignable to a system-tenant service key (and shown only there).
                 scope(
@@ -1055,6 +1240,7 @@ impl Default for Config {
                 ),
             ],
             features: Vec::new(),
+            limits: Vec::new(),
             custom_tenant_fields: Vec::new(),
             custom_user_fields: Vec::new(),
             default_locale: default_locale(),
@@ -1103,9 +1289,9 @@ impl Default for Config {
                             MANAGE_CONTACTS_PERMISSION,
                         ],
                     ),
-                    // Bootstrap owner: full self-tenant administration + config.
+                    // Bootstrap admin: full self-tenant administration + config.
                     rule(
-                        ROLE_OWNER,
+                        BOOTSTRAP_ADMIN_ROLE,
                         &[
                             VIEW_AUDIT_PERMISSION,
                             MANAGE_USERS_PERMISSION,
@@ -1493,20 +1679,20 @@ mod tests {
     #[test]
     fn default_umami_maps_roles_and_system_marker() {
         let umami = Config::default().find_api("umami").unwrap().clone();
-        let owner = umami.resolve(&s(&["role:owner"])).unwrap();
-        assert!(owner.contains(&"view:audit".to_owned()));
-        assert!(owner.contains(&"manage:users".to_owned()));
-        assert!(owner.contains(&"manage:config".to_owned()));
+        let admin = umami.resolve(&s(&[BOOTSTRAP_ADMIN_ROLE])).unwrap();
+        assert!(admin.contains(&"view:audit".to_owned()));
+        assert!(admin.contains(&"manage:users".to_owned()));
+        assert!(admin.contains(&"manage:config".to_owned()));
         // cross-tenant permissions come only from the system-tenant marker, never a plain role
-        assert!(!owner.contains(&"manage:tenants".to_owned()));
-        assert!(!owner.contains(&"switch:tenant".to_owned()));
+        assert!(!admin.contains(&"manage:tenants".to_owned()));
+        assert!(!admin.contains(&"switch:tenant".to_owned()));
         // Cross-tenant admin follows *membership*, not where the token currently acts. Three
         // situations, and the markers tell them apart:
 
         // 1. At home in the system tenant — both markers hold.
         let at_home = umami
             .resolve(&s(&[
-                "role:owner",
+                BOOTSTRAP_ADMIN_ROLE,
                 "is:system-tenant",
                 "is:system-tenant-member",
             ]))
@@ -1518,27 +1704,31 @@ mod tests {
         //    tenant. Keeping `switch:tenant` here is the point of the split: without it the
         //    token in hand cannot switch back.
         let switched = umami
-            .resolve(&s(&["role:owner", "is:system-tenant-member"]))
+            .resolve(&s(&[BOOTSTRAP_ADMIN_ROLE, "is:system-tenant-member"]))
             .unwrap();
         assert!(switched.contains(&"switch:tenant".to_owned()));
 
         // 3. Acting inside the system tenant without being a member grants nothing cross-tenant.
         let acting_only = umami
-            .resolve(&s(&["role:owner", "is:system-tenant"]))
+            .resolve(&s(&[BOOTSTRAP_ADMIN_ROLE, "is:system-tenant"]))
             .unwrap();
         assert!(!acting_only.contains(&"manage:tenants".to_owned()));
         assert!(!acting_only.contains(&"switch:tenant".to_owned()));
-        // Baseline self-service (empty `when`) is granted to any logged-in user, so even an
-        // otherwise-unmapped viewer gets the granular self-service permissions — and there is no
-        // longer a `self:readonly` deny marker.
-        let viewer = umami.resolve(&s(&["role:viewer"])).unwrap();
-        assert!(viewer.contains(&"manage:profile".to_owned()));
-        assert!(viewer.contains(&"manage:passwords".to_owned()));
-        assert!(viewer.contains(&"manage:personal-tokens".to_owned()));
-        assert!(viewer.contains(&"manage:sessions".to_owned()));
-        assert!(!viewer.contains(&"self:readonly".to_owned()));
-        // Tenant administration still requires the owner role, not just the self-service baseline.
-        assert!(!viewer.contains(&"view:audit".to_owned()));
+        // Baseline self-service (empty `when`) is granted to any logged-in user, so a user holding
+        // no role at all — the default for a freshly created user — still gets the granular
+        // self-service permissions, and nothing more.
+        let nobody = umami.resolve(&s(&[])).unwrap();
+        assert!(nobody.contains(&"manage:profile".to_owned()));
+        assert!(nobody.contains(&"manage:passwords".to_owned()));
+        assert!(nobody.contains(&"manage:personal-tokens".to_owned()));
+        assert!(nobody.contains(&"manage:sessions".to_owned()));
+        assert!(!nobody.contains(&"view:audit".to_owned()));
+        // The bootstrap role is only assignable inside the system tenant, where the root user lives.
+        let config = Config::default();
+        assert!(config.can_assign_role(BOOTSTRAP_ADMIN_ROLE, &config.eval_feature_set(&[], true)));
+        assert!(
+            !config.can_assign_role(BOOTSTRAP_ADMIN_ROLE, &config.eval_feature_set(&[], false))
+        );
     }
 
     #[test]
@@ -1682,5 +1872,169 @@ mod tests {
         // Absent custom value and unknown reference are omitted entirely.
         assert_eq!(claims.get("missing"), None);
         assert_eq!(claims.get("bogus"), None);
+    }
+
+    /// The limit gate refuses a catalogue whose facets contradict its kind, and duplicate codes.
+    #[test]
+    fn the_limit_gate_refuses_contradictory_facets() {
+        let consumable = |code: &str| super::LimitDef {
+            code: code.to_owned(),
+            name: "AI credits".into(),
+            description: None,
+            kind: super::LimitKind::Consumable,
+            overuse: true,
+            custom_balance: true,
+            daily: true,
+            low_watermark_percent: None,
+            high_watermark_percent: None,
+            relevant_if: None,
+        };
+        let gauge = |code: &str| super::LimitDef {
+            code: code.to_owned(),
+            name: "Seats".into(),
+            description: None,
+            kind: super::LimitKind::Gauge,
+            overuse: false,
+            custom_balance: false,
+            daily: false,
+            low_watermark_percent: Some(70),
+            high_watermark_percent: Some(90),
+            relevant_if: None,
+        };
+        let with_limits = |limits: Vec<super::LimitDef>| super::Config {
+            limits,
+            ..super::Config::default()
+        };
+
+        assert!(
+            super::validate_limits(&with_limits(vec![
+                consumable("limit:ai"),
+                gauge("limit:seats")
+            ]))
+            .is_ok()
+        );
+
+        // A watermark on a consumable, or an overuse flag on a gauge, cannot mean what it says.
+        let mut consumable_with_watermark = consumable("limit:ai");
+        consumable_with_watermark.low_watermark_percent = Some(80);
+        assert!(super::validate_limits(&with_limits(vec![consumable_with_watermark])).is_err());
+
+        let mut gauge_with_overuse = gauge("limit:seats");
+        gauge_with_overuse.overuse = true;
+        assert!(super::validate_limits(&with_limits(vec![gauge_with_overuse])).is_err());
+
+        // Watermarks must be ordered and within range.
+        let mut inverted = gauge("limit:seats");
+        inverted.low_watermark_percent = Some(90);
+        inverted.high_watermark_percent = Some(80);
+        assert!(super::validate_limits(&with_limits(vec![inverted])).is_err());
+
+        let mut over_100 = gauge("limit:seats");
+        over_100.high_watermark_percent = Some(120);
+        assert!(super::validate_limits(&with_limits(vec![over_100])).is_err());
+
+        // Two definitions sharing a code are ambiguous for settings + state lookup.
+        assert!(
+            super::validate_limits(&with_limits(vec![
+                consumable("limit:dup"),
+                gauge("limit:dup")
+            ]))
+            .is_err()
+        );
+    }
+
+    /// Per-tenant settings are validated against the definition: only enabled facets carry a value,
+    /// `max` is a gauge field, values are non-negative.
+    #[test]
+    fn per_tenant_limit_settings_are_checked_against_the_definition() {
+        let config = super::Config {
+            limits: vec![
+                super::LimitDef {
+                    code: "limit:ai".to_owned(),
+                    name: "AI".into(),
+                    description: None,
+                    kind: super::LimitKind::Consumable,
+                    overuse: false,
+                    custom_balance: false,
+                    daily: false,
+                    low_watermark_percent: None,
+                    high_watermark_percent: None,
+                    relevant_if: None,
+                },
+                super::LimitDef {
+                    code: "limit:seats".to_owned(),
+                    name: "Seats".into(),
+                    description: None,
+                    kind: super::LimitKind::Gauge,
+                    overuse: false,
+                    custom_balance: false,
+                    daily: false,
+                    low_watermark_percent: None,
+                    high_watermark_percent: None,
+                    relevant_if: None,
+                },
+            ],
+            ..super::Config::default()
+        };
+
+        let monthly_only = super::LimitSettings {
+            monthly: Some(1000),
+            ..Default::default()
+        };
+        assert!(
+            config
+                .validate_limit_settings("limit:ai", &monthly_only)
+                .is_ok()
+        );
+
+        // Overuse is off on the definition → a value for it is refused.
+        let with_overuse = super::LimitSettings {
+            monthly: Some(1000),
+            overuse: Some(100),
+            ..Default::default()
+        };
+        assert!(
+            config
+                .validate_limit_settings("limit:ai", &with_overuse)
+                .is_err()
+        );
+
+        // `max` belongs to a gauge.
+        let with_max = super::LimitSettings {
+            max: Some(50),
+            ..Default::default()
+        };
+        assert!(
+            config
+                .validate_limit_settings("limit:ai", &with_max)
+                .is_err()
+        );
+        assert!(
+            config
+                .validate_limit_settings("limit:seats", &with_max)
+                .is_ok()
+        );
+
+        // A consumable field on a gauge, and negatives, are refused.
+        assert!(
+            config
+                .validate_limit_settings("limit:seats", &monthly_only)
+                .is_err()
+        );
+        let negative = super::LimitSettings {
+            max: Some(-1),
+            ..Default::default()
+        };
+        assert!(
+            config
+                .validate_limit_settings("limit:seats", &negative)
+                .is_err()
+        );
+
+        assert!(
+            config
+                .validate_limit_settings("limit:nope", &monthly_only)
+                .is_err()
+        );
     }
 }

@@ -27,6 +27,7 @@ pub mod authz;
 pub mod config;
 pub mod contacts;
 pub mod cors;
+pub mod limits;
 pub mod messaging;
 pub mod notify;
 pub mod ratelimit;
@@ -61,6 +62,7 @@ pub async fn serve(platform: &Platform) -> anyhow::Result<()> {
         tenants::routes(platform),
         users::routes(platform),
         authz::routes(platform),
+        limits::routes(platform),
         config::routes(platform),
         audit::routes(platform),
         ratelimit::routes(platform)

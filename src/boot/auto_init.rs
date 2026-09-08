@@ -2,7 +2,7 @@
 
 use crate::auth;
 use crate::boot::Platform;
-use crate::constants::ROLE_OWNER;
+use crate::constants::BOOTSTRAP_ADMIN_ROLE;
 use crate::users::repository::NewUser;
 use std::env;
 use wasabi::aws::dynamodb::generate_id;
@@ -11,8 +11,8 @@ use wasabi::aws::dynamodb::generate_id;
 ///
 /// No-op unless auto-init is enabled and **zero** tenants exist. Creates the system tenant — with a
 /// caller-supplied `UMAMI_SYSTEM_TENANT_ID` when set (so the owner is immediately a system admin),
-/// otherwise a freshly generated id — and an owner user (`UMAMI_ROOT_USERNAME`, default `root`) with
-/// a **randomly generated** one-time password. The tenant id, username and password are logged once,
+/// otherwise a freshly generated id — and a root user (`UMAMI_ROOT_USERNAME`, default `root`) holding
+/// [`BOOTSTRAP_ADMIN_ROLE`], with a **randomly generated** one-time password. The tenant id, username and password are logged once,
 /// prominently; no credentials are hard-coded. Intended for first-run/dev, not steady-state
 /// provisioning.
 #[tracing::instrument(skip_all, err(Display))]
@@ -48,7 +48,7 @@ pub async fn maybe_auto_init(platform: &Platform) -> anyhow::Result<()> {
     let owner = users
         .create_user(NewUser {
             tenant_id: tenant.tenant_id.clone(),
-            roles: vec![ROLE_OWNER.to_owned()],
+            roles: vec![BOOTSTRAP_ADMIN_ROLE.to_owned()],
             username: username.clone(),
             title: None,
             salutation: crate::users::Salutation::default(),

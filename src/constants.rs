@@ -62,6 +62,36 @@ pub const MANAGE_TENANTS_PERMISSION: &str = "manage:tenants";
 /// `is:system-tenant`.
 pub const SWITCH_TENANT_PERMISSION: &str = "switch:tenant";
 
+/// Manage a tenant's limits: set per-tenant settings, top up custom balance, read the ledger and
+/// history. Cross-tenant admin, like [`MANAGE_TENANTS_PERMISSION`]. See `docs/LIMITS.md`.
+pub const MANAGE_LIMITS_PERMISSION: &str = "manage:limits";
+
+/// Read one's **own** tenant's limits: list settings/state, ledger and history per limit. The
+/// self-service read side of [`MANAGE_LIMITS_PERMISSION`] — confined to the caller's tenant, and
+/// never able to change a value. See `docs/LIMITS.md`.
+pub const VIEW_LIMITS_PERMISSION: &str = "view:limits";
+
+/// Book against a tenant's limits: pre-flight `check`, `consume`, and gauge `report`. Held by a
+/// product-service key (mapped from a `scope:*` in the config `apis`). The backend books for
+/// arbitrary tenants, so the tenant is named in the request path, not derived from the token — see
+/// `docs/LIMITS.md`.
+pub const BOOK_LIMITS_PERMISSION: &str = "book:limits";
+
+// ── Limit booking (optimistic-concurrency loop; see docs/LIMITS.md) ────────────
+
+/// How many times a limit compare-and-swap retries a version conflict before giving up with a 503.
+/// A conflict means a concurrent booker for the *same* tenant+limit won the race; contention is
+/// low, so a handful of tries with jittered backoff clears it, and a bound turns a pathological hot
+/// row into a fast failure rather than an unbounded spin.
+pub const LIMIT_CAS_MAX_ATTEMPTS: u32 = 8;
+
+/// Lower bound (ms) of the jittered backoff between limit CAS attempts.
+pub const LIMIT_CAS_BACKOFF_MIN_MS: u64 = 5;
+
+/// Upper bound (ms) of the jittered backoff between limit CAS attempts. Full jitter in
+/// `[MIN, MAX]`, so competing bookers do not retry in lockstep.
+pub const LIMIT_CAS_BACKOFF_MAX_MS: u64 = 60;
+
 /// Config `apis` code of umami's own admin API — the default audience for the console flows
 /// (`/auth/refresh`, `/auth/switch-tenant`) and the catalog entry whose permission mapping decides
 /// who may switch tenants.
@@ -130,13 +160,16 @@ pub const TOTP_MARKER: &str = "is:totp";
 /// can gate on "2FA present" regardless of the specific method.
 pub const TWO_FACTOR_MARKER: &str = "is:2fa";
 
-// ── Built-in role codes (defined in the default config, namespaced `role:*`) ───
+// ── Bootstrap ─────────────────────────────────────────────────────────────────
 
-/// Role code for a tenant's first/owning user.
-pub const ROLE_OWNER: &str = "role:owner";
-
-/// Default role code assigned to a newly created user.
-pub const ROLE_MEMBER: &str = "role:member";
+/// The one role umami itself assigns: the auto-init root user carries it, and the built-in default
+/// config maps it to enough to write the real config. Everything else about roles is the
+/// deployment's business — nothing is assigned by default, to anyone.
+///
+/// Named after what the deployments call their cross-tenant administrators, so the root user
+/// still holds a meaningful role once the real config replaces the default one, instead of an
+/// orphaned bootstrap code.
+pub const BOOTSTRAP_ADMIN_ROLE: &str = "role:platform-admin";
 
 // ── Body size limits ──────────────────────────────────────────────────────────
 

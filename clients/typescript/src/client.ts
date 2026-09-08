@@ -1,5 +1,6 @@
 import type {
   AccessClaims,
+  ActorContext,
   AddedContact,
   ApiErrorBody,
   ApiKeyView,
@@ -22,7 +23,14 @@ import type {
   CustomFieldsSchema,
   DeletedUserCounts,
   ExchangeResponse,
+  GaugeReport,
   HomeResponse,
+  LedgerPage,
+  LimitBreakdown,
+  LimitHistory,
+  LimitRemaining,
+  LimitSettings,
+  LimitsListResponse,
   LoginResponse,
   MeResponse,
   MessagingCodeResponse,
@@ -38,6 +46,7 @@ import type {
   ResetPasswordResponse,
   ResolvedMessagingUser,
   SessionView,
+  SettingsSaveResult,
   Tenant,
   TokenResponse,
   TotpSetup,
@@ -779,6 +788,87 @@ export class UmamiClient {
    * {@link UmamiClient.assignableFeatures} for that, since the answer depends on the tenant. */
   catalogue(): Promise<Catalogue> {
     return this.request<Catalogue>("/config/catalogue");
+  }
+
+  // ── limits (per-tenant quotas) ─────────────────────────────────────────────────
+
+  /** A tenant's configured limits, each with its settings and (once the period has begun) its live
+   * state (`manage:limits`). Merge these by `code` with {@link UmamiClient.catalogue}'s `limits` for
+   * the definitions (name, kind, watermarks). */
+  getTenantLimits(tenantId: string): Promise<LimitsListResponse> {
+    return this.request<LimitsListResponse>(`/tenants/${enc(tenantId)}/limits`);
+  }
+  /** Set one limit's per-tenant settings. `warnings` on the result flag e.g. a lowered allowance
+   * that was capped at the current usage. */
+  setTenantLimitSettings(
+    tenantId: string,
+    code: string,
+    settings: LimitSettings,
+  ): Promise<SettingsSaveResult> {
+    return this.request<SettingsSaveResult>(
+      `/tenants/${enc(tenantId)}/limits/${enc(code)}/settings`,
+      { method: "PUT", body: JSON.stringify(settings) },
+    );
+  }
+  /** Add to a consumable's top-up (custom) balance, which survives the monthly reset. */
+  topupLimit(
+    tenantId: string,
+    code: string,
+    amount: number,
+  ): Promise<{ customBalance: number; remaining: LimitRemaining }> {
+    return this.request<{ customBalance: number; remaining: LimitRemaining }>(
+      `/tenants/${enc(tenantId)}/limits/${enc(code)}/topup`,
+      { method: "POST", body: JSON.stringify({ amount }) },
+    );
+  }
+  /** One page of a limit's transaction ledger, newest first. Pass `cursor` to page. */
+  getLimitLedger(
+    tenantId: string,
+    code: string,
+    opts?: { cursor?: string; limit?: number },
+  ): Promise<LedgerPage> {
+    return this.request<LedgerPage>(
+      `/tenants/${enc(tenantId)}/limits/${enc(code)}/ledger${auditQs(opts?.limit, opts?.cursor)}`,
+    );
+  }
+  /** A limit's month-by-month usage history. */
+  getLimitHistory(tenantId: string, code: string): Promise<LimitHistory> {
+    return this.request<LimitHistory>(`/tenants/${enc(tenantId)}/limits/${enc(code)}/history`);
+  }
+  /** Whether a consume of `amount` would be allowed right now, without drawing anything down. */
+  checkLimit(
+    tenantId: string,
+    code: string,
+    amount: number,
+  ): Promise<{ allowed: boolean; remaining: LimitRemaining }> {
+    return this.request<{ allowed: boolean; remaining: LimitRemaining }>(
+      `/tenants/${enc(tenantId)}/limits/${enc(code)}/check`,
+      { method: "POST", body: JSON.stringify({ amount }) },
+    );
+  }
+  /** Draw `amount` down from a consumable, attributing it to the optional actor/transaction. */
+  consumeLimit(
+    tenantId: string,
+    code: string,
+    amount: number,
+    ctx?: ActorContext,
+  ): Promise<{ breakdown: LimitBreakdown; remaining: LimitRemaining }> {
+    return this.request<{ breakdown: LimitBreakdown; remaining: LimitRemaining }>(
+      `/tenants/${enc(tenantId)}/limits/${enc(code)}/consume`,
+      { method: "POST", body: JSON.stringify({ amount, ...ctx }) },
+    );
+  }
+  /** Set a gauge's live reading, attributing it to the optional actor/transaction. */
+  reportGauge(
+    tenantId: string,
+    code: string,
+    value: number,
+    ctx?: ActorContext,
+  ): Promise<GaugeReport> {
+    return this.request<GaugeReport>(`/tenants/${enc(tenantId)}/limits/${enc(code)}/report`, {
+      method: "POST",
+      body: JSON.stringify({ value, ...ctx }),
+    });
   }
 
   // ── API keys: tenant service keys (write:members) ──────────────────────────────

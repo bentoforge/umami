@@ -53,6 +53,7 @@ mod config;
 mod constants;
 mod contacts;
 mod home;
+mod limits;
 mod messaging;
 mod notify;
 mod search;
