@@ -73,6 +73,49 @@ pub struct LimitDef {
 **Katalog-Endpoint** `GET /config/catalogue` liefert die aufgelösten Limit-Defs mit (dann fällt
 UI-Arbeit für die Definitionen weg; die `ConfigPage` editiert das Roh-JSON ohnehin schon).
 
+### Beispiel
+
+Ein Consumable (KI-Guthaben, alle Facetten, nur für Mandanten mit `feature:ai`) und ein Gauge
+(Benutzerplätze, mit Watermarks) im Katalog:
+
+```json
+{
+  "limits": [
+    {
+      "code": "limit:ai-credits",
+      "name": { "de": "KI-Guthaben", "en": "AI credits", "*": "AI credits" },
+      "description": { "en": "AI assistant usage, in credits." },
+      "kind": "consumable",
+      "overuse": true,
+      "customBalance": true,
+      "daily": true,
+      "relevantIf": "feature:ai"
+    },
+    { "code": "limit:seats", "name": "Seats", "kind": "gauge",
+      "lowWatermarkPercent": 80, "highWatermarkPercent": 95 }
+  ]
+}
+```
+
+Werte je Mandant (`PUT /tenants/{id}/limits/{code}/settings`): `{ "monthly": 100000, "overuse":
+20000, "daily": 5000 }` für `limit:ai-credits`, `{ "max": 50 }` für `limit:seats`.
+
+`GET /tenants/{id}/limits` liefert dann Settings + projizierten State — beim Gauge sind die
+Consumable-Zähler 0 und `gaugeValue` (z.B. 48 von 50 = 96 % > High-Watermark) wird „critical"
+markiert:
+
+```json
+{ "limits": [
+  { "code": "limit:ai-credits",
+    "settings": { "monthly": 100000, "overuse": 20000, "daily": 5000 },
+    "state": { "periodYearMonth": "2026-09", "monthlyRemaining": 63200,
+               "overuseRemaining": 20000, "customBalance": 5000, "dailyRemaining": 1800 } },
+  { "code": "limit:seats", "settings": { "max": 50 },
+    "state": { "periodYearMonth": "2026-09", "monthlyRemaining": 0, "overuseRemaining": 0,
+               "customBalance": 0, "gaugeValue": 48 } }
+] }
+```
+
 ## L2 — `Tenant.limits` (Werte je Mandant)
 
 Neues Feld auf `Tenant` (`src/tenants/mod.rs`), analog `custom_fields`:
@@ -362,7 +405,10 @@ den *Dienst*.
   `nextCursor` (opak, base64url über den letzten `ledgerSk`), via `Limit` + `ExclusiveStartKey` —
   nie den ganzen Ledger. Default 50, Cap 100.
 - Live-State in der Liste: `GET /tenants/{id}/limits` → `{ code, settings, state? }` je Limit
-  (projizierter aktueller Stand, kein Write, ohne `book:limits`) — die Read-Basis der UI.
+  (projizierter aktueller Stand, kein Write, ohne `book:limits`) — die Read-Basis der UI. Gelistet
+  wird die **Union aus relevanten** (`relevantIf` hält, serverseitig via `Config::relevant_limits`)
+  **und hinterlegten** Limits; ein Limit ohne Def bleibt so sichtbar und per Leer-Settings entfernbar
+  (Altlasten-Aufräumen).
 - TS-Client (`clients/typescript`): Typen + Methoden (`getTenantLimits`, `setTenantLimitSettings`,
   `topupLimit`, `getLimitLedger`, `getLimitHistory`, `checkLimit`, `consumeLimit`, `reportGauge`),
   Katalog um `limits` erweitert.
