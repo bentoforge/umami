@@ -1,4 +1,5 @@
 import type { CatalogueEntry, CustomFieldView, Salutation, UserView } from "@bentoforge/umami-iam";
+import { KeyIcon, LockClosedIcon, LockOpenIcon, TrashIcon } from "@heroicons/react/24/outline";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
@@ -216,6 +217,7 @@ export function UsersPage() {
                         actions={[
                           {
                             label: t("users.resetPassword"),
+                            icon: KeyIcon,
                             onSelect: () => void resetPassword(user),
                           },
                           ...(isSelf
@@ -223,11 +225,13 @@ export function UsersPage() {
                             : [
                                 {
                                   label: user.locked ? t("users.unlock") : t("users.lock"),
+                                  icon: user.locked ? LockOpenIcon : LockClosedIcon,
                                   onSelect: () => void setLocked(user, !user.locked),
                                 },
                                 {
                                   label: t("users.delete"),
                                   danger: true,
+                                  icon: TrashIcon,
                                   onSelect: () => void onDelete(user),
                                 },
                               ]),

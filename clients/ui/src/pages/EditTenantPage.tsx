@@ -1,4 +1,5 @@
 import type { CatalogueEntry, CustomFieldView, Tenant } from "@bentoforge/umami-iam";
+import { ArrowsRightLeftIcon, TrashIcon } from "@heroicons/react/24/outline";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams } from "react-router-dom";
@@ -102,6 +103,7 @@ export function EditTenantPage() {
             actions={[
               {
                 label: t("tenants.impersonate"),
+                icon: ArrowsRightLeftIcon,
                 onSelect: () => void switchTenant(tenant.tenantId, tenant.name),
               },
               ...(isProtected(tenant.tenantId)
@@ -109,6 +111,7 @@ export function EditTenantPage() {
                 : [
                     {
                       label: t("tenants.delete"),
+                      icon: TrashIcon,
                       danger: true,
                       onSelect: () => void onDelete(),
                     },

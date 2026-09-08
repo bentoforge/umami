@@ -11,6 +11,7 @@ import type {
   SessionView,
   TotpSetup,
 } from "@bentoforge/umami-iam";
+import { ChartBarIcon } from "@heroicons/react/24/outline";
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useLocation } from "react-router-dom";
@@ -29,7 +30,7 @@ import {
   PatList,
   RoleToggleList,
 } from "../components";
-import { RateLimitCard, RateLimitDisclosure } from "../ratelimit";
+import { RateLimitCard, RateLimitDetails } from "../ratelimit";
 import { card, dangerButton, ghostButton, input, primaryButton, spanSixth, spanThird } from "../ui";
 
 /** Page size for the audit "load more" list. */
@@ -1088,6 +1089,8 @@ function PatsPanel() {
   const { client, me } = useUmami();
   const { t } = useTranslation();
   const [pats, setPats] = useState<ApiKeyView[] | null>(null);
+  // Opened from the row's menu, one token at a time — see the service-key table, same shape.
+  const [meterFor, setMeterFor] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
@@ -1235,9 +1238,20 @@ function PatsPanel() {
           pats={pats}
           roleLabel={roleLabel}
           onDelete={revoke}
-          renderDetails={(pat) => (
-            <RateLimitDisclosure target={{ kind: "myPat", keyId: pat.keyId }} />
-          )}
+          extraActions={(pat) => [
+            {
+              label: meterFor === pat.keyId ? t("rateLimits.hide") : t("rateLimits.show"),
+              icon: ChartBarIcon,
+              onSelect: () => setMeterFor((open) => (open === pat.keyId ? null : pat.keyId)),
+            },
+          ]}
+          renderDetails={(pat) =>
+            meterFor === pat.keyId ? (
+              <div className="max-w-md">
+                <RateLimitDetails target={{ kind: "myPat", keyId: pat.keyId }} />
+              </div>
+            ) : null
+          }
         />
       )}
     </section>

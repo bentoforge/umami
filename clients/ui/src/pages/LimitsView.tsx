@@ -6,7 +6,14 @@ import type {
   LimitKind,
   LimitSettings,
 } from "@bentoforge/umami-iam";
-import { ArrowLeftIcon, PencilSquareIcon } from "@heroicons/react/24/outline";
+import {
+  ArrowLeftIcon,
+  ClockIcon,
+  ListBulletIcon,
+  PencilSquareIcon,
+  PlusCircleIcon,
+  TrashIcon,
+} from "@heroicons/react/24/outline";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useUmami } from "../auth/UmamiProvider";
@@ -383,14 +390,31 @@ function RowMenu({
   const actions: MenuAction[] = [];
   if (row.def) {
     if (row.def.kind === "consumable") {
-      actions.push({ label: t("limits.ledger"), onSelect: () => onAction("ledger", code) });
-      actions.push({ label: t("limits.history"), onSelect: () => onAction("history", code) });
+      actions.push({
+        label: t("limits.ledger"),
+        icon: ListBulletIcon,
+        onSelect: () => onAction("ledger", code),
+      });
+      actions.push({
+        label: t("limits.history"),
+        icon: ClockIcon,
+        onSelect: () => onAction("history", code),
+      });
       if (!readOnly && row.def.customBalance) {
-        actions.push({ label: t("limits.credit"), onSelect: () => onAction("topup", code) });
+        actions.push({
+          label: t("limits.credit"),
+          icon: PlusCircleIcon,
+          onSelect: () => onAction("topup", code),
+        });
       }
     }
   } else if (!readOnly) {
-    actions.push({ label: t("limits.delete"), danger: true, onSelect: () => onDelete(code) });
+    actions.push({
+      label: t("limits.delete"),
+      danger: true,
+      icon: TrashIcon,
+      onSelect: () => onDelete(code),
+    });
   }
 
   if (actions.length === 0) {

@@ -9,6 +9,7 @@ import type {
   SessionView,
   UserView,
 } from "@bentoforge/umami-iam";
+import { KeyIcon, LockClosedIcon, LockOpenIcon, TrashIcon } from "@heroicons/react/24/outline";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams } from "react-router-dom";
@@ -149,15 +150,21 @@ export function EditUserPage() {
             label={t("users.actions")}
             triggerLabel={t("common.moreActions")}
             actions={[
-              { label: t("users.resetPassword"), onSelect: () => void onReset() },
+              { label: t("users.resetPassword"), icon: KeyIcon, onSelect: () => void onReset() },
               ...(isSelf
                 ? []
                 : [
                     {
                       label: user.locked ? t("users.unlock") : t("users.lock"),
+                      icon: user.locked ? LockOpenIcon : LockClosedIcon,
                       onSelect: () => void onSetLocked(!user.locked),
                     },
-                    { label: t("users.delete"), danger: true, onSelect: () => void onDelete() },
+                    {
+                      label: t("users.delete"),
+                      danger: true,
+                      icon: TrashIcon,
+                      onSelect: () => void onDelete(),
+                    },
                   ]),
             ]}
           />

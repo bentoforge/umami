@@ -6,8 +6,14 @@ import type {
   CustomFieldView,
   MessagingLink,
 } from "@bentoforge/umami-iam";
-import { EllipsisVerticalIcon } from "@heroicons/react/24/outline";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import {
+  EllipsisVerticalIcon,
+  MinusCircleIcon,
+  PaperAirplaneIcon,
+  StarIcon,
+  TrashIcon,
+} from "@heroicons/react/24/outline";
+import { type ComponentType, Fragment, type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { resolveLocalized, useBranding, useBrandingTitle } from "./branding";
 import i18n from "./i18n/i18n";
@@ -332,8 +338,26 @@ export function roleCatalog(
   ];
 }
 
+
 /** One entry in a {@link DropdownMenu}. */
-export type MenuAction = { label: string; onSelect: () => void; danger?: boolean };
+export type MenuAction = {
+  label: string;
+  onSelect: () => void;
+  danger?: boolean;
+  /** Heroicon (24/outline) shown before the label. */
+  icon?: ComponentType<{ className?: string }>;
+};
+
+/** Index of the first action in the trailing run of destructive ones, or -1 when there is nothing
+ * to fence off — no destructive tail, or nothing above it to separate it from. Computed rather
+ * than declared, so no menu can forget the rule that a Delete sits behind a line of its own. */
+function firstDestructiveInTail(actions: MenuAction[]): number {
+  let index = actions.length;
+  while (index > 0 && actions[index - 1]?.danger) {
+    index--;
+  }
+  return index > 0 && index < actions.length ? index : -1;
+}
 
 /** A vertical-3-dots menu (row actions / page actions). The panel is positioned `fixed` (anchored
  * to the trigger) so it escapes any `overflow`-clipping ancestor like a scrollable table card.
@@ -350,11 +374,11 @@ export function DropdownMenu({
   label: string;
   triggerLabel?: string;
 }) {
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  const WIDTH = 192; // 12rem — keep in sync with the panel's inline width.
+  const separatorBefore = firstDestructiveInTail(actions);
 
   const toggle = () => {
     if (pos) {
@@ -363,7 +387,10 @@ export function DropdownMenu({
     }
     const r = btnRef.current?.getBoundingClientRect();
     if (r) {
-      setPos({ top: r.bottom + 4, left: Math.max(8, r.right - WIDTH) });
+      // Anchored by its right edge, so the panel can size itself to its longest label and grow
+      // leftwards. Pinning `left` would need the width up front, and a width guessed up front is
+      // what made "Send confirmation link" wrap.
+      setPos({ top: r.bottom + 4, right: Math.max(8, window.innerWidth - r.right) });
     }
   };
 
@@ -404,25 +431,30 @@ export function DropdownMenu({
       {pos && (
         <div
           ref={menuRef}
-          style={{ position: "fixed", top: pos.top, left: pos.left, width: WIDTH }}
-          className="z-50 rounded-2xl bg-white dark:bg-slate-800 p-1.5 shadow-lg ring-1 ring-black/5 dark:ring-white/10"
+          style={{ position: "fixed", top: pos.top, right: pos.right }}
+          className="z-50 w-max min-w-48 max-w-[min(20rem,calc(100vw-1rem))] rounded-2xl bg-white dark:bg-slate-800 p-1.5 shadow-lg ring-1 ring-black/5 dark:ring-white/10"
         >
-          {actions.map((action) => (
-            <button
-              key={action.label}
-              type="button"
-              onClick={() => {
-                setPos(null);
-                action.onSelect();
-              }}
-              className={`block w-full text-left rounded-lg px-3 py-2 text-sm ${
-                action.danger
-                  ? "text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950"
-                  : "text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700"
-              }`}
-            >
-              {action.label}
-            </button>
+          {actions.map((action, index) => (
+            <Fragment key={action.label}>
+              {index === separatorBefore && (
+                <hr className="my-1 border-0 h-px bg-slate-200 dark:bg-slate-700" />
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setPos(null);
+                  action.onSelect();
+                }}
+                className={`flex w-full items-center gap-2 text-left rounded-lg px-3 py-2 text-sm ${
+                  action.danger
+                    ? "text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950"
+                    : "text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700"
+                }`}
+              >
+                {action.icon && <action.icon className="h-4 w-4 shrink-0" />}
+                {action.label}
+              </button>
+            </Fragment>
           ))}
         </div>
       )}
@@ -438,12 +470,15 @@ export function PatList({
   pats,
   roleLabel = (code) => code,
   onDelete,
+  extraActions,
   renderDetails,
 }: {
   pats: ApiKeyView[];
   roleLabel?: (code: string) => string;
   onDelete?: (pat: ApiKeyView) => void;
-  /** Extra content below a row — the rate-limit disclosure on the screens that offer it. */
+  /** Row actions above the delete — the rate-limit toggle on the screens that offer it. */
+  extraActions?: (pat: ApiKeyView) => MenuAction[];
+  /** Extra content below a row — the rate-limit panel on the screens that offer it. */
   renderDetails?: (pat: ApiKeyView) => ReactNode;
 }) {
   const { t } = useTranslation();
@@ -463,10 +498,22 @@ export function PatList({
               </div>
               {renderDetails && <div className="mt-2">{renderDetails(pat)}</div>}
             </div>
-            {onDelete && (
+            {(onDelete || extraActions) && (
               <DropdownMenu
                 label={t("pats.menu")}
-                actions={[{ label: t("pats.delete"), danger: true, onSelect: () => onDelete(pat) }]}
+                actions={[
+                  ...(extraActions?.(pat) ?? []),
+                  ...(onDelete
+                    ? [
+                        {
+                          label: t("pats.delete"),
+                          danger: true,
+                          icon: TrashIcon,
+                          onSelect: () => onDelete(pat),
+                        },
+                      ]
+                    : []),
+                ]}
               />
             )}
           </li>
@@ -504,7 +551,12 @@ export function MessagingLinkList({
               <DropdownMenu
                 label={t("messaging.menu")}
                 actions={[
-                  { label: t("messaging.delete"), danger: true, onSelect: () => onDelete(link) },
+                  {
+                    label: t("messaging.delete"),
+                    danger: true,
+                    icon: TrashIcon,
+                    onSelect: () => onDelete(link),
+                  },
                 ]}
               />
             )}
@@ -562,7 +614,13 @@ export function ContactList({
                 label={t("contacts.menu")}
                 actions={[
                   ...(onVerify && !contact.verified
-                    ? [{ label: t("contacts.verify"), onSelect: () => onVerify(contact) }]
+                    ? [
+                        {
+                          label: t("contacts.verify"),
+                          icon: PaperAirplaneIcon,
+                          onSelect: () => onVerify(contact),
+                        },
+                      ]
                     : []),
                   // Only a confirmed address can be preferred — the server refuses the rest, so
                   // the menu does not offer a click that can only end in an error.
@@ -570,6 +628,7 @@ export function ContactList({
                     ? [
                         {
                           label: t("contacts.setPreferred"),
+                          icon: StarIcon,
                           onSelect: () => onPrefer(contact, true),
                         },
                       ]
@@ -578,6 +637,7 @@ export function ContactList({
                     ? [
                         {
                           label: t("contacts.clearPreferred"),
+                          icon: MinusCircleIcon,
                           onSelect: () => onPrefer(contact, false),
                         },
                       ]
@@ -587,6 +647,7 @@ export function ContactList({
                         {
                           label: t("contacts.delete"),
                           danger: true,
+                          icon: TrashIcon,
                           onSelect: () => onDelete(contact),
                         },
                       ]
