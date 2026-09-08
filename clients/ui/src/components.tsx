@@ -338,6 +338,17 @@ export function roleCatalog(
   ];
 }
 
+/** One fact as a bordered chip — muted label, then the value. Carries its own label rather than
+ * relying on a column header, so a row of them stays readable in any order and with any of them
+ * missing. */
+export function DetailChip({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-0.5 text-xs dark:border-slate-700">
+      <span className="text-slate-400">{label}:</span>
+      <span className="text-slate-700 dark:text-slate-200">{children}</span>
+    </span>
+  );
+}
 
 /** One entry in a {@link DropdownMenu}. */
 export type MenuAction = {

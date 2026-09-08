@@ -280,7 +280,7 @@ The identity/tenancy data model lives in the code: the entity structs (`User`, `
 
 - **`clients/typescript`** — the `@bentoforge/umami-iam` SDK: login/refresh, token exchange, and
   typed access to every admin route.
-- **`clients/ui`** — a Vite/React management UI (tenants, users, API tokens, config, audit, profile),
+- **`clients/ui`** — a Vite/React management UI (tenants, users, service keys, config, audit, profile),
   optionally served by umami itself under `/app`.
 
 ## License

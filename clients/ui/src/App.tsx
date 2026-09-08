@@ -2,7 +2,6 @@ import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { useUmami } from "./auth/UmamiProvider";
 import { Loader } from "./components";
 import { AdminLayout } from "./pages/AdminLayout";
-import { ApiTokensPage } from "./pages/ApiTokensPage";
 import { AuditPage } from "./pages/AuditPage";
 import { ConfigPage } from "./pages/ConfigPage";
 import { CreateTenantPage } from "./pages/CreateTenantPage";
@@ -12,6 +11,7 @@ import { LoginPage } from "./pages/LoginPage";
 import { ProfilePage } from "./pages/ProfilePage";
 import { RateLimitsPage } from "./pages/RateLimitsPage";
 import { ResetPasswordPage } from "./pages/ResetPasswordPage";
+import { ServiceKeysPage } from "./pages/ServiceKeysPage";
 import { StartPage } from "./pages/StartPage";
 import { TenantsPage } from "./pages/TenantsPage";
 import { UsersPage } from "./pages/UsersPage";
@@ -65,8 +65,8 @@ export function App() {
           element={can("manage:users") ? <EditUserPage /> : <Navigate to="/" replace />}
         />
         <Route
-          path="api-tokens"
-          element={can("manage:service-keys") ? <ApiTokensPage /> : <Navigate to="/" replace />}
+          path="service-keys"
+          element={can("manage:service-keys") ? <ServiceKeysPage /> : <Navigate to="/" replace />}
         />
         <Route
           path="audit"

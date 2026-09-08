@@ -9,7 +9,7 @@
     "start": "Start",
     "tenants": "Tenants",
     "users": "Users",
-    "apiTokens": "API Tokens",
+    "serviceKeys": "Service keys",
     "profile": "Profile",
     "audit": "Audit log",
     "sessions": "Sessions",
@@ -248,12 +248,14 @@
     "secretOnce": "Copy it now — the token is shown only once:",
     "menu": "Actions"
   },
-  "apiTokens": {
-    "title": "API tokens",
+  "serviceKeys": {
+    "title": "Service keys",
     "empty": "No service keys yet.",
     "newKey": "New service key",
     "name": "Name",
+    "details": "Details",
     "scopes": "Scopes",
+    "allowedOrigins": "Allowed origins",
     "scopesEmpty": "No scopes assignable.",
     "origins": "Allowed origins (comma-separated, optional)",
     "originsPlaceholder": "https://app.example.com",

@@ -1,9 +1,19 @@
 import type { ApiKeyView, CatalogueEntry } from "@bentoforge/umami-iam";
-import { useCallback, useEffect, useState } from "react";
+import { ChartBarIcon, TrashIcon } from "@heroicons/react/24/outline";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useUmami } from "../auth/UmamiProvider";
-import { Banner, DropdownMenu, errMsg, Field, formatDateTime, Loader, Toggle } from "../components";
-import { RateLimitDisclosure } from "../ratelimit";
+import {
+  Banner,
+  DetailChip,
+  DropdownMenu,
+  errMsg,
+  Field,
+  formatDateTime,
+  Loader,
+  Toggle,
+} from "../components";
+import { RateLimitDetails } from "../ratelimit";
 import { card, ghostButton, input, primaryButton, td, th } from "../ui";
 
 /** Top-aligned cell: `td` bakes in `align-middle`, which a trailing `align-top` won't override. */
@@ -11,7 +21,7 @@ const tdTop = td.replace("align-middle", "align-top");
 
 /** Own-tenant screen: manage service keys (M2M machine principals). Personal access tokens live in
  * the profile; this page is for tenant-owned keys exchanged at `POST /auth/token`. */
-export function ApiTokensPage() {
+export function ServiceKeysPage() {
   const { client, me } = useUmami();
   const { t } = useTranslation();
   const tenantId = me?.user.tenantId ?? "";
@@ -19,6 +29,10 @@ export function ApiTokensPage() {
   const [error, setError] = useState<string | null>(null);
   const [freshSecret, setFreshSecret] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [scopeDefs, setScopeDefs] = useState<CatalogueEntry[]>([]);
+  // The rate-limit panel is opened from the row's menu, so its state lives with the row: one key
+  // at a time, which also keeps the table from growing several meters at once.
+  const [meterFor, setMeterFor] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -34,8 +48,18 @@ export function ApiTokensPage() {
     void load();
   }, [load]);
 
+  // Scope codes are for machines; a screen shows the catalogue's words for them.
+  useEffect(() => {
+    client
+      .catalogue()
+      .then((c) => setScopeDefs(c.scopes))
+      .catch(() => setScopeDefs([]));
+  }, [client]);
+
+  const scopeLabel = (code: string) => scopeDefs.find((d) => d.code === code)?.name ?? code;
+
   const onDelete = async (key: ApiKeyView) => {
-    if (!window.confirm(t("apiTokens.deleteConfirm", { name: key.name }))) {
+    if (!window.confirm(t("serviceKeys.deleteConfirm", { name: key.name }))) {
       return;
     }
     setError(null);
@@ -51,11 +75,11 @@ export function ApiTokensPage() {
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
         <h1 className="text-xl font-semibold text-slate-900 dark:text-white">
-          {t("apiTokens.title")}
+          {t("serviceKeys.title")}
         </h1>
         {!creating && (
           <button className={primaryButton} onClick={() => setCreating(true)}>
-            {t("apiTokens.new")}
+            {t("serviceKeys.new")}
           </button>
         )}
       </div>
@@ -65,7 +89,7 @@ export function ApiTokensPage() {
       {freshSecret && (
         <div className="rounded-lg border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950 p-3">
           <p className="text-xs text-emerald-700 dark:text-emerald-300 mb-1">
-            {t("apiTokens.secretOnce")}
+            {t("serviceKeys.secretOnce")}
           </p>
           <code className="block break-all text-sm text-slate-900 dark:text-slate-100">
             {freshSecret}
@@ -90,15 +114,14 @@ export function ApiTokensPage() {
         {keys === null ? (
           <Loader />
         ) : keys.length === 0 ? (
-          <p className="text-slate-500">{t("apiTokens.empty")}</p>
+          <p className="text-slate-500">{t("serviceKeys.empty")}</p>
         ) : (
           <table className="w-full border-collapse">
             <thead>
               <tr className="border-b border-slate-200 dark:border-slate-700">
-                <th className={th}>{t("apiTokens.name")}</th>
-                <th className={th}>{t("apiTokens.scopes")}</th>
-                <th className={th}>{t("apiTokens.lastUsed")}</th>
-                <th className={th}>{t("apiTokens.expires")}</th>
+                <th className={th}>{t("serviceKeys.name")}</th>
+                <th className={th}>{t("serviceKeys.details")}</th>
+                <th className={th}>{t("serviceKeys.lastUsed")}</th>
                 <th className={`${th} w-0`} />
               </tr>
             </thead>
@@ -115,31 +138,33 @@ export function ApiTokensPage() {
                         {t("rateLimits.override")}
                       </div>
                     )}
-                    <div className="mt-2">
-                      <RateLimitDisclosure
-                        target={{ kind: "apiKey", tenantId, keyId: key.keyId }}
-                      />
-                    </div>
+                    {meterFor === key.keyId && (
+                      <div className="mt-2 max-w-md">
+                        <RateLimitDetails target={{ kind: "apiKey", tenantId, keyId: key.keyId }} />
+                      </div>
+                    )}
                   </td>
-                  <td className={`${tdTop}`}>
-                    <div>{key.scopes.join(", ") || "—"}</div>
-                    <div className="text-xs text-slate-400">
-                      {key.allowedOrigins.join(", ") || "—"}
-                    </div>
+                  <td className={`${tdTop} text-sm`}>
+                    <Details keyView={key} scopeLabel={scopeLabel} />
                   </td>
                   <td className={`${tdTop} whitespace-nowrap`}>
-                    {key.lastUsedAt ? formatDateTime(key.lastUsedAt) : t("apiTokens.neverUsed")}
-                  </td>
-                  <td className={`${tdTop} whitespace-nowrap`}>
-                    {key.expiresAt ? formatDateTime(key.expiresAt) : "—"}
+                    {key.lastUsedAt ? formatDateTime(key.lastUsedAt) : t("serviceKeys.neverUsed")}
                   </td>
                   <td className={`${tdTop} text-right`}>
                     <DropdownMenu
-                      label={t("apiTokens.menu")}
+                      label={t("serviceKeys.menu")}
                       actions={[
                         {
-                          label: t("apiTokens.delete"),
+                          label:
+                            meterFor === key.keyId ? t("rateLimits.hide") : t("rateLimits.show"),
+                          icon: ChartBarIcon,
+                          onSelect: () =>
+                            setMeterFor((open) => (open === key.keyId ? null : key.keyId)),
+                        },
+                        {
+                          label: t("serviceKeys.delete"),
                           danger: true,
+                          icon: TrashIcon,
                           onSelect: () => void onDelete(key),
                         },
                       ]}
@@ -153,6 +178,47 @@ export function ApiTokensPage() {
       </section>
     </div>
   );
+}
+
+/** The details cell: one chip per fact the key actually carries — scopes, expiry, allowed origins.
+ * An absent one is left out rather than shown as an em dash; three dashes say nothing and read like
+ * a defect. */
+function Details({
+  keyView,
+  scopeLabel,
+}: {
+  keyView: ApiKeyView;
+  scopeLabel: (code: string) => string;
+}) {
+  const { t } = useTranslation();
+  const items: ReactNode[] = [];
+
+  if (keyView.scopes.length > 0) {
+    items.push(
+      <DetailChip key="scopes" label={t("serviceKeys.scopes")}>
+        {keyView.scopes.map(scopeLabel).join(", ")}
+      </DetailChip>,
+    );
+  }
+  if (keyView.expiresAt) {
+    items.push(
+      <DetailChip key="expires" label={t("serviceKeys.expires")}>
+        {formatDateTime(keyView.expiresAt)}
+      </DetailChip>,
+    );
+  }
+  if (keyView.allowedOrigins.length > 0) {
+    items.push(
+      <DetailChip key="origins" label={t("serviceKeys.allowedOrigins")}>
+        {keyView.allowedOrigins.join(", ")}
+      </DetailChip>,
+    );
+  }
+
+  if (items.length === 0) {
+    return <span className="text-slate-400">—</span>;
+  }
+  return <div className="flex flex-wrap gap-1.5">{items}</div>;
 }
 
 function CreateKey({
@@ -237,18 +303,18 @@ function CreateKey({
 
   return (
     <section className={`${card} space-y-4`}>
-      <h2 className="font-medium text-slate-800 dark:text-slate-200">{t("apiTokens.newKey")}</h2>
+      <h2 className="font-medium text-slate-800 dark:text-slate-200">{t("serviceKeys.newKey")}</h2>
 
-      <Field label={t("apiTokens.name")}>
+      <Field label={t("serviceKeys.name")}>
         <input className={input} value={name} onChange={(e) => setName(e.target.value)} />
       </Field>
 
       <div>
         <div className="text-sm font-medium text-slate-800 dark:text-slate-200">
-          {t("apiTokens.scopes")}
+          {t("serviceKeys.scopes")}
         </div>
         {scopeCatalog.length === 0 ? (
-          <p className="mt-1 text-xs text-slate-400">{t("apiTokens.scopesEmpty")}</p>
+          <p className="mt-1 text-xs text-slate-400">{t("serviceKeys.scopesEmpty")}</p>
         ) : (
           <ul className="mt-2 divide-y divide-slate-100 dark:divide-slate-700/50">
             {scopeCatalog.map((def) => (
@@ -277,16 +343,16 @@ function CreateKey({
         )}
       </div>
 
-      <Field label={t("apiTokens.origins")}>
+      <Field label={t("serviceKeys.origins")}>
         <input
           className={input}
-          placeholder={t("apiTokens.originsPlaceholder")}
+          placeholder={t("serviceKeys.originsPlaceholder")}
           value={origins}
           onChange={(e) => setOrigins(e.target.value)}
         />
       </Field>
 
-      <Field label={t("apiTokens.expiresAt")}>
+      <Field label={t("serviceKeys.expiresAt")}>
         <input
           className={input}
           type="date"
@@ -300,16 +366,16 @@ function CreateKey({
           <Toggle
             checked={allowSecretLogin}
             disabled={busy}
-            label={t("apiTokens.allowSecretLogin")}
+            label={t("serviceKeys.allowSecretLogin")}
             onChange={setAllowSecretLogin}
           />
         </div>
         <div className="min-w-0">
           <div className="text-sm font-medium text-slate-800 dark:text-slate-200">
-            {t("apiTokens.allowSecretLogin")}
+            {t("serviceKeys.allowSecretLogin")}
           </div>
           <div className="text-xs text-slate-400 dark:text-slate-500">
-            {t("apiTokens.allowSecretLoginHint")}
+            {t("serviceKeys.allowSecretLoginHint")}
           </div>
         </div>
       </div>
@@ -320,7 +386,7 @@ function CreateKey({
           disabled={busy || !name.trim()}
           onClick={() => void submit()}
         >
-          {t("apiTokens.create")}
+          {t("serviceKeys.create")}
         </button>
         <button
           className={ghostButton}
@@ -330,7 +396,7 @@ function CreateKey({
             onCancel();
           }}
         >
-          {t("apiTokens.cancel")}
+          {t("serviceKeys.cancel")}
         </button>
       </div>
     </section>

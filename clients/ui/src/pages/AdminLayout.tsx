@@ -46,7 +46,7 @@ export function AdminLayout() {
     { to: "/", label: t("nav.start"), show: true, end: true },
     { to: "/tenants", label: t("nav.tenants"), show: can("manage:tenants") },
     { to: "/users", label: t("nav.users"), show: can("manage:users") },
-    { to: "/api-tokens", label: t("nav.apiTokens"), show: can("manage:service-keys") },
+    { to: "/service-keys", label: t("nav.serviceKeys"), show: can("manage:service-keys") },
   ].filter((item) => item.show);
 
   // Personal/account items — the user menu (desktop) and part of the mobile menu.
