@@ -307,6 +307,8 @@ export interface LimitCatalogueEntry {
   lowWatermarkPercent?: number;
   /** A gauge at or above this percent of its max is "critical". */
   highWatermarkPercent?: number;
+  /** Unit label for the figures (e.g. "credits", "seats"), resolved to the caller's language. */
+  unit?: string;
 }
 
 /** The label catalogues, resolved (`GET /config/catalogue`). */

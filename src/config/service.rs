@@ -79,6 +79,8 @@ struct LimitCatalogueEntry {
     low_watermark_percent: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     high_watermark_percent: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    unit: Option<String>,
 }
 
 impl LimitCatalogueEntry {
@@ -97,6 +99,10 @@ impl LimitCatalogueEntry {
             daily: def.daily,
             low_watermark_percent: def.low_watermark_percent,
             high_watermark_percent: def.high_watermark_percent,
+            unit: def
+                .unit
+                .as_ref()
+                .map(|text| text.resolve(locale, default_locale).to_owned()),
         }
     }
 }

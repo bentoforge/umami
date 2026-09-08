@@ -495,6 +495,10 @@ pub struct LimitDef {
     /// relevant to every tenant.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub relevant_if: Option<String>,
+    /// Optional unit label for the figures (e.g. "credits", "tokens", "seats"), in one or more
+    /// languages — the UI writes it after the numbers. Purely presentational.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<LocalizedText>,
 }
 
 /// A tenant's values for one limit (keyed by [`LimitDef::code`] in `Tenant.limits`). Which fields
@@ -1902,6 +1906,7 @@ mod tests {
             low_watermark_percent: None,
             high_watermark_percent: None,
             relevant_if: None,
+            unit: None,
         };
         let gauge = |code: &str| super::LimitDef {
             code: code.to_owned(),
@@ -1914,6 +1919,7 @@ mod tests {
             low_watermark_percent: Some(70),
             high_watermark_percent: Some(90),
             relevant_if: None,
+            unit: None,
         };
         let with_limits = |limits: Vec<super::LimitDef>| super::Config {
             limits,
@@ -1974,6 +1980,7 @@ mod tests {
                     low_watermark_percent: None,
                     high_watermark_percent: None,
                     relevant_if: None,
+                    unit: None,
                 },
                 super::LimitDef {
                     code: "limit:seats".to_owned(),
@@ -1986,6 +1993,7 @@ mod tests {
                     low_watermark_percent: None,
                     high_watermark_percent: None,
                     relevant_if: None,
+                    unit: None,
                 },
             ],
             ..super::Config::default()

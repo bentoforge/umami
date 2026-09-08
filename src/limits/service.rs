@@ -972,6 +972,7 @@ mod tests {
                 low_watermark_percent: None,
                 high_watermark_percent: None,
                 relevant_if: None,
+                unit: None,
             },
             LimitDef {
                 code: "limit:seats".to_owned(),
@@ -984,6 +985,7 @@ mod tests {
                 low_watermark_percent: Some(70),
                 high_watermark_percent: Some(90),
                 relevant_if: None,
+                unit: None,
             },
             LimitDef {
                 code: "limit:ai-daily".to_owned(),
@@ -996,6 +998,7 @@ mod tests {
                 low_watermark_percent: None,
                 high_watermark_percent: None,
                 relevant_if: None,
+                unit: None,
             },
         ];
         // Save bumps the version; hand it the expected one so optimistic concurrency is satisfied.
@@ -1650,6 +1653,7 @@ mod tests {
             low_watermark_percent: None,
             high_watermark_percent: None,
             relevant_if: relevant_if.map(str::to_owned),
+            unit: None,
         };
         let current = repository.current().await.expect("seeded");
         repository
