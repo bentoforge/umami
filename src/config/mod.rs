@@ -458,6 +458,23 @@ pub enum LimitKind {
     Gauge,
 }
 
+/// What `consume` does when a booking exceeds everything available — see `docs/LIMITS.md`.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum OverdrawPolicy {
+    /// Book what is there (flooring the buckets at zero) and add the uncovered excess to the
+    /// period's overdraw counter and the ledger entry. The default: the call already happened, so
+    /// it is recorded honestly and can be billed as overage.
+    #[default]
+    Track,
+    /// Refuse the whole booking with a 429 and change nothing — a hard prepaid cap, where `consume`
+    /// is used as a reserve-then-use gate.
+    Reject,
+    /// Book to zero and drop the uncovered excess (still recorded on the ledger entry, but not summed
+    /// into the period counter) — a soft, best-effort throttle.
+    Ignore,
+}
+
 /// A limit: a per-tenant quota. The definition lives here; the per-tenant values on the tenant
 /// ([`LimitSettings`] in `Tenant.limits`); the runtime counters in the `limits` repository. See
 /// `docs/LIMITS.md`.
@@ -499,6 +516,10 @@ pub struct LimitDef {
     /// languages — the UI writes it after the numbers. Purely presentational.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unit: Option<LocalizedText>,
+    /// Consumable only: what `consume` does when a booking exceeds everything available. Default
+    /// [`OverdrawPolicy::Track`].
+    #[serde(default)]
+    pub overdraw: OverdrawPolicy,
 }
 
 /// A tenant's values for one limit (keyed by [`LimitDef::code`] in `Tenant.limits`). Which fields
@@ -1171,6 +1192,12 @@ pub fn validate_limits(config: &Config) -> anyhow::Result<()> {
                     client_bail!(
                         "Limit '{}' is a gauge; overuse, customBalance and daily apply only to a \
                          consumable",
+                        def.code
+                    );
+                }
+                if def.overdraw != OverdrawPolicy::Track {
+                    client_bail!(
+                        "Limit '{}' is a gauge; an overdraw policy applies only to a consumable",
                         def.code
                     );
                 }
@@ -1907,6 +1934,7 @@ mod tests {
             high_watermark_percent: None,
             relevant_if: None,
             unit: None,
+            overdraw: super::OverdrawPolicy::Track,
         };
         let gauge = |code: &str| super::LimitDef {
             code: code.to_owned(),
@@ -1920,6 +1948,7 @@ mod tests {
             high_watermark_percent: Some(90),
             relevant_if: None,
             unit: None,
+            overdraw: super::OverdrawPolicy::Track,
         };
         let with_limits = |limits: Vec<super::LimitDef>| super::Config {
             limits,
@@ -1981,6 +2010,7 @@ mod tests {
                     high_watermark_percent: None,
                     relevant_if: None,
                     unit: None,
+                    overdraw: super::OverdrawPolicy::Track,
                 },
                 super::LimitDef {
                     code: "limit:seats".to_owned(),
@@ -1994,6 +2024,7 @@ mod tests {
                     high_watermark_percent: None,
                     relevant_if: None,
                     unit: None,
+                    overdraw: super::OverdrawPolicy::Track,
                 },
             ],
             ..super::Config::default()

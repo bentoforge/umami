@@ -298,6 +298,9 @@ function LimitRow({
       const over = usedOveruse === 0 ? `${maxOveruse}` : `${usedOveruse} / ${maxOveruse}`;
       parts.push(`${t("limits.overusage")}: ${over}${unit}`);
     }
+    if ((st?.overdrawn ?? 0) > 0) {
+      parts.push(`${t("limits.overdrawn")}: ${st?.overdrawn}${unit}`);
+    }
     details = parts.join(", ");
   }
 

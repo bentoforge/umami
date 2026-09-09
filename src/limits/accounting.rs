@@ -9,7 +9,7 @@
 //! Impurity is pushed to the edge: the caller supplies `now` and a pre-generated `entry_id`, so a
 //! function is deterministic given its inputs and a retry recomputes the same result.
 
-use crate::config::LimitSettings;
+use crate::config::{LimitSettings, OverdrawPolicy};
 use crate::limits::{HistoryRow, LedgerEntry, LimitState, ledger_type};
 use chrono::{DateTime, Datelike, SecondsFormat, Utc};
 
@@ -24,12 +24,15 @@ pub struct Actor {
 }
 
 /// The result of one booking operation: the state to persist, the ledger entry it produced, and —
-/// when the operation crossed a month boundary — the closed month's history row.
+/// when the operation crossed a month boundary — the closed month's history row. `rejected` is set
+/// only by a `reject`-policy `consume` that could not be covered: the service turns it into a 429
+/// and nothing is written.
 #[derive(Debug, Clone)]
 pub struct Outcome {
     pub state: LimitState,
     pub ledger: LedgerEntry,
     pub history: Option<HistoryRow>,
+    pub rejected: bool,
 }
 
 /// The calendar month a timestamp falls in, as `"YYYY-MM"` — the key the monthly counters bucket by.
@@ -86,6 +89,7 @@ pub fn rolled_over(
                 monthly_forfeited: state.monthly_remaining,
                 overuse_limit: state.overuse_snapshot,
                 overuse_used: state.overuse_snapshot - state.overuse_remaining,
+                monthly_overdrawn: state.monthly_overdrawn,
                 ending_custom_balance: state.custom_balance,
             };
             let monthly = settings.monthly.unwrap_or(0);
@@ -96,6 +100,7 @@ pub fn rolled_over(
                 overuse_remaining: overuse,
                 monthly_snapshot: monthly,
                 overuse_snapshot: overuse,
+                monthly_overdrawn: 0,
                 // The persistent balance, daily throttle and gauge are not monthly and survive the
                 // rollover; the daily throttle is refreshed below on its own (daily) schedule.
                 ..state
@@ -150,9 +155,10 @@ fn draw(pool: &mut i64, left: &mut i64) -> i64 {
 
 /// Books `amount` against a consumable, drawing **monthly → custom → overuse** in that order.
 ///
-/// `amount` is assumed non-negative (the caller validates). What cannot be covered is booked to zero
-/// and reported as `overdrawn` rather than refused — a pre-flight `check` is the gate, and a call
-/// that already ran must still be accounted.
+/// `amount` is assumed non-negative (the caller validates). What cannot be covered — the overdraw —
+/// is handled per [`OverdrawPolicy`]: `track` books to zero and sums it into the period counter (and
+/// the ledger), `ignore` books to zero but does not sum it, `reject` refuses the whole booking and
+/// changes nothing (`rejected` set, the service returns a 429).
 #[allow(clippy::too_many_arguments)]
 pub fn apply_consume(
     existing: Option<LimitState>,
@@ -163,12 +169,32 @@ pub fn apply_consume(
     now: DateTime<Utc>,
     entry_id: &str,
     actor: &Actor,
+    policy: OverdrawPolicy,
 ) -> Outcome {
     let (mut state, history) = rolled_over(existing, tenant_id, code, settings, now);
-    let mut left = amount.max(0);
+    let want = amount.max(0);
+
+    // Reject: a booking that cannot be fully covered changes nothing — the service returns a 429.
+    if policy == OverdrawPolicy::Reject && want > state.available() {
+        let ledger = ledger_base(&state, entry_id, now, ledger_type::CONSUME, amount, actor);
+        return Outcome {
+            state,
+            ledger,
+            history,
+            rejected: true,
+        };
+    }
+
+    let mut left = want;
     let monthly_drawn = draw(&mut state.monthly_remaining, &mut left);
     let custom_drawn = draw(&mut state.custom_balance, &mut left);
     let overuse_drawn = draw(&mut state.overuse_remaining, &mut left);
+
+    // `left` is now the uncovered overdraw. Under `track` it is summed into the period counter (and
+    // always recorded on the ledger entry); `ignore` drops it from the counter.
+    if policy == OverdrawPolicy::Track {
+        state.monthly_overdrawn += left;
+    }
 
     // The daily throttle is a parallel usage counter (not a source): what was actually booked is
     // subtracted from today's allowance, floored at zero. `check` gates on it before the call.
@@ -187,6 +213,7 @@ pub fn apply_consume(
         state,
         ledger,
         history,
+        rejected: false,
     }
 }
 
@@ -214,6 +241,7 @@ pub fn apply_topup(
         state,
         ledger,
         history,
+        rejected: false,
     }
 }
 
@@ -241,6 +269,7 @@ pub fn set_gauge(
         state,
         ledger,
         history: None,
+        rejected: false,
     }
 }
 
@@ -301,6 +330,7 @@ pub fn apply_settings_change(
             state,
             ledger,
             history,
+            rejected: false,
         },
         warnings,
     )
@@ -339,6 +369,7 @@ mod tests {
             now,
             "entry-1",
             &Actor::default(),
+            OverdrawPolicy::Track,
         )
     }
 
@@ -382,6 +413,80 @@ mod tests {
         assert_eq!(out.ledger.monthly_drawn, 100);
         assert_eq!(out.ledger.overdrawn, 150);
         assert_eq!(out.state.available(), 0);
+    }
+
+    fn consume_p(
+        existing: Option<LimitState>,
+        settings: &LimitSettings,
+        amount: i64,
+        now: DateTime<Utc>,
+        policy: OverdrawPolicy,
+    ) -> Outcome {
+        apply_consume(
+            existing,
+            "t1",
+            "limit:ai",
+            settings,
+            amount,
+            now,
+            "entry-1",
+            &Actor::default(),
+            policy,
+        )
+    }
+
+    #[test]
+    fn track_sums_the_overdraw_and_books_to_zero() {
+        let cfg = settings(Some(100), None);
+        let out = consume_p(None, &cfg, 250, at(2026, 9, 7), OverdrawPolicy::Track);
+        assert!(!out.rejected);
+        assert_eq!(out.state.monthly_remaining, 0);
+        assert_eq!(out.ledger.overdrawn, 150);
+        assert_eq!(out.state.monthly_overdrawn, 150);
+        // A second overdraw in the same month accumulates.
+        let out = consume_p(
+            Some(out.state),
+            &cfg,
+            30,
+            at(2026, 9, 8),
+            OverdrawPolicy::Track,
+        );
+        assert_eq!(out.state.monthly_overdrawn, 180);
+    }
+
+    #[test]
+    fn ignore_books_to_zero_without_summing() {
+        let out = consume_p(
+            None,
+            &settings(Some(100), None),
+            250,
+            at(2026, 9, 7),
+            OverdrawPolicy::Ignore,
+        );
+        assert!(!out.rejected);
+        assert_eq!(out.state.monthly_remaining, 0);
+        // The excess is still on the ledger entry, but not summed into the period counter.
+        assert_eq!(out.ledger.overdrawn, 150);
+        assert_eq!(out.state.monthly_overdrawn, 0);
+    }
+
+    #[test]
+    fn reject_refuses_and_changes_nothing_when_over() {
+        let cfg = settings(Some(100), None);
+        // Fits → books normally.
+        let out = consume_p(None, &cfg, 80, at(2026, 9, 7), OverdrawPolicy::Reject);
+        assert!(!out.rejected);
+        assert_eq!(out.state.monthly_remaining, 20);
+        // Over the remaining 20 → rejected, nothing drawn.
+        let out = consume_p(
+            Some(out.state),
+            &cfg,
+            50,
+            at(2026, 9, 7),
+            OverdrawPolicy::Reject,
+        );
+        assert!(out.rejected);
+        assert_eq!(out.state.monthly_remaining, 20);
     }
 
     #[test]
@@ -471,6 +576,7 @@ mod tests {
             at(2026, 9, 7),
             "entry-1",
             &actor,
+            OverdrawPolicy::Track,
         );
         assert_eq!(out.ledger.actor_user_id.as_deref(), Some("u-42"));
         assert_eq!(out.ledger.txn_name.as_deref(), Some("qa-answer"));
@@ -496,6 +602,7 @@ mod tests {
             at(2026, 9, 7),
             "e1",
             &Actor::default(),
+            OverdrawPolicy::Track,
         );
         assert_eq!(out.state.daily_remaining, 70);
         assert_eq!(out.state.daily_date.as_deref(), Some("2026-09-07"));
@@ -511,6 +618,7 @@ mod tests {
             at(2026, 9, 7),
             "e2",
             &Actor::default(),
+            OverdrawPolicy::Track,
         );
         assert_eq!(out.state.daily_remaining, 0);
 
@@ -524,6 +632,7 @@ mod tests {
             at(2026, 9, 8),
             "e3",
             &Actor::default(),
+            OverdrawPolicy::Track,
         );
         assert_eq!(out.state.daily_date.as_deref(), Some("2026-09-08"));
         assert_eq!(out.state.daily_remaining, 60);

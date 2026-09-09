@@ -42,6 +42,10 @@ pub struct LimitState {
     pub overuse_snapshot: i64,
     /// Persistent top-up balance — does not expire at month end.
     pub custom_balance: i64,
+    /// Consumption booked this month beyond everything available, summed under the `track` overdraw
+    /// policy. Resets at month end (captured into history). `0` under `reject`/`ignore`.
+    #[serde(default)]
+    pub monthly_overdrawn: i64,
     /// Daily throttle: consumption still allowed today. Reset each day from the tenant's `daily`
     /// setting; a parallel cap, not a spendable bucket. `0` and `daily_date` unset when the limit
     /// has no daily throttle.
@@ -82,6 +86,7 @@ impl LimitState {
             monthly_snapshot: monthly,
             overuse_snapshot: overuse,
             custom_balance: 0,
+            monthly_overdrawn: 0,
             daily_remaining: 0,
             daily_date: None,
             gauge_value: None,
@@ -188,6 +193,9 @@ pub struct HistoryRow {
     pub overuse_limit: i64,
     /// Overuse allowance consumed during the month.
     pub overuse_used: i64,
+    /// Consumption booked beyond everything available during the month (`track` policy).
+    #[serde(default)]
+    pub monthly_overdrawn: i64,
     /// Persistent custom balance carried into the next month.
     pub ending_custom_balance: i64,
 }

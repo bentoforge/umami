@@ -228,12 +228,21 @@ Monat**, vom ersten Zugriff getragen. Für lückenlose History bei nie abgefragt
 zusätzlich `POST /tenants/{id}/limits/{code}/rollover` bzw. einen Sweep, den ein
 Reporting-Service/Cron zum Monatswechsel anstößt.
 
-### Overdraw-Policy
+### Overdraw-Policy (je Limit, `LimitDef.overdraw`)
 
 `check` (mutationsfrei) ist das Vorab-Gate, `consume` bucht post-hoc die *tatsächliche* Nutzung.
-Reicht bei `consume` die Summe nicht, wird auf 0 gebucht und der Rest als `overdrawn` im Ledger
-vermerkt (der Call ist bereits passiert — Buchhaltung bleibt ehrlich). Hartes 429 ist als Modus
-für Prepaid-Gating vorgesehen, Default ist book-to-zero.
+Reicht die Summe nicht, entscheidet die Policy des Limits, was mit dem Überstand passiert:
+
+- **`track`** (Default): auf 0 buchen, den Überstand in den Monats-Zähler `monthlyOverdrawn` summieren
+  (und je Transaktion als `overdrawn` im Ledger). Der Call ist passiert → ehrlich verbucht,
+  abrechenbar. `monthlyOverdrawn` verfällt am Monatsende (wandert in die History).
+- **`reject`**: die ganze Buchung wird abgelehnt (**429**) und **nichts** geschrieben — hartes
+  Prepaid-Gating, wo `consume` als Reserve-then-use genutzt wird.
+- **`ignore`**: auf 0 buchen, Überstand fallen lassen (nur im Ledger-Eintrag, kein Zähler) — weiches
+  Best-effort-Throttling.
+
+Keine negativen Buckets — der Überstand lebt im Zähler, nicht als Minus-Guthaben. Nur bei
+`Consumable` erlaubt (Gauge-Validierung lehnt eine Nicht-Default-Policy ab).
 
 ### Gauge
 

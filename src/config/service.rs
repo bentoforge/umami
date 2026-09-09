@@ -15,7 +15,7 @@
 
 use crate::config::repository::ConfigRepository;
 use crate::config::text::LocalizedText;
-use crate::config::{Config, CustomFieldDef, LimitDef, LimitKind};
+use crate::config::{Config, CustomFieldDef, LimitDef, LimitKind, OverdrawPolicy};
 use crate::constants::{MANAGE_CONFIG_PERMISSION, MAX_TEXT_BODY_SIZE};
 use serde::Serialize;
 use std::sync::Arc;
@@ -81,6 +81,7 @@ struct LimitCatalogueEntry {
     high_watermark_percent: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     unit: Option<String>,
+    overdraw: OverdrawPolicy,
 }
 
 impl LimitCatalogueEntry {
@@ -103,6 +104,7 @@ impl LimitCatalogueEntry {
                 .unit
                 .as_ref()
                 .map(|text| text.resolve(locale, default_locale).to_owned()),
+            overdraw: def.overdraw,
         }
     }
 }

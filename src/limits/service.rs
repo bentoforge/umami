@@ -7,7 +7,7 @@
 
 use crate::bail_i18n;
 use crate::config::repository::ConfigRepository;
-use crate::config::{LimitDef, LimitKind, LimitSettings};
+use crate::config::{LimitDef, LimitKind, LimitSettings, OverdrawPolicy};
 use crate::constants::{
     BOOK_LIMITS_PERMISSION, LIMIT_CAS_BACKOFF_MAX_MS, LIMIT_CAS_BACKOFF_MIN_MS,
     LIMIT_CAS_MAX_ATTEMPTS, MANAGE_LIMITS_PERMISSION, MAX_TEXT_BODY_SIZE, VIEW_LIMITS_PERMISSION,
@@ -54,6 +54,8 @@ struct LimitStateView {
     #[serde(skip_serializing_if = "Option::is_none")]
     daily_remaining: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    overdrawn: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     gauge_value: Option<i64>,
 }
 
@@ -65,6 +67,7 @@ impl LimitStateView {
             overuse_remaining: state.overuse_remaining,
             custom_balance: state.custom_balance,
             daily_remaining: state.daily_date.as_ref().map(|_| state.daily_remaining),
+            overdrawn: (state.monthly_overdrawn > 0).then_some(state.monthly_overdrawn),
             gauge_value: state.gauge_value,
         }
     }
@@ -628,12 +631,13 @@ async fn consumable_settings(
     code: &str,
     tenants: &Arc<dyn TenantRepository>,
     config: &Arc<dyn ConfigRepository>,
-) -> anyhow::Result<LimitSettings> {
+) -> anyhow::Result<(LimitSettings, OverdrawPolicy)> {
     let def = limit_def(config, code).await?;
     if def.kind != LimitKind::Consumable {
         client_bail!("Limit '{code}' is a gauge; use report, not consume/check");
     }
-    tenant_limit_settings(tenants, tenant_id, code).await
+    let settings = tenant_limit_settings(tenants, tenant_id, code).await?;
+    Ok((settings, def.overdraw))
 }
 
 /// A limit's definition, or a client error if the code is unknown.
@@ -669,7 +673,7 @@ async fn check_limit(
     if request.amount < 0 {
         client_bail!("amount must not be negative");
     }
-    let settings = consumable_settings(&tenant_id, &code, &tenants, &config).await?;
+    let (settings, _policy) = consumable_settings(&tenant_id, &code, &tenants, &config).await?;
     // Read-only: project the current month/day in memory (rolling a stale period over) without a
     // write.
     let existing = limits.load_state(&tenant_id, &code).await?;
@@ -694,7 +698,7 @@ async fn consume_limit(
     if request.amount < 0 {
         client_bail!("amount must not be negative");
     }
-    let settings = consumable_settings(&tenant_id, &code, &tenants, &config).await?;
+    let (settings, policy) = consumable_settings(&tenant_id, &code, &tenants, &config).await?;
     let amount = request.amount;
     let actor = request.actor.into_actor();
     let now = Utc::now();
@@ -702,12 +706,18 @@ async fn consume_limit(
     let (outcome, ()) = commit_state(&limits, &tenant_id, &code, |existing| {
         (
             accounting::apply_consume(
-                existing, &tenant_id, &code, &settings, amount, now, &entry_id, &actor,
+                existing, &tenant_id, &code, &settings, amount, now, &entry_id, &actor, policy,
             ),
             (),
         )
     })
     .await?;
+    if outcome.rejected {
+        status_bail!(
+            StatusCode::TOO_MANY_REQUESTS,
+            "Limit '{code}' is exhausted; booking rejected"
+        );
+    }
     Ok(ConsumeResponse {
         breakdown: Breakdown::of(&outcome.ledger),
         remaining: Remaining::of(&outcome.state),
@@ -795,6 +805,11 @@ where
         let existing = limits.load_state(tenant_id, code).await?;
         let expected = existing.as_ref().map(|state| state.version);
         let (mut outcome, extra) = produce(existing);
+        // A rejected booking (reject policy, over budget) writes nothing; the caller turns it into
+        // a 429.
+        if outcome.rejected {
+            return Ok((outcome, extra));
+        }
         outcome.state.version = expected.map(|version| version + 1).unwrap_or(1);
         match limits.compare_and_swap(&outcome, expected).await? {
             CasOutcome::Committed => return Ok((outcome, extra)),
@@ -973,6 +988,7 @@ mod tests {
                 high_watermark_percent: None,
                 relevant_if: None,
                 unit: None,
+                overdraw: OverdrawPolicy::Track,
             },
             LimitDef {
                 code: "limit:seats".to_owned(),
@@ -986,6 +1002,7 @@ mod tests {
                 high_watermark_percent: Some(90),
                 relevant_if: None,
                 unit: None,
+                overdraw: OverdrawPolicy::Track,
             },
             LimitDef {
                 code: "limit:ai-daily".to_owned(),
@@ -999,6 +1016,21 @@ mod tests {
                 high_watermark_percent: None,
                 relevant_if: None,
                 unit: None,
+                overdraw: OverdrawPolicy::Track,
+            },
+            LimitDef {
+                code: "limit:prepaid".to_owned(),
+                name: "Prepaid".into(),
+                description: None,
+                kind: LimitKind::Consumable,
+                overuse: false,
+                custom_balance: false,
+                daily: false,
+                low_watermark_percent: None,
+                high_watermark_percent: None,
+                relevant_if: None,
+                unit: None,
+                overdraw: OverdrawPolicy::Reject,
             },
         ];
         // Save bumps the version; hand it the expected one so optimistic concurrency is satisfied.
@@ -1354,6 +1386,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_reject_policy_consume_over_budget_is_refused_and_writes_nothing() {
+        use crate::limits::repository::MockLimitRepository;
+
+        let mut tenants = MockTenantRepository::new();
+        tenants.expect_get_tenant().returning(|_| {
+            Box::pin(async {
+                let mut tenant = tenant("t-1");
+                let _ = tenant.limits.insert(
+                    "limit:prepaid".to_owned(),
+                    LimitSettings {
+                        monthly: Some(100),
+                        ..LimitSettings::default()
+                    },
+                );
+                Ok(Some(tenant))
+            })
+        });
+
+        let mut limits = MockLimitRepository::new();
+        limits
+            .expect_load_state()
+            .returning(|_, _| Box::pin(async { Ok(None) }));
+        // No compare_and_swap expectation: a rejected booking must never reach the store.
+
+        let err = consume_limit(
+            "t-1".to_owned(),
+            "limit:prepaid".to_owned(),
+            AmountRequest {
+                amount: 250,
+                actor: ActorFields::default(),
+            },
+            Arc::new(tenants),
+            consumable_config().await,
+            Arc::new(limits),
+        )
+        .await
+        .expect_err("over a prepaid cap");
+        assert!(format!("{err:#}").contains("exhausted"), "{err:#}");
+    }
+
+    #[tokio::test]
     async fn consume_on_a_gauge_is_refused() {
         use crate::limits::repository::MockLimitRepository;
 
@@ -1654,6 +1727,7 @@ mod tests {
             high_watermark_percent: None,
             relevant_if: relevant_if.map(str::to_owned),
             unit: None,
+            overdraw: OverdrawPolicy::Track,
         };
         let current = repository.current().await.expect("seeded");
         repository

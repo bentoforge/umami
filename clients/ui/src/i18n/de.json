@@ -163,6 +163,7 @@
     "dailyBudget": "Tagesbudget",
     "balance": "Guthaben",
     "overusage": "Überziehung",
+    "overdrawn": "Überzogen",
     "limitMax": "Grenzwert",
     "actions": "Aktionen",
     "noLongerDefined": "(nicht mehr definiert)",

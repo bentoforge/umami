@@ -163,6 +163,7 @@
     "dailyBudget": "Daily budget",
     "balance": "Balance",
     "overusage": "Overusage",
+    "overdrawn": "Overdrawn",
     "limitMax": "Limit",
     "actions": "Actions",
     "noLongerDefined": "(no longer defined)",

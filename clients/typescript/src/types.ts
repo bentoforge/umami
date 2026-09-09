@@ -290,6 +290,9 @@ export interface CatalogueEntry {
 /** Whether a limit is drawn down (`consumable`) or set to a live reading (`gauge`). */
 export type LimitKind = "consumable" | "gauge";
 
+/** What `consume` does when a booking exceeds everything available. */
+export type OverdrawPolicy = "track" | "reject" | "ignore";
+
 /** One limit definition with its labels resolved into the caller's language, plus the facets and
  * watermarks that shape its per-tenant editor. Arrives in {@link Catalogue.limits}. */
 export interface LimitCatalogueEntry {
@@ -309,6 +312,8 @@ export interface LimitCatalogueEntry {
   highWatermarkPercent?: number;
   /** Unit label for the figures (e.g. "credits", "seats"), resolved to the caller's language. */
   unit?: string;
+  /** Consumable only: what `consume` does when a booking exceeds everything available. */
+  overdraw: OverdrawPolicy;
 }
 
 /** The label catalogues, resolved (`GET /config/catalogue`). */
@@ -844,6 +849,8 @@ export interface LimitStateView {
   customBalance: number;
   /** Present only when the limit enforces a daily sub-allowance. */
   dailyRemaining?: number;
+  /** Consumption booked beyond everything available this period (`track` policy); present when > 0. */
+  overdrawn?: number;
   /** Present only for a gauge. */
   gaugeValue?: number;
 }
