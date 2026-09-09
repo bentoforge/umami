@@ -40,6 +40,14 @@ export function StartPage() {
         </section>
       )}
 
+      {client.hasPermission("view:limits") && (activeTenantId ?? me?.user.tenantId) && (
+        <LimitsView
+          tenantId={(activeTenantId ?? me?.user.tenantId) as string}
+          title={t("limits.selfTitle")}
+          readOnly
+        />
+      )}
+
       {tasks.length > 0 && (
         <section className="space-y-3">
           <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
@@ -51,14 +59,6 @@ export function StartPage() {
             ))}
           </div>
         </section>
-      )}
-
-      {client.hasPermission("view:limits") && (activeTenantId ?? me?.user.tenantId) && (
-        <LimitsView
-          tenantId={(activeTenantId ?? me?.user.tenantId) as string}
-          title={t("limits.selfTitle")}
-          readOnly
-        />
       )}
     </div>
   );

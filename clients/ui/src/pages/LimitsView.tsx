@@ -117,9 +117,26 @@ export function LimitsView({
   const selected = "code" in mode ? rows.find((r) => r.entry.code === mode.code) : undefined;
   const selectedName = selected ? (selected.def?.name ?? selected.entry.code) : "";
 
+  // In the ledger/history sub-views the card heading carries the context ("Limits – Transactions")
+  // and the limit's name becomes the subheading — one heading, not four stacked ones.
+  const contextLabel =
+    mode.view === "ledger"
+      ? t("limits.ledger")
+      : mode.view === "history"
+        ? t("limits.history")
+        : null;
+
   return (
     <section className={`${card} space-y-4`}>
-      <h2 className="font-medium text-slate-800 dark:text-slate-200">{title}</h2>
+      <div>
+        <h2 className="font-medium text-slate-800 dark:text-slate-200">
+          {title}
+          {contextLabel && <span className="text-slate-400"> – {contextLabel}</span>}
+        </h2>
+        {contextLabel && selected && (
+          <p className="text-sm text-slate-500 dark:text-slate-400">{selectedName}</p>
+        )}
+      </div>
 
       {error && <Banner tone="error">{error}</Banner>}
 
@@ -152,21 +169,9 @@ export function LimitsView({
           onError={setError}
         />
       ) : mode.view === "ledger" ? (
-        <LedgerView
-          tenantId={tenantId}
-          code={selected.entry.code}
-          name={selectedName}
-          description={selected.def?.description}
-          onBack={backToList}
-        />
+        <LedgerView tenantId={tenantId} code={selected.entry.code} onBack={backToList} />
       ) : (
-        <HistoryView
-          tenantId={tenantId}
-          code={selected.entry.code}
-          name={selectedName}
-          description={selected.def?.description}
-          onBack={backToList}
-        />
+        <HistoryView tenantId={tenantId} code={selected.entry.code} onBack={backToList} />
       )}
     </section>
   );
@@ -758,14 +763,10 @@ function TopupForm({
 function LedgerView({
   tenantId,
   code,
-  name,
-  description,
   onBack,
 }: {
   tenantId: string;
   code: string;
-  name: string;
-  description?: string;
   onBack: () => void;
 }) {
   const { client } = useUmami();
@@ -810,7 +811,6 @@ function LedgerView({
 
   return (
     <div className="space-y-4">
-      <ViewHeader name={name} description={description} context={t("limits.ledgerTitle")} />
       {entries === null ? (
         <Loader />
       ) : entries.length === 0 ? (
@@ -825,6 +825,7 @@ function LedgerView({
                   <th className={th}>{t("limits.type")}</th>
                   <th className={th}>{t("limits.amount")}</th>
                   <th className={th}>{t("limits.resulting")}</th>
+                  <th className={th}>{t("limits.txn")}</th>
                   <th className={th}>{t("limits.actor")}</th>
                 </tr>
               </thead>
@@ -837,7 +838,12 @@ function LedgerView({
                     <td className={`${td} whitespace-nowrap font-mono text-xs`}>
                       {e.resultingMonthly} · {e.resultingCustom} · {e.resultingExtraAllowance}
                     </td>
-                    <td className={td}>{e.actorUserName || e.actorUserId || "—"}</td>
+                    <td className={`${td} font-mono text-xs text-slate-400 dark:text-slate-500`}>
+                      {e.txnId ?? "—"}
+                    </td>
+                    <td className={`${td} font-mono text-xs text-slate-400 dark:text-slate-500`}>
+                      {e.actorUserId ?? "—"}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -860,19 +866,15 @@ function LedgerView({
   );
 }
 
-/** A limit's month-by-month usage history, the most recent {@link HISTORY_MONTHS} months. Headed by
- * the limit's name and description. */
+/** A limit's month-by-month usage history, the most recent {@link HISTORY_MONTHS} months. The card
+ * heading names the limit; this renders the table only. */
 function HistoryView({
   tenantId,
   code,
-  name,
-  description,
   onBack,
 }: {
   tenantId: string;
   code: string;
-  name: string;
-  description?: string;
   onBack: () => void;
 }) {
   const { client } = useUmami();
@@ -900,7 +902,6 @@ function HistoryView({
 
   return (
     <div className="space-y-4">
-      <ViewHeader name={name} description={description} context={t("limits.historyTitle")} />
       {months === null ? (
         <Loader />
       ) : months.length === 0 ? (
@@ -945,24 +946,6 @@ function HistoryView({
 
 /** The header of an expanded sub-view: the view's context label (transactions / history) over the
  * selected limit's name and its description, so the swapped-in body keeps its bearings. */
-function ViewHeader({
-  name,
-  description,
-  context,
-}: {
-  name: string;
-  description?: string;
-  context: string;
-}) {
-  return (
-    <div>
-      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{context}</div>
-      <h3 className="font-medium text-slate-800 dark:text-slate-200">{name}</h3>
-      {description && <p className="text-slate-400 dark:text-slate-500">{description}</p>}
-    </div>
-  );
-}
-
 /** The Back-to-list control shared by every sub-view. */
 function BackButton({ onClick }: { onClick: () => void }) {
   const { t } = useTranslation();

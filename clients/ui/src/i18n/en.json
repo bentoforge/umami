@@ -190,8 +190,6 @@
     "confirmBookingTitle": "Heads up — this change re-books the balance:",
     "confirmBooking": "Confirm re-booking",
     "save": "Save",
-    "historyTitle": "History",
-    "ledgerTitle": "Transactions",
     "month": "Month",
     "monthlyUsed": "Used",
     "monthlyIncluded": "Included",
@@ -202,6 +200,7 @@
     "type": "Type",
     "amount": "Amount",
     "resulting": "Resulting (m · c · o)",
+    "txn": "Txn",
     "actor": "Actor",
     "noHistory": "No history yet.",
     "noLedger": "No transactions yet."
