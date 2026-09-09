@@ -13,7 +13,7 @@ import {
   PlusCircleIcon,
   TrashIcon,
 } from "@heroicons/react/24/outline";
-import { useCallback, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useUmami } from "../auth/UmamiProvider";
 import {
@@ -29,6 +29,10 @@ import { card, ghostButton, input, primaryButton, td, th } from "../ui";
 
 const LEDGER_PAGE = 10;
 const HISTORY_MONTHS = 24;
+
+/** Compact cells for the limits table — a touch less padding than the shared `td`/`th`. */
+const cell = "px-2 py-1 text-sm text-slate-800 align-top dark:text-slate-200";
+const headCell = "px-2 py-1 text-left text-xs font-semibold uppercase tracking-wide text-slate-500";
 
 /** A tenant's limit merged with its catalogue definition. `def` is absent for an orphan (a stored
  * limit whose definition has been removed from the config); `kind` is then inferred from the shape
@@ -221,8 +225,9 @@ function NameCell({ row, editable, onEdit }: { row: Row; editable: boolean; onEd
   );
 }
 
-/** The single limits table — three columns (name, an inner details table, the actions menu), no
- * header row. */
+/** The single limits table: name, the per-budget lines (label, ceiling, current value), and the
+ * actions menu. A limit with several budget lines repeats them as rows; its name and menu cells span
+ * all of them (rowSpan 1..5). */
 function LimitsTable({
   rows,
   readOnly,
@@ -234,9 +239,19 @@ function LimitsTable({
   onAction: (view: "edit" | "ledger" | "history" | "topup", code: string) => void;
   onDelete: (code: string) => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="overflow-x-auto">
       <table className="w-full border-collapse">
+        <thead>
+          <tr className="border-b border-slate-200 dark:border-slate-700">
+            <th className={headCell}>{t("limits.name")}</th>
+            <th className={headCell}>{t("limits.limit")}</th>
+            <th className={`${headCell} text-right`}>{t("limits.ceiling")}</th>
+            <th className={`${headCell} text-right`}>{t("limits.current")}</th>
+            <th className={headCell} />
+          </tr>
+        </thead>
         <tbody>
           {rows.map((row) => (
             <LimitRow
@@ -253,6 +268,81 @@ function LimitsTable({
   );
 }
 
+/** One budget line of a limit: a bobble + label, its ceiling (a gauge/balance/overdrawn line has
+ * none), and the current value. */
+interface DetailLine {
+  key: string;
+  label: string;
+  bobble: ReactNode;
+  ceiling: number | null;
+  value: number;
+}
+
+function detailLines(row: Row, t: (key: string) => string): DetailLine[] {
+  const s = row.entry.settings;
+  const st = row.entry.state;
+
+  if (row.kind === "gauge") {
+    return [
+      {
+        key: "gauge",
+        label: "",
+        bobble: (
+          <Bobble
+            value={st?.gaugeValue}
+            max={s.max}
+            low={row.def?.lowWatermarkPercent}
+            high={row.def?.highWatermarkPercent}
+          />
+        ),
+        ceiling: s.max ?? 0,
+        value: st?.gaugeValue ?? 0,
+      },
+    ];
+  }
+
+  const budget = (key: string, label: string, ceiling: number, remaining: number): DetailLine => ({
+    key,
+    label,
+    bobble: <AvailabilityBobble remaining={remaining} limit={ceiling} />,
+    ceiling,
+    value: remaining,
+  });
+
+  const lines: DetailLine[] = [];
+  const monthly = s.monthly ?? 0;
+  lines.push(
+    budget("monthly", t("limits.monthlyBudget"), monthly, st?.monthlyRemaining ?? monthly),
+  );
+  if (row.def?.daily && (s.daily ?? 0) > 0) {
+    const daily = s.daily ?? 0;
+    lines.push(budget("daily", t("limits.dailyBudget"), daily, st?.dailyRemaining ?? daily));
+  }
+  if (row.def?.overuse && (s.overuse ?? 0) > 0) {
+    const overuse = s.overuse ?? 0;
+    lines.push(budget("overuse", t("limits.overusage"), overuse, st?.overuseRemaining ?? overuse));
+  }
+  if ((st?.customBalance ?? 0) > 0) {
+    lines.push({
+      key: "balance",
+      label: t("limits.balance"),
+      bobble: <ToneDot className="bg-green-500" />,
+      ceiling: null,
+      value: st?.customBalance ?? 0,
+    });
+  }
+  if ((st?.overdrawn ?? 0) > 0) {
+    lines.push({
+      key: "overdrawn",
+      label: t("limits.overdrawn"),
+      bobble: <ToneDot className="bg-amber-400" />,
+      ceiling: null,
+      value: st?.overdrawn ?? 0,
+    });
+  }
+  return lines;
+}
+
 function LimitRow({
   row,
   readOnly,
@@ -264,159 +354,52 @@ function LimitRow({
   onAction: (view: "edit" | "ledger" | "history" | "topup", code: string) => void;
   onDelete: (code: string) => void;
 }) {
+  const { t } = useTranslation();
   const code = row.entry.code;
   const editable = !readOnly && row.def != null;
-  return (
-    <tr className="border-b border-slate-100 align-top dark:border-slate-700/50">
-      <td className={`${td} whitespace-nowrap`}>
-        <NameCell row={row} editable={editable} onEdit={() => onAction("edit", code)} />
-      </td>
-      <td className={td}>
-        <DetailsTable row={row} />
-      </td>
-      <td className={`${td} text-right align-middle`}>
-        <RowMenu row={row} readOnly={readOnly} onAction={onAction} onDelete={onDelete} />
-      </td>
-    </tr>
-  );
-}
-
-/** One line of a limit's inner details table: a labelled budget with its limit and the remaining
- * amount from state, or — for balance/overdrawn — a single value whose label spans both other cols. */
-type DetailLine =
-  | { key: string; label: string; limit: number; remaining: number }
-  | { key: string; label: string; value: number; tone: "positive" | "negative" };
-
-/** The inner details table (three columns): a bobble + label, the limit (right), and the remaining
- * amount from state (right). Balance and overdrawn span the first two columns. A gauge is a single
- * line — its watermark bobble, the limit, and the current value. */
-function DetailsTable({ row }: { row: Row }) {
-  const { t } = useTranslation();
   const unit = unitSuffix(row.def?.unit);
-  const s = row.entry.settings;
-  const st = row.entry.state;
-
-  if (row.kind === "gauge") {
-    const value = st?.gaugeValue;
-    return (
-      <table className="border-collapse text-sm">
-        <tbody>
-          <tr>
-            <td className="pr-3">
-              <Bobble
-                value={value}
-                max={s.max}
-                low={row.def?.lowWatermarkPercent}
-                high={row.def?.highWatermarkPercent}
-              />
-            </td>
-            <td className="pr-4 text-right tabular-nums text-slate-400 dark:text-slate-500">
-              {s.max != null ? `${s.max}${unit}` : "—"}
-            </td>
-            <td className="text-right font-medium tabular-nums">
-              {value != null ? `${value}${unit}` : "—"}
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    );
-  }
-
-  const lines: DetailLine[] = [];
-  const monthly = s.monthly ?? 0;
-  lines.push({
-    key: "monthly",
-    label: t("limits.monthlyBudget"),
-    limit: monthly,
-    remaining: st?.monthlyRemaining ?? monthly,
-  });
-  if (row.def?.daily && (s.daily ?? 0) > 0) {
-    const daily = s.daily ?? 0;
-    lines.push({
-      key: "daily",
-      label: t("limits.dailyBudget"),
-      limit: daily,
-      remaining: st?.dailyRemaining ?? daily,
-    });
-  }
-  if (row.def?.overuse && (s.overuse ?? 0) > 0) {
-    const overuse = s.overuse ?? 0;
-    lines.push({
-      key: "overuse",
-      label: t("limits.overusage"),
-      limit: overuse,
-      remaining: st?.overuseRemaining ?? overuse,
-    });
-  }
-  if ((st?.customBalance ?? 0) > 0) {
-    lines.push({
-      key: "balance",
-      label: t("limits.balance"),
-      value: st?.customBalance ?? 0,
-      tone: "positive",
-    });
-  }
-  if ((st?.overdrawn ?? 0) > 0) {
-    lines.push({
-      key: "overdrawn",
-      label: t("limits.overdrawn"),
-      value: st?.overdrawn ?? 0,
-      tone: "negative",
-    });
-  }
+  const lines = detailLines(row, t);
+  const span = lines.length;
 
   return (
-    <table className="border-collapse text-sm">
-      <tbody>
-        {lines.map((line) => (
-          <DetailRow key={line.key} line={line} unit={unit} />
-        ))}
-      </tbody>
-    </table>
+    <>
+      {lines.map((line, i) => {
+        const divider = i === span - 1 ? "border-b border-slate-100 dark:border-slate-700/50" : "";
+        return (
+          <tr key={line.key} className={divider}>
+            {i === 0 && (
+              <td className={`${cell} whitespace-nowrap`} rowSpan={span}>
+                <NameCell row={row} editable={editable} onEdit={() => onAction("edit", code)} />
+              </td>
+            )}
+            <td className={cell}>
+              <span className="inline-flex items-center gap-2">
+                {line.bobble}
+                {line.label && <span className="font-mono">{line.label}</span>}
+              </span>
+            </td>
+            <td className={`${cell} text-right font-mono`}>
+              {line.ceiling != null ? `${line.ceiling}${unit}` : ""}
+            </td>
+            <td className={`${cell} text-right font-mono font-medium`}>
+              {line.value}
+              {unit}
+            </td>
+            {i === 0 && (
+              <td className={`${cell} text-right`} rowSpan={span}>
+                <RowMenu row={row} readOnly={readOnly} onAction={onAction} onDelete={onDelete} />
+              </td>
+            )}
+          </tr>
+        );
+      })}
+    </>
   );
 }
 
-function DetailRow({ line, unit }: { line: DetailLine; unit: string }) {
-  const label = (
-    <span className="inline-flex items-center gap-2">
-      {"value" in line ? (
-        <span
-          className={`inline-block h-2 w-2 shrink-0 rounded-full ${
-            line.tone === "negative" ? "bg-red-500" : "bg-green-500"
-          }`}
-        />
-      ) : (
-        <AvailabilityBobble remaining={line.remaining} limit={line.limit} />
-      )}
-      <span className="text-slate-500 dark:text-slate-400">{line.label}</span>
-    </span>
-  );
-  if ("value" in line) {
-    return (
-      <tr>
-        <td className="pr-4" colSpan={2}>
-          {label}
-        </td>
-        <td className="text-right font-medium tabular-nums">
-          {line.value}
-          {unit}
-        </td>
-      </tr>
-    );
-  }
-  return (
-    <tr>
-      <td className="pr-4">{label}</td>
-      <td className="pr-4 text-right tabular-nums text-slate-400 dark:text-slate-500">
-        {line.limit}
-        {unit}
-      </td>
-      <td className="text-right font-medium tabular-nums">
-        {line.remaining}
-        {unit}
-      </td>
-    </tr>
-  );
+/** A small round status dot (fixed tone). */
+function ToneDot({ className }: { className: string }) {
+  return <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${className}`} />;
 }
 
 /** A round availability dot before a budget line: gray when untouched (remaining == limit), then
