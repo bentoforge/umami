@@ -35,6 +35,10 @@ use wasabi::{client_bail, status_bail};
 /// Permission required to change a tenant's limits (cross-tenant admin).
 const REQUIRE_MANAGE_LIMITS: &[&str] = &[MANAGE_LIMITS_PERMISSION];
 
+/// Max length of a caller-provided actor id (`actorUserId`, `txnId`) — opaque pass-through, capped
+/// so a booking cannot stamp unbounded text onto the ledger.
+const ACTOR_ID_MAX_LEN: usize = 64;
+
 /// Permissions that may *read* a tenant's limits: the cross-tenant admin, or a member reading their
 /// own tenant (`view:limits`). The own-tenant confinement for the latter is enforced in the handler.
 const REQUIRE_READ_LIMITS: &[&str] = &[MANAGE_LIMITS_PERMISSION, VIEW_LIMITS_PERMISSION];
@@ -328,12 +332,12 @@ async fn set_limit_settings(
     })
 }
 
-/// The actor stamped on a settings/reconcile ledger entry.
+/// The actor stamped on a settings/reconcile ledger entry (the entry's `type` already marks it as a
+/// settings change; only the acting user id is recorded).
 fn settings_actor(caller: &AuthUser) -> Actor {
     Actor {
         user_id: caller.user_id().ok().map(str::to_owned),
-        txn_name: Some(crate::limits::ledger_type::SETTINGS.to_owned()),
-        ..Actor::default()
+        txn_id: None,
     }
 }
 
@@ -374,34 +378,38 @@ async fn reconcile_limit_state(
 
 // ── Booking (check / consume / report / top-up) ──────────────────────────────────
 
-/// Optional actor/context on a booking body — caller-provided, carried onto the ledger entry
-/// verbatim (never validated against umami users). `actorUserName` is GDPR-sensitive; a strict
-/// deployment omits it and links only by `actorUserId`/`txnId` (see `docs/LIMITS.md`).
+/// Optional actor/context on a booking body — two opaque ids, caller-provided and carried onto the
+/// ledger entry verbatim (never validated against umami users), each capped at
+/// [`ACTOR_ID_MAX_LEN`] at ingress. No names or free-text, so nothing GDPR-sensitive is stored.
 #[derive(Deserialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 struct ActorFields {
     #[serde(default)]
     actor_user_id: Option<String>,
     #[serde(default)]
-    actor_user_name: Option<String>,
-    #[serde(default)]
-    txn_name: Option<String>,
-    #[serde(default)]
     txn_id: Option<String>,
-    #[serde(default)]
-    reference: Option<String>,
 }
 
 impl ActorFields {
-    fn into_actor(self) -> Actor {
-        Actor {
+    /// Validates the id lengths (a 400 when either is too long), then builds the [`Actor`].
+    fn into_actor(self) -> anyhow::Result<Actor> {
+        check_actor_id_len("actorUserId", self.actor_user_id.as_deref())?;
+        check_actor_id_len("txnId", self.txn_id.as_deref())?;
+        Ok(Actor {
             user_id: self.actor_user_id,
-            user_name: self.actor_user_name,
-            txn_name: self.txn_name,
             txn_id: self.txn_id,
-            reference: self.reference,
-        }
+        })
     }
+}
+
+/// Rejects an actor id longer than [`ACTOR_ID_MAX_LEN`] characters.
+fn check_actor_id_len(field: &str, value: Option<&str>) -> anyhow::Result<()> {
+    if let Some(value) = value
+        && value.chars().count() > ACTOR_ID_MAX_LEN
+    {
+        client_bail!("{field} must be at most {ACTOR_ID_MAX_LEN} characters");
+    }
+    Ok(())
 }
 
 /// A signed amount to book or top up, plus optional actor/context.
@@ -763,7 +771,7 @@ async fn consume_limit(
     }
     let (settings, policy) = consumable_settings(&tenant_id, &code, &tenants, &config).await?;
     let amount = request.amount;
-    let actor = request.actor.into_actor();
+    let actor = request.actor.into_actor()?;
     let now = Utc::now();
     let entry_id = generate_id();
     let (outcome, ()) = commit_state(&limits, &tenant_id, &code, |existing| {
@@ -804,7 +812,7 @@ async fn topup_limit(
     }
     let settings = tenant_limit_settings(&tenants, &tenant_id, &code).await?;
     let amount = request.amount;
-    let actor = request.actor.into_actor();
+    let actor = request.actor.into_actor()?;
     let now = Utc::now();
     let entry_id = generate_id();
     let (outcome, ()) = commit_state(&limits, &tenant_id, &code, |existing| {
@@ -836,7 +844,7 @@ async fn report_gauge(
     }
     let settings = tenant_limit_settings(&tenants, &tenant_id, &code).await?;
     let value = request.value;
-    let actor = request.actor.into_actor();
+    let actor = request.actor.into_actor()?;
     let now = Utc::now();
     let entry_id = generate_id();
     let (outcome, ()) = commit_state(&limits, &tenant_id, &code, |existing| {
@@ -1657,7 +1665,6 @@ mod tests {
                 actor: ActorFields {
                     actor_user_id: Some("u-7".to_owned()),
                     txn_id: Some("req-1".to_owned()),
-                    ..ActorFields::default()
                 },
             },
             Arc::new(tenants),
@@ -2010,6 +2017,27 @@ mod tests {
         assert!(codes.contains(&"limit:legacy"), "{codes:?}");
         // … but a limit that is neither relevant nor stored is not.
         assert!(!codes.contains(&"limit:ai-only"), "{codes:?}");
+    }
+
+    #[test]
+    fn an_actor_id_over_the_cap_is_rejected_at_ingress() {
+        let ok = ActorFields {
+            actor_user_id: Some("u".repeat(ACTOR_ID_MAX_LEN)),
+            txn_id: Some("t".repeat(ACTOR_ID_MAX_LEN)),
+        };
+        assert!(ok.into_actor().is_ok());
+
+        let long_user = ActorFields {
+            actor_user_id: Some("u".repeat(ACTOR_ID_MAX_LEN + 1)),
+            txn_id: None,
+        };
+        assert!(long_user.into_actor().is_err());
+
+        let long_txn = ActorFields {
+            actor_user_id: None,
+            txn_id: Some("t".repeat(ACTOR_ID_MAX_LEN + 1)),
+        };
+        assert!(long_txn.into_actor().is_err());
     }
 
     fn history_row(code: &str, year_month: &str) -> HistoryRow {

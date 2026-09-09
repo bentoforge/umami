@@ -114,9 +114,9 @@ pub mod ledger_type {
 }
 
 /// One append-only transaction in a limit's ledger — what came in, what went out, and how much from
-/// which bucket. Written atomically alongside the state it produced (see [`repository`]). The actor
-/// fields are optional, caller-provided pass-through — not validated against umami users; a strict
-/// deployment omits the name and links only by id (see `docs/LIMITS.md`).
+/// which bucket. Written atomically alongside the state it produced (see [`repository`]). The two
+/// actor ids are optional, caller-provided pass-through — not validated against umami users, only
+/// length-capped at ingress; opaque ids only, so nothing GDPR-sensitive lands here.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct LedgerEntry {
@@ -162,17 +162,12 @@ pub struct LedgerEntry {
     /// a consistent account.
     #[serde(default)]
     pub resulting_overrun: i64,
-    /// Optional actor/context — pass-through, GDPR-sensitive for the name (see `docs/LIMITS.md`).
+    /// Optional actor id — opaque caller-provided pass-through, capped at ingress (see `docs/LIMITS.md`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actor_user_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub actor_user_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub txn_name: Option<String>,
+    /// Optional caller transaction id — opaque pass-through, capped at ingress.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub txn_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reference: Option<String>,
 }
 
 /// A closed month's aggregates, written once at the rollover that ends it (idempotent). Everything

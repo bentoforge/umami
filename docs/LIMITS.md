@@ -192,11 +192,11 @@ customAdded                                  (topup)
 monthlyForfeited, extraAllowanceForfeited           (reset)
 resultingMonthly, resultingCustom, resultingExtraAllowance
 // Actor/Kontext — optional, caller-provided, KEINE umami-Validierung:
-actorUserId, actorUserName, txnName, txnId
+actorUserId, txnId
 ```
 
-`actorUserName` ist GDPR-sensibel; eine strenge Umgebung schickt ihn nicht und verknüpft nur
-über `actorUserId`/`txnId`, oder schwärzt/TTL't den Ledger. Kein Deploy-Schalter in v1.
+Nur zwei **opake Ids** (`actorUserId`, `txnId`), je am Ingress auf **64 Zeichen** begrenzt — keine
+Namen, kein Freitext, damit nichts GDPR-Sensibles im Ledger landet.
 
 ### `limit-history` — Hash `tenantId`, Range `limitCode#YYYY-MM`
 
@@ -380,7 +380,7 @@ Alles unter `/tenants/{id}/limits/...` (`tenantId` im Pfad — opake ID, kein PI
 **Maschine (Produktdienste), `book:limits`:**
 
 - `POST /tenants/{id}/limits/{code}/check` `{amount}` → `{allowed, remaining:{monthly,custom,extraAllowance,total}}`; Gauge: `{value,max,watermark}`. Mutationsfrei.
-- `POST /tenants/{id}/limits/{code}/consume` `{amount, actorUserId?, actorUserName?, txnName?, txnId?, reference?}` → bucht, liefert Bucket-Breakdown + neue Stände (429 je Policy).
+- `POST /tenants/{id}/limits/{code}/consume` `{amount, actorUserId?, txnId?}` (Ids je ≤ 64 Zeichen) → bucht, liefert Bucket-Breakdown + neue Stände (429 je Policy).
 - `POST /tenants/{id}/limits/{code}/report` `{value}` (Gauge) → setzt Wert, liefert Watermark-Status.
 
 **Admin/UI, `manage:limits`:**
@@ -440,7 +440,7 @@ den *Dienst*.
   Rollover in-memory, Overrun book-to-zero, Topup, Gauge-`set`), dünnes CAS-Repo, bounded
   OCC-Schleife, `check`/`consume`/`report`/`topup`. Permissions `book:limits`/`manage:limits`.
 - L3 Ledger + History: `limit-ledger` (append-only, Bucket-Breakdown + optionale Actor-Felder
-  `actorUserId`/`actorUserName`/`txnName`/`txnId`/`reference` aus dem Request), `limit-history`
+  `actorUserId`/`txnId` aus dem Request, je ≤ 64 Zeichen), `limit-history`
   (Monatsabschluss am Rollover, idempotent). `compare_and_swap` committet State + Ledger + History
   als **ein `TransactWriteItems`** (Version-Guard + History-if-not-exists) — kein Drift. Reads:
   `GET .../ledger`, `GET .../history` (self-service `view:limits` / cross-tenant `manage:limits`).

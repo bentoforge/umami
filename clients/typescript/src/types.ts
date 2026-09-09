@@ -904,11 +904,9 @@ export interface LedgerEntry {
   resultingMonthly: number;
   resultingCustom: number;
   resultingExtraAllowance: number;
+  /** Opaque caller-provided ids, each capped at 64 characters at ingress. */
   actorUserId?: string;
-  actorUserName?: string;
-  txnName?: string;
   txnId?: string;
-  reference?: string;
 }
 
 /** One page of a limit's ledger, newest first (absent `nextCursor` when exhausted). */
@@ -966,13 +964,11 @@ export interface GaugeReport {
   status: string;
 }
 
-/** Who and what a consume / report / top-up is attributed to. Flattened into the request body. */
+/** Who a consume / report / top-up is attributed to — two opaque ids, each at most 64 characters
+ * (rejected at ingress otherwise). Flattened into the request body. */
 export interface ActorContext {
   actorUserId?: string;
-  actorUserName?: string;
-  txnName?: string;
   txnId?: string;
-  reference?: string;
 }
 
 /** Result of an admin password reset — `temporaryPassword` is set (once) only when generated. */
