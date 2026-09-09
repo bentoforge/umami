@@ -14,18 +14,30 @@ use crate::limits::accounting::{self, Actor, Outcome};
 use crate::limits::repository::{CasOutcome, LimitRepository};
 use crate::tenants::repository::TenantRepository;
 use anyhow::{Context, bail};
+use aws_sdk_dynamodb::types::AttributeValue;
 use chrono::{DateTime, Months, Utc};
+use std::collections::HashMap;
 use std::sync::Arc;
+use wasabi::aws::dynamodb::client::DynamoClient;
 use wasabi::aws::dynamodb::generate_id;
+
+/// Logical table + key names, mirroring the private consts in [`crate::limits::repository`] — a dev
+/// tool may duplicate them.
+const TABLE_LIMIT_STATE: &str = "limit-state";
+const TABLE_LIMIT_LEDGER: &str = "limit-ledger";
+const TABLE_LIMIT_HISTORY: &str = "limit-history";
+const FIELD_TENANT_ID: &str = "tenantId";
+const FIELD_CODE: &str = "limitCode";
+const FIELD_LEDGER_SK: &str = "ledgerSk";
+const FIELD_HISTORY_SK: &str = "historySk";
 
 /// The code seeded when the caller names none — override with the second CLI argument.
 const DEFAULT_CODE: &str = "limit:ai-credits";
 
 /// Seeds `(tenant, code)` with a multi-month history, a populated ledger and a live overrun.
 ///
-/// `tenant_id` falls back to the configured system tenant, `code` to [`DEFAULT_CODE`]. When the
-/// limit already has a state row the timeline cannot be replayed cleanly, so it only appends a fresh
-/// current-month burst (more ledger, refreshed live state) and leaves the existing history intact.
+/// `tenant_id` falls back to the configured system tenant, `code` to [`DEFAULT_CODE`]. Any existing
+/// state/ledger/history for the pair is wiped first, so every run reproduces the same dataset.
 pub async fn seed_limits(
     limits: Arc<dyn LimitRepository>,
     tenants: Arc<dyn TenantRepository>,
@@ -65,30 +77,93 @@ pub async fn seed_limits(
 
     ensure_tenant_settings(&tenants, &tenant_id, &code, &settings).await?;
 
-    let existing = limits
-        .load_state(&tenant_id, &code)
-        .await
-        .context("loading any existing state")?;
+    // Wipe any existing state/ledger/history for this (tenant, code) so the timeline replays cleanly
+    // and every run produces the same overrun + closed-month history rather than just appending.
+    reset_target(&tenant_id, &code).await?;
 
     let mut seeder = Seeder {
         limits,
         tenant_id: tenant_id.clone(),
         code: code.clone(),
         settings,
-        state: existing.clone(),
-        // Continue from the stored version (or a first-ever write when there is none yet).
-        expected: existing.as_ref().map(|s| s.version),
+        state: None,
+        expected: None,
     };
+    seeder.full_timeline().await?;
+    tracing::info!("seeded a fresh 4-month timeline for {tenant_id} / {code}");
+    Ok(())
+}
 
-    if existing.is_none() {
-        seeder.full_timeline().await?;
-        tracing::info!("seeded a fresh 4-month timeline for {tenant_id} / {code}");
-    } else {
-        seeder.current_month_burst(Utc::now()).await?;
-        tracing::info!(
-            "{tenant_id} / {code} already had state — appended a current-month burst instead of \
-             replaying history"
-        );
+/// Deletes every state, ledger and history row for one `(tenant, code)` via a raw client, so the
+/// seeder can start from a clean slate on each run.
+async fn reset_target(tenant_id: &str, code: &str) -> anyhow::Result<()> {
+    let client = DynamoClient::from_env().await?;
+
+    // State: a single row, keyed by (tenant, code).
+    let _ = client
+        .delete_item(TABLE_LIMIT_STATE)
+        .key(FIELD_TENANT_ID, AttributeValue::S(tenant_id.to_owned()))
+        .key(FIELD_CODE, AttributeValue::S(code.to_owned()))
+        .send()
+        .await
+        .context("deleting the limit-state row")?;
+
+    delete_by_prefix(
+        &client,
+        TABLE_LIMIT_LEDGER,
+        FIELD_LEDGER_SK,
+        tenant_id,
+        code,
+    )
+    .await?;
+    delete_by_prefix(
+        &client,
+        TABLE_LIMIT_HISTORY,
+        FIELD_HISTORY_SK,
+        tenant_id,
+        code,
+    )
+    .await?;
+    Ok(())
+}
+
+/// Deletes every row of `table` whose sort key begins with `"{code}#"` for `tenant_id`.
+async fn delete_by_prefix(
+    client: &DynamoClient,
+    table: &str,
+    sk_field: &str,
+    tenant_id: &str,
+    code: &str,
+) -> anyhow::Result<()> {
+    let mut start: Option<HashMap<String, AttributeValue>> = None;
+    loop {
+        let page = client
+            .query(table)
+            .key_condition_expression("#pk = :pk AND begins_with(#sk, :prefix)")
+            .expression_attribute_names("#pk", FIELD_TENANT_ID)
+            .expression_attribute_names("#sk", sk_field)
+            .expression_attribute_values(":pk", AttributeValue::S(tenant_id.to_owned()))
+            .expression_attribute_values(":prefix", AttributeValue::S(format!("{code}#")))
+            .set_exclusive_start_key(start.clone())
+            .send()
+            .await
+            .with_context(|| format!("querying '{table}' to reset"))?;
+        for item in page.items() {
+            let Some(sk) = item.get(sk_field) else {
+                continue;
+            };
+            let _ = client
+                .delete_item(table)
+                .key(FIELD_TENANT_ID, AttributeValue::S(tenant_id.to_owned()))
+                .key(sk_field, sk.clone())
+                .send()
+                .await
+                .with_context(|| format!("deleting a '{table}' row"))?;
+        }
+        match page.last_evaluated_key() {
+            Some(key) if !key.is_empty() => start = Some(key.clone()),
+            _ => break,
+        }
     }
     Ok(())
 }
@@ -130,14 +205,12 @@ struct Seeder {
 }
 
 impl Seeder {
-    /// A representative actor for a seeded ledger entry.
-    fn actor(txn: &str) -> Actor {
+    /// A representative actor for a seeded ledger entry — a fixed user id and a fresh txn id, so the
+    /// ledger's id columns are populated.
+    fn actor() -> Actor {
         Actor {
-            user_id: Some("seed".to_owned()),
-            user_name: Some("Seed script".to_owned()),
-            txn_name: Some(txn.to_owned()),
+            user_id: Some("seed-user".to_owned()),
             txn_id: Some(generate_id()),
-            reference: None,
         }
     }
 
@@ -174,7 +247,7 @@ impl Seeder {
             amount,
             when,
             &generate_id(),
-            &Self::actor("consume"),
+            &Self::actor(),
             OverrunPolicy::Track,
         );
         self.commit(outcome).await
@@ -190,7 +263,7 @@ impl Seeder {
             amount,
             when,
             &generate_id(),
-            &Self::actor("topup"),
+            &Self::actor(),
         );
         self.commit(outcome).await
     }
