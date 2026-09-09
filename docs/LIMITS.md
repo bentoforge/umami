@@ -244,6 +244,32 @@ Reicht die Summe nicht, entscheidet die Policy des Limits, was mit dem Überstan
 Keine negativen Buckets — der Überstand lebt im Zähler, nicht als Minus-Guthaben. Nur bei
 `Consumable` erlaubt (Gauge-Validierung lehnt eine Nicht-Default-Policy ab).
 
+#### Überzug ist wie eine Schuld — er wird verrechnet, nicht nur gemerkt
+
+`monthlyOverdrawn` verhält sich wie ein Soll auf dem Konto: sobald wieder Guthaben da ist, wird es
+zuerst gegen die Schuld gebucht (`settle_overdraw`, Reihenfolge monthly → custom → overuse). Damit
+gilt die Bilanz-Invariante: verfügbar (Summe der Buckets) und `monthlyOverdrawn` sind **nie
+gleichzeitig positiv**.
+
+Zwei Wege erzeugen eine solche Umbuchung — beide schreiben einen `settings`- bzw. `topup`-Ledger-
+Eintrag mit `resultingOverdrawn`:
+
+- **Limit senken unter die schon verbrauchte Menge**: der Fehlbetrag wandert auf `monthlyOverdrawn`
+  (Warnung „shortfall is booked as overdraw"). 1000→500 bei 800 verbraucht ⇒ remaining 0,
+  overdrawn 300.
+- **Gutschrift (`topup`) oder Limit anheben**: das neue Guthaben tilgt zuerst den Überzug.
+  1000 wieder bei den 800 verbraucht ⇒ remaining 200, overdrawn 0 — self-healing, wie eine
+  Buchführung.
+
+#### Zwei-Phasen-Bestätigung bei Settings-Änderungen
+
+Weil eine Settings-Änderung eine echte Ledger-Buchung auslösen kann, ist der Schreibpfad zweistufig:
+`PATCH …/limits/{code}` ohne `?confirm=true` **previewt** nur — verschiebt die Änderung den Überzug,
+antwortet der Service mit `status: "confirmationRequired"`, `requiresConfirmation: true` und den
+Warnungen und schreibt **nichts**. Der Client zeigt „Achtung, Umbuchung: …" und schickt bei „Ja"
+dasselbe PATCH mit `?confirm=true`, das dann tatsächlich schreibt und umbucht. Ändert sich der
+Überzug nicht (oder wird das Limit geleert/entfernt), wird sofort gespeichert.
+
 ### Gauge
 
 Nur `set`: `gaugeValue`/`gaugeMonth` auf aktuellen Monat setzen, Watermark-Status

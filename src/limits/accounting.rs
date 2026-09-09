@@ -137,6 +137,7 @@ fn ledger_base(
         resulting_monthly: state.monthly_remaining,
         resulting_custom: state.custom_balance,
         resulting_overuse: state.overuse_remaining,
+        resulting_overdrawn: state.monthly_overdrawn,
         actor_user_id: actor.user_id.clone(),
         actor_user_name: actor.user_name.clone(),
         txn_name: actor.txn_name.clone(),
@@ -151,6 +152,24 @@ fn draw(pool: &mut i64, left: &mut i64) -> i64 {
     *pool -= taken;
     *left -= taken;
     taken
+}
+
+/// Nets spendable allowance against the overdraw debt so the two never both stand (the bookkeeping
+/// invariant): any available amount pays the debt down, drawing monthly → custom → overuse. Called
+/// after a top-up or a settings reconcile, so fresh allowance retires prior overdraw.
+fn settle_overdraw(state: &mut LimitState) {
+    let mut debt = state.monthly_overdrawn;
+    debt -= draw_pay(&mut state.monthly_remaining, debt);
+    debt -= draw_pay(&mut state.custom_balance, debt);
+    debt -= draw_pay(&mut state.overuse_remaining, debt);
+    state.monthly_overdrawn = debt;
+}
+
+/// Pays up to `debt` out of `*pool`, returning what was paid.
+fn draw_pay(pool: &mut i64, debt: i64) -> i64 {
+    let paid = (*pool).min(debt);
+    *pool -= paid;
+    paid
 }
 
 /// Books `amount` against a consumable, drawing **monthly → custom → overuse** in that order.
@@ -233,6 +252,8 @@ pub fn apply_topup(
     let (mut state, history) = rolled_over(existing, tenant_id, code, settings, now);
     let added = amount.max(0);
     state.custom_balance += added;
+    // Fresh credit retires prior overdraw first (bookkeeping): the debt drops, the rest stays balance.
+    settle_overdraw(&mut state);
 
     let mut ledger = ledger_base(&state, entry_id, now, ledger_type::TOPUP, amount, actor);
     ledger.custom_added = added;
@@ -295,27 +316,42 @@ pub fn apply_settings_change(
     let (mut state, history) = rolled_over(existing, tenant_id, code, settings, now);
     let mut warnings = Vec::new();
 
+    // Monthly: what is already used stays used. A rise grows the remaining; a fall below usage caps
+    // it at zero and books the shortfall as overdraw (an honest debt, not a silently-dropped value).
     let used_monthly = (state.monthly_snapshot - state.monthly_remaining).max(0);
     let new_monthly = settings.monthly.unwrap_or(0);
     state.monthly_snapshot = new_monthly;
-    state.monthly_remaining = (new_monthly - used_monthly).max(0);
-    if new_monthly < used_monthly {
+    let raw_monthly = new_monthly - used_monthly;
+    if raw_monthly >= 0 {
+        state.monthly_remaining = raw_monthly;
+    } else {
+        state.monthly_remaining = 0;
+        state.monthly_overdrawn += -raw_monthly;
         warnings.push(format!(
-            "monthly limit {new_monthly} is below the {used_monthly} already used this month; \
-             remaining capped at 0"
+            "monthly budget {new_monthly} is below the {used_monthly} already used this month; the \
+             {} shortfall is booked as overdraw",
+            -raw_monthly
         ));
     }
 
     let used_overuse = (state.overuse_snapshot - state.overuse_remaining).max(0);
     let new_overuse = settings.overuse.unwrap_or(0);
     state.overuse_snapshot = new_overuse;
-    state.overuse_remaining = (new_overuse - used_overuse).max(0);
-    if new_overuse < used_overuse {
+    let raw_overuse = new_overuse - used_overuse;
+    if raw_overuse >= 0 {
+        state.overuse_remaining = raw_overuse;
+    } else {
+        state.overuse_remaining = 0;
+        state.monthly_overdrawn += -raw_overuse;
         warnings.push(format!(
-            "overuse limit {new_overuse} is below the {used_overuse} already used this month; \
-             remaining capped at 0"
+            "extra allowance {new_overuse} is below the {used_overuse} already used this month; the \
+             {} shortfall is booked as overdraw",
+            -raw_overuse
         ));
     }
+
+    // A rise in budget or allowance retires prior overdraw first (bookkeeping).
+    settle_overdraw(&mut state);
 
     if let (Some(max), Some(value)) = (settings.max, state.gauge_value)
         && value > max
@@ -538,6 +574,77 @@ mod tests {
         assert_eq!(out.ledger.entry_type, ledger_type::TOPUP);
         assert_eq!(out.ledger.custom_added, 250);
         assert_eq!(out.ledger.resulting_custom, 250);
+    }
+
+    #[test]
+    fn a_topup_retires_overdraw_first() {
+        let owing = |debt: i64| {
+            let mut state =
+                LimitState::fresh("t1", "limit:ai", "2026-09", &settings(Some(0), None));
+            state.monthly_overdrawn = debt;
+            state
+        };
+        // A partial top-up pays the debt down and leaves no balance.
+        let out = apply_topup(
+            Some(owing(100)),
+            "t1",
+            "limit:ai",
+            &settings(Some(0), None),
+            60,
+            at(2026, 9, 7),
+            "e1",
+            &Actor::default(),
+        );
+        assert_eq!(out.state.monthly_overdrawn, 40);
+        assert_eq!(out.state.custom_balance, 0);
+        assert_eq!(out.ledger.resulting_overdrawn, 40);
+        // A larger top-up clears the debt and the remainder becomes balance.
+        let out = apply_topup(
+            Some(owing(100)),
+            "t1",
+            "limit:ai",
+            &settings(Some(0), None),
+            250,
+            at(2026, 9, 7),
+            "e2",
+            &Actor::default(),
+        );
+        assert_eq!(out.state.monthly_overdrawn, 0);
+        assert_eq!(out.state.custom_balance, 150);
+    }
+
+    #[test]
+    fn lowering_below_usage_books_overdraw_and_a_rise_retires_it() {
+        // 1000 budget with 800 already used (remaining 200).
+        let mut state = LimitState::fresh("t1", "limit:ai", "2026-09", &settings(Some(1000), None));
+        state.monthly_remaining = 200;
+
+        // Lower to 500 (below the 800 used): remaining 0, the 300 shortfall becomes overdraw.
+        let (out, warnings) = apply_settings_change(
+            Some(state),
+            "t1",
+            "limit:ai",
+            &settings(Some(500), None),
+            at(2026, 9, 7),
+            "e1",
+            &Actor::default(),
+        );
+        assert_eq!(out.state.monthly_remaining, 0);
+        assert_eq!(out.state.monthly_overdrawn, 300);
+        assert!(!warnings.is_empty());
+
+        // Raise back to 1000: 800 is still used, so remaining settles to 200 and the debt is retired.
+        let (out, _) = apply_settings_change(
+            Some(out.state),
+            "t1",
+            "limit:ai",
+            &settings(Some(1000), None),
+            at(2026, 9, 7),
+            "e2",
+            &Actor::default(),
+        );
+        assert_eq!(out.state.monthly_overdrawn, 0);
+        assert_eq!(out.state.monthly_remaining, 200);
     }
 
     #[test]

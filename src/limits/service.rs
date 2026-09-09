@@ -127,6 +127,7 @@ pub fn set_limit_settings_route(
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("tenants" / String / "limits" / DecodedSegment / "settings")
         .and(warp::put())
+        .and(warp::query::<ConfirmQuery>())
         .and(with_body_as_json::<LimitSettings>(MAX_TEXT_BODY_SIZE))
         .and(with_cloneable(tenants))
         .and(with_cloneable(config))
@@ -137,6 +138,15 @@ pub fn set_limit_settings_route(
         ))
         .and_then(handle_set_limit_settings_route)
         .boxed()
+}
+
+/// `?confirm=true` acknowledges a settings change that re-books overdraw, so it is applied rather
+/// than previewed.
+#[derive(Deserialize, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+struct ConfirmQuery {
+    #[serde(default)]
+    confirm: bool,
 }
 
 // ── Handlers ─────────────────────────────────────────────────────────────────
@@ -158,9 +168,11 @@ async fn handle_list_limits_route(
     name = "PUT /tenants/{id}/limits/{code}/settings",
     skip_all
 )]
+#[allow(clippy::too_many_arguments)]
 async fn handle_set_limit_settings_route(
     tenant_id: String,
     code: DecodedSegment,
+    query: ConfirmQuery,
     settings: LimitSettings,
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
@@ -168,7 +180,17 @@ async fn handle_set_limit_settings_route(
     caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
     into_response(
-        set_limit_settings(tenant_id, code.0, settings, tenants, config, limits, caller).await,
+        set_limit_settings(
+            tenant_id,
+            code.0,
+            settings,
+            query.confirm,
+            tenants,
+            config,
+            limits,
+            caller,
+        )
+        .await,
     )
 }
 
@@ -231,10 +253,12 @@ async fn list_limits(
     Ok(LimitsResponse { limits: entries })
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn set_limit_settings(
     tenant_id: String,
     code: String,
     settings: LimitSettings,
+    confirm: bool,
     tenants: Arc<dyn TenantRepository>,
     config: Arc<dyn ConfigRepository>,
     limits: Arc<dyn LimitRepository>,
@@ -242,11 +266,39 @@ async fn set_limit_settings(
 ) -> anyhow::Result<SettingsResponse> {
     let config = config.current().await?;
     // Clearing (empty settings) removes the entry and is allowed for *any* code — that is how an
-    // orphaned limit, whose definition has since been removed from the config, gets cleaned up.
-    // Setting actual values is validated against the definition.
+    // orphaned limit, whose definition has since been removed from the config, gets cleaned up. It
+    // never re-books (the limit is going away), so it always saves straight through.
     let clearing = settings == LimitSettings::default();
     if !clearing {
         config.validate_limit_settings(&code, &settings)?;
+    }
+
+    // A value change against an existing state row may re-book overdraw (a cut below usage adds debt;
+    // a rise retires it). That is a real ledger movement, so unless the caller confirmed it, preview
+    // the reconcile and, when it would move the overdraw, ask first instead of writing anything.
+    if !clearing
+        && !confirm
+        && let Some(state) = limits.load_state(&tenant_id, &code).await?
+    {
+        let now = Utc::now();
+        let (rolled, _) =
+            accounting::rolled_over(Some(state.clone()), &tenant_id, &code, &settings, now);
+        let (outcome, warnings) = accounting::apply_settings_change(
+            Some(state),
+            &tenant_id,
+            &code,
+            &settings,
+            now,
+            &generate_id(),
+            &settings_actor(&caller),
+        );
+        if outcome.state.monthly_overdrawn != rolled.monthly_overdrawn {
+            return Ok(SettingsResponse {
+                status: "confirmationRequired",
+                requires_confirmation: true,
+                warnings,
+            });
+        }
     }
 
     let mut tenant = match tenants.get_tenant(&tenant_id).await? {
@@ -262,21 +314,36 @@ async fn set_limit_settings(
     let _ = tenants.put_tenant(tenant).await?;
 
     // The tenant record (L2) is the source of truth and is now written. Reconcile the live counters
-    // (L3) so the change takes effect this month, not just next — grow on a rise, shrink or cap at
-    // usage on a fall, warn when it lands below what is already spent. Only an existing state row
-    // needs this; a never-used limit builds itself from the new settings on its first booking.
-    let warnings = reconcile_limit_state(&limits, &tenant_id, &code, &settings, &caller).await?;
+    // (L3) so the change takes effect this month, not just next. Clearing skips it — the limit is
+    // gone, so there is nothing to keep consistent (its state row is left orphaned).
+    let warnings = if clearing {
+        Vec::new()
+    } else {
+        reconcile_limit_state(&limits, &tenant_id, &code, &settings, &caller).await?
+    };
     Ok(SettingsResponse {
         status: "saved",
+        requires_confirmation: false,
         warnings,
     })
 }
 
-/// The result of a settings write: whether it saved, and any advisory reconciliation warnings.
+/// The actor stamped on a settings/reconcile ledger entry.
+fn settings_actor(caller: &AuthUser) -> Actor {
+    Actor {
+        user_id: caller.user_id().ok().map(str::to_owned),
+        txn_name: Some(crate::limits::ledger_type::SETTINGS.to_owned()),
+        ..Actor::default()
+    }
+}
+
+/// The result of a settings write: whether it saved (or needs confirmation because it would re-book
+/// overdraw), and any advisory reconciliation warnings.
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct SettingsResponse {
     status: &'static str,
+    requires_confirmation: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     warnings: Vec<String>,
 }
@@ -293,11 +360,7 @@ async fn reconcile_limit_state(
     if limits.load_state(tenant_id, code).await?.is_none() {
         return Ok(Vec::new());
     }
-    let actor = Actor {
-        user_id: caller.user_id().ok().map(str::to_owned),
-        txn_name: Some(crate::limits::ledger_type::SETTINGS.to_owned()),
-        ..Actor::default()
-    };
+    let actor = settings_actor(caller);
     let now = Utc::now();
     let entry_id = generate_id();
     let (_outcome, warnings) = commit_state(limits, tenant_id, code, |existing| {
@@ -1111,6 +1174,7 @@ mod tests {
             "t-1".to_owned(),
             "limit:ai-credits".to_owned(),
             settings,
+            false,
             Arc::new(tenants),
             consumable_config().await,
             no_state_limits(),
@@ -1131,6 +1195,7 @@ mod tests {
             "t-1".to_owned(),
             "limit:ai-credits".to_owned(),
             settings,
+            false,
             Arc::new(tenants),
             consumable_config().await,
             no_state_limits(),
@@ -1166,6 +1231,7 @@ mod tests {
             "t-1".to_owned(),
             "limit:ai-credits".to_owned(),
             LimitSettings::default(),
+            false,
             Arc::new(tenants),
             consumable_config().await,
             no_state_limits(),
@@ -1185,6 +1251,7 @@ mod tests {
                 monthly: Some(1),
                 ..LimitSettings::default()
             },
+            false,
             Arc::new(tenants),
             consumable_config().await,
             no_state_limits(),
@@ -1641,6 +1708,7 @@ mod tests {
                 daily: None,
                 max: None,
             },
+            true,
             Arc::new(tenants),
             consumable_config().await,
             Arc::new(limits),
@@ -1655,6 +1723,61 @@ mod tests {
             "{:?}",
             response.warnings
         );
+    }
+
+    #[tokio::test]
+    async fn lowering_a_used_limit_asks_to_confirm_and_writes_nothing() {
+        use crate::limits::repository::MockLimitRepository;
+
+        let month = accounting::year_month(Utc::now());
+        // 900 of the 1000 monthly is already used this month.
+        let mut seeded = LimitState::fresh(
+            "t-1",
+            "limit:ai-credits",
+            &month,
+            &LimitSettings {
+                monthly: Some(1000),
+                overuse: Some(200),
+                daily: None,
+                max: None,
+            },
+        );
+        seeded.monthly_remaining = 100;
+
+        let mut tenants = MockTenantRepository::new();
+        tenants
+            .expect_get_tenant()
+            .returning(|_| Box::pin(async { Ok(Some(tenant_with_credits())) }));
+        // No expect_put_tenant: the preview path must not write the tenant.
+        let mut limits = MockLimitRepository::new();
+        limits.expect_load_state().returning(move |_, _| {
+            let state = seeded.clone();
+            Box::pin(async move { Ok(Some(state)) })
+        });
+        // No expect_compare_and_swap: the preview path must not reconcile the state either.
+
+        // Cutting monthly 1000 -> 500 (below the 900 used) re-books overdraw, so without confirm it
+        // asks first and writes nothing.
+        let response = set_limit_settings(
+            "t-1".to_owned(),
+            "limit:ai-credits".to_owned(),
+            LimitSettings {
+                monthly: Some(500),
+                overuse: Some(200),
+                daily: None,
+                max: None,
+            },
+            false,
+            Arc::new(tenants),
+            consumable_config().await,
+            Arc::new(limits),
+            caller(),
+        )
+        .await
+        .expect("previewed");
+        assert_eq!(response.status, "confirmationRequired");
+        assert!(response.requires_confirmation);
+        assert!(!response.warnings.is_empty());
     }
 
     #[tokio::test]

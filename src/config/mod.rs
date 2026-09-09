@@ -988,6 +988,14 @@ impl Config {
                         "Limit '{code}' has no daily throttle — enable it on the definition first"
                     );
                 }
+                if let (Some(daily), Some(monthly)) = (settings.daily, settings.monthly)
+                    && daily > monthly
+                {
+                    client_bail!(
+                        "Limit '{code}' daily {daily} must not exceed the monthly budget {monthly} \
+                         — daily is a per-day cap on the month, not an extra allowance"
+                    );
+                }
             }
             LimitKind::Gauge => {
                 for (label, value) in [

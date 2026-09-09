@@ -158,6 +158,10 @@ pub struct LedgerEntry {
     pub resulting_custom: i64,
     /// The overuse-remaining after the movement.
     pub resulting_overuse: i64,
+    /// The overdraw debt after the movement — so every booking snapshots it and the ledger reads as
+    /// a consistent account.
+    #[serde(default)]
+    pub resulting_overdrawn: i64,
     /// Optional actor/context — pass-through, GDPR-sensitive for the name (see `docs/LIMITS.md`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actor_user_id: Option<String>,
