@@ -278,6 +278,8 @@ function LimitsTable({
 interface DetailLine {
   key: string;
   label: string;
+  /** What this value means, shown as a tooltip on the label. */
+  hint: string;
   bobble: ReactNode;
   ceiling: number | null;
   value: number;
@@ -292,6 +294,7 @@ function detailLines(row: Row, t: (key: string) => string): DetailLine[] {
       {
         key: "gauge",
         label: t("limits.value"),
+        hint: t("limits.ceilingHint"),
         bobble: (
           <Bobble
             value={st?.gaugeValue}
@@ -306,9 +309,16 @@ function detailLines(row: Row, t: (key: string) => string): DetailLine[] {
     ];
   }
 
-  const budget = (key: string, label: string, ceiling: number, remaining: number): DetailLine => ({
+  const budget = (
+    key: string,
+    label: string,
+    hint: string,
+    ceiling: number,
+    remaining: number,
+  ): DetailLine => ({
     key,
     label,
+    hint,
     bobble: <AvailabilityBobble remaining={remaining} limit={ceiling} />,
     ceiling,
     value: remaining,
@@ -317,20 +327,43 @@ function detailLines(row: Row, t: (key: string) => string): DetailLine[] {
   const lines: DetailLine[] = [];
   const monthly = s.monthly ?? 0;
   lines.push(
-    budget("monthly", t("limits.monthlyBudget"), monthly, st?.monthlyRemaining ?? monthly),
+    budget(
+      "monthly",
+      t("limits.monthlyBudget"),
+      t("limits.monthlyHint"),
+      monthly,
+      st?.monthlyRemaining ?? monthly,
+    ),
   );
   if (row.def?.daily && (s.daily ?? 0) > 0) {
     const daily = s.daily ?? 0;
-    lines.push(budget("daily", t("limits.dailyBudget"), daily, st?.dailyRemaining ?? daily));
+    lines.push(
+      budget(
+        "daily",
+        t("limits.dailyBudget"),
+        t("limits.dailyHint"),
+        daily,
+        st?.dailyRemaining ?? daily,
+      ),
+    );
   }
   if (row.def?.overuse && (s.overuse ?? 0) > 0) {
     const overuse = s.overuse ?? 0;
-    lines.push(budget("overuse", t("limits.overusage"), overuse, st?.overuseRemaining ?? overuse));
+    lines.push(
+      budget(
+        "overuse",
+        t("limits.overusage"),
+        t("limits.overuseHint"),
+        overuse,
+        st?.overuseRemaining ?? overuse,
+      ),
+    );
   }
   if ((st?.customBalance ?? 0) > 0) {
     lines.push({
       key: "balance",
       label: t("limits.balance"),
+      hint: t("limits.balanceHint"),
       bobble: <ToneDot className="bg-green-500" />,
       ceiling: null,
       value: st?.customBalance ?? 0,
@@ -340,6 +373,7 @@ function detailLines(row: Row, t: (key: string) => string): DetailLine[] {
     lines.push({
       key: "overdrawn",
       label: t("limits.overdrawn"),
+      hint: t("limits.overdrawnHint"),
       bobble: <ToneDot className="bg-amber-400" />,
       ceiling: null,
       value: st?.overdrawn ?? 0,
@@ -380,7 +414,14 @@ function LimitRow({
             <td className={cell}>
               <span className="inline-flex items-center gap-2">
                 {line.bobble}
-                {line.label && <span className="font-mono">{line.label}</span>}
+                {line.label && (
+                  <span
+                    className="font-mono decoration-slate-300 decoration-dotted underline-offset-2 hover:underline"
+                    title={line.hint}
+                  >
+                    {line.label}
+                  </span>
+                )}
               </span>
             </td>
             <td className={`${cell} text-right font-mono`}>

@@ -186,6 +186,8 @@
     "dailyHint": "Wie viel des Monatsbudgets höchstens an einem einzelnen Tag verbraucht werden darf.",
     "overuseHint": "Um wie viel das Monatsbudget überschritten werden darf — die Überschreitung wird ggf. nachträglich berechnet.",
     "ceilingHint": "Absolute Obergrenze; der aktuelle Wert wird dagegen gemeldet.",
+    "balanceHint": "Sonderguthaben, das über den Monat hinaus bestehen bleibt.",
+    "overdrawnHint": "Über alles Verfügbare hinaus verbraucht — als Schuld gebucht, ggf. nachträglich abgerechnet.",
     "confirmBookingTitle": "Achtung, das ergibt eine Umbuchung:",
     "confirmBooking": "Umbuchung bestätigen",
     "save": "Speichern",
