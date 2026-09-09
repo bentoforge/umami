@@ -57,6 +57,9 @@ mod limits;
 mod messaging;
 mod notify;
 mod search;
+// Dev-only limit-data seeder behind the `seed-limits` subcommand; never built into a release binary.
+#[cfg(debug_assertions)]
+mod seed;
 mod storage;
 mod tenants;
 mod users;
@@ -123,6 +126,24 @@ async fn app() -> anyhow::Result<()> {
     );
 
     let platform = Platform::boot().await?;
+
+    // Dev-only: `seed-limits [tenant] [code]` fakes ledger/history/overdraw for the UI, then exits
+    // without serving. Compiled out of release builds entirely.
+    #[cfg(debug_assertions)]
+    {
+        let args: Vec<String> = env::args().collect();
+        if args.get(1).map(String::as_str) == Some("seed-limits") {
+            return seed::seed_limits(
+                platform.repos.limits.clone(),
+                platform.repos.tenants.clone(),
+                platform.config.clone(),
+                platform.system_tenant_id.clone(),
+                args.get(2).map(String::as_str),
+                args.get(3).map(String::as_str),
+            )
+            .await;
+        }
+    }
 
     // Optionally bootstrap the very first tenant + owner on an empty deployment.
     maybe_auto_init(&platform).await?;

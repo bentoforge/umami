@@ -357,6 +357,22 @@ Der Schnitt existiert genau, um Vollgas beim Testen zu erlauben — der schwere 
 - **Repository (Dynamo)** — Integrationstest (gegen AWS, wie die übrigen Repo-Tests): `TransactWriteItems`
   hält die Version-Condition (paralleler Schreiber verliert), History-Put ist idempotent.
 
+### UI-Testdaten seeden (dev)
+
+Um die Verwaltungs-UI gegen echte Rows auszuprobieren, gibt es einen **Debug-only**-Unterbefehl
+(nur in Debug-Builds einkompiliert, nie im Release-Binary):
+
+```bash
+cargo run -- seed-limits [tenant] [limit-code]
+```
+
+Ohne Argumente nimmt er den `UMAMI_SYSTEM_TENANT_ID` und `limit:ai-credits`. Er hinterlegt die
+Settings am Mandanten und spielt über den normalen `accounting`-Pfad eine 4-Monats-Aktivität ein:
+Ledger-Einträge, per Monatswechsel geschlossene History-Zeilen (inkl. `overuseUsed` und
+`monthlyOverdrawn`) und einen **live überzogenen** aktuellen Monat. Läuft er auf ein Limit, das
+schon State hat, hängt er nur einen frischen Monats-Burst an, statt die History neu zu schreiben.
+Braucht eine gültige AWS-Session (`aws sso login`), weil er gegen das echte Dynamo schreibt.
+
 ## API-Fläche
 
 Alles unter `/tenants/{id}/limits/...` (`tenantId` im Pfad — opake ID, kein PII in Query).
