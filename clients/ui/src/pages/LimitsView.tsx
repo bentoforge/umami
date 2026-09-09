@@ -286,7 +286,7 @@ function detailLines(row: Row, t: (key: string) => string): DetailLine[] {
     return [
       {
         key: "gauge",
-        label: "",
+        label: t("limits.value"),
         bobble: (
           <Bobble
             value={st?.gaugeValue}
@@ -445,7 +445,7 @@ function Bobble({
       color = "bg-green-500";
     }
   }
-  return <span className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${color}`} />;
+  return <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${color}`} />;
 }
 
 /** The non-edit actions, always behind a 3-dots menu (edit is the pencil in the name). A consumable
