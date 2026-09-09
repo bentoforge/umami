@@ -132,23 +132,16 @@ async fn app() -> anyhow::Result<()> {
     #[cfg(debug_assertions)]
     {
         let args: Vec<String> = env::args().collect();
-        match args.get(1).map(String::as_str) {
-            Some("seed-limits") => {
-                return seed::seed_limits(
-                    platform.repos.limits.clone(),
-                    platform.repos.tenants.clone(),
-                    platform.config.clone(),
-                    platform.system_tenant_id.clone(),
-                    args.get(2).map(String::as_str),
-                    args.get(3).map(String::as_str),
-                )
-                .await;
-            }
-            // Repair rows written before the overuse→extraAllowance / overdrawn→overrun rename.
-            Some("migrate-limits") => {
-                return seed::migrate_limits().await;
-            }
-            _ => {}
+        if args.get(1).map(String::as_str) == Some("seed-limits") {
+            return seed::seed_limits(
+                platform.repos.limits.clone(),
+                platform.repos.tenants.clone(),
+                platform.config.clone(),
+                platform.system_tenant_id.clone(),
+                args.get(2).map(String::as_str),
+                args.get(3).map(String::as_str),
+            )
+            .await;
         }
     }
 
