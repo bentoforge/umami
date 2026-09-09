@@ -193,6 +193,11 @@ async function deleteLimit(
 
 const unitSuffix = (unit?: string) => (unit ? ` ${unit}` : "");
 
+/** A short explanatory note under a form field. */
+function FieldHint({ children }: { children: ReactNode }) {
+  return <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{children}</p>;
+}
+
 /** The name cell — the limit's label as a click-to-edit link (primary colour, pointer) when
  * editable, else plain; for an orphan its code with a muted "no longer defined". */
 function NameCell({ row, editable, onEdit }: { row: Row; editable: boolean; onEdit: () => void }) {
@@ -556,43 +561,47 @@ function LimitEditor({
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         {row.kind === "consumable" ? (
           <>
-            <Field label={t("limits.monthly")}>
+            <Field label={t("limits.monthlyBudget")}>
               <input
                 className={input}
                 type="number"
                 value={numValue("monthly")}
                 onChange={(e) => setNum("monthly", e.target.value)}
               />
+              <FieldHint>{t("limits.monthlyHint")}</FieldHint>
             </Field>
-            {row.def?.overuse && (
-              <Field label={t("limits.overuse")}>
-                <input
-                  className={input}
-                  type="number"
-                  value={numValue("overuse")}
-                  onChange={(e) => setNum("overuse", e.target.value)}
-                />
-              </Field>
-            )}
             {row.def?.daily && (
-              <Field label={t("limits.daily")}>
+              <Field label={t("limits.dailyBudget")}>
                 <input
                   className={input}
                   type="number"
                   value={numValue("daily")}
                   onChange={(e) => setNum("daily", e.target.value)}
                 />
+                <FieldHint>{t("limits.dailyHint")}</FieldHint>
+              </Field>
+            )}
+            {row.def?.overuse && (
+              <Field label={t("limits.overusage")}>
+                <input
+                  className={input}
+                  type="number"
+                  value={numValue("overuse")}
+                  onChange={(e) => setNum("overuse", e.target.value)}
+                />
+                <FieldHint>{t("limits.overuseHint")}</FieldHint>
               </Field>
             )}
           </>
         ) : (
-          <Field label={t("limits.max")}>
+          <Field label={t("limits.ceiling")}>
             <input
               className={input}
               type="number"
               value={numValue("max")}
               onChange={(e) => setNum("max", e.target.value)}
             />
+            <FieldHint>{t("limits.ceilingHint")}</FieldHint>
           </Field>
         )}
       </div>

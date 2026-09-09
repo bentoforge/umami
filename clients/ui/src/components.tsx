@@ -263,7 +263,7 @@ export function Field({
 }) {
   return (
     <label className={className}>
-      <span className="text-xs text-slate-500">{label}</span>
+      <span className="text-sm text-slate-600 dark:text-slate-400">{label}</span>
       <div className="mt-1">{children}</div>
     </label>
   );
