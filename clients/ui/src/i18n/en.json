@@ -186,6 +186,8 @@
     "dailyHint": "The most of the monthly budget that may be spent in a single day.",
     "overuseHint": "How far the monthly budget may be exceeded — the excess may be billed afterwards.",
     "ceilingHint": "Absolute upper bound; the current value is reported against it.",
+    "confirmBookingTitle": "Heads up — this change re-books the balance:",
+    "confirmBooking": "Confirm re-booking",
     "save": "Save",
     "historyTitle": "History",
     "ledgerTitle": "Transactions",

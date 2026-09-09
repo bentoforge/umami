@@ -939,7 +939,12 @@ export interface LimitHistory {
 /** Result of saving a limit's settings — `warnings` flag e.g. a lowered limit capped at current
  * usage. */
 export interface SettingsSaveResult {
+  /** `"saved"` when the change was applied, or `"confirmationRequired"` when it would re-book
+   * overdraw and needs an explicit confirm (see {@link requiresConfirmation}). */
   status: string;
+  /** True when nothing was written because the change would move the overdraw; re-send with
+   * `confirm: true` (see {@link UmamiClient.setTenantLimitSettings}) to apply it. */
+  requiresConfirmation?: boolean;
   warnings?: string[];
 }
 

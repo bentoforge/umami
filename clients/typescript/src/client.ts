@@ -799,14 +799,21 @@ export class UmamiClient {
     return this.request<LimitsListResponse>(`/tenants/${enc(tenantId)}/limits`);
   }
   /** Set one limit's per-tenant settings. `warnings` on the result flag e.g. a lowered allowance
-   * that was capped at the current usage. */
+   * that was capped at the current usage.
+   *
+   * A change that would re-book overdraw (lowering a limit below its usage, or a raise that retires
+   * a debt) is not written on the first call: the result comes back with `status`
+   * `"confirmationRequired"` and `requiresConfirmation: true`, its `warnings` describing the
+   * booking. Show them, then call again with `{ confirm: true }` to apply it. */
   setTenantLimitSettings(
     tenantId: string,
     code: string,
     settings: LimitSettings,
+    opts?: { confirm?: boolean },
   ): Promise<SettingsSaveResult> {
+    const qs = opts?.confirm ? "?confirm=true" : "";
     return this.request<SettingsSaveResult>(
-      `/tenants/${enc(tenantId)}/limits/${enc(code)}/settings`,
+      `/tenants/${enc(tenantId)}/limits/${enc(code)}/settings${qs}`,
       { method: "PUT", body: JSON.stringify(settings) },
     );
   }

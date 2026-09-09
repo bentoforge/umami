@@ -527,20 +527,33 @@ function LimitEditor({
   const [settings, setSettings] = useState<LimitSettings>(row.entry.settings);
   const [saving, setSaving] = useState(false);
   const [warnings, setWarnings] = useState<string[]>([]);
+  // A change that would re-book overdraw is previewed first: the server reports it without writing,
+  // and we ask for an explicit confirm before re-sending. Any edit invalidates that preview.
+  const [needsConfirm, setNeedsConfirm] = useState(false);
 
-  const setNum = (key: keyof LimitSettings, value: string) =>
+  const setNum = (key: keyof LimitSettings, value: string) => {
     setSettings((s) => ({ ...s, [key]: value === "" ? undefined : Number(value) }));
+    setNeedsConfirm(false);
+    setWarnings([]);
+  };
   const numValue = (key: keyof LimitSettings) => {
     const v = settings[key];
     return v === undefined || v === null ? "" : String(v);
   };
 
-  const save = async () => {
+  const save = async (confirm = false) => {
     setSaving(true);
     onError("");
     try {
-      const res = await client.setTenantLimitSettings(tenantId, row.entry.code, settings);
-      if (res.warnings && res.warnings.length > 0) {
+      const res = await client.setTenantLimitSettings(tenantId, row.entry.code, settings, {
+        confirm,
+      });
+      if (res.status === "confirmationRequired") {
+        // A booking would happen — show it and wait for the confirm click, writing nothing yet.
+        setNeedsConfirm(true);
+        setWarnings(res.warnings ?? []);
+      } else if (!confirm && res.warnings && res.warnings.length > 0) {
+        // Saved straight through, but with advisory reconcile notes.
         setWarnings(res.warnings);
       } else {
         onSaved();
@@ -608,6 +621,9 @@ function LimitEditor({
 
       {warnings.length > 0 && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300">
+          {needsConfirm && (
+            <p className="mb-1 font-medium">{t("limits.confirmBookingTitle")}</p>
+          )}
           <ul className="list-disc space-y-0.5 pl-4">
             {warnings.map((w) => (
               <li key={w}>{w}</li>
@@ -617,9 +633,15 @@ function LimitEditor({
       )}
 
       <div className="flex gap-2">
-        <button className={primaryButton} disabled={saving} onClick={() => void save()}>
-          {t("limits.save")}
-        </button>
+        {needsConfirm ? (
+          <button className={primaryButton} disabled={saving} onClick={() => void save(true)}>
+            {t("limits.confirmBooking")}
+          </button>
+        ) : (
+          <button className={primaryButton} disabled={saving} onClick={() => void save()}>
+            {t("limits.save")}
+          </button>
+        )}
         <button className={ghostButton} disabled={saving} onClick={onCancel}>
           {t("limits.back")}
         </button>
