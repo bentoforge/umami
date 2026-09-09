@@ -10,7 +10,6 @@ import {
   ArrowLeftIcon,
   ClockIcon,
   ListBulletIcon,
-  PencilSquareIcon,
   PlusCircleIcon,
   TrashIcon,
 } from "@heroicons/react/24/outline";
@@ -40,7 +39,7 @@ interface Row {
   kind: LimitKind;
 }
 
-/** Which sub-view of the card is showing; `list` is the two tables, the rest are scoped to `code`. */
+/** Which sub-view of the card is showing; `list` is the table, the rest are scoped to `code`. */
 type Mode =
   | { view: "list" }
   | { view: "edit"; code: string }
@@ -50,8 +49,8 @@ type Mode =
 
 /** Reusable limits surface shared by the tenant editor (`readOnly=false`, full management) and the
  * start page's self view (`readOnly=true`, only the ledger/history switches). A single card with an
- * internal view mode: `list` shows a consumable and a gauge table, each only when it has a row;
- * edit/ledger/history/topup swap the body and offer a Back to the list.
+ * internal view mode: `list` shows the limits table; edit/ledger/history/topup swap the body and
+ * offer a Back to the list.
  *
  * Renders nothing when the tenant has no relevant or stored limits — a deployment that does not use
  * limits, or a tenant none apply to — rather than an empty card. */
@@ -190,13 +189,24 @@ async function deleteLimit(
 
 const unitSuffix = (unit?: string) => (unit ? ` ${unit}` : "");
 
-/** The name cell — the limit's label, or for an orphan its code with a muted "no longer defined". */
-function NameCell({ row }: { row: Row }) {
+/** The name cell — the limit's label as a click-to-edit link (primary colour, pointer) when
+ * editable, else plain; for an orphan its code with a muted "no longer defined". */
+function NameCell({ row, editable, onEdit }: { row: Row; editable: boolean; onEdit: () => void }) {
   const { t } = useTranslation();
   if (row.def) {
     return (
       <div>
-        <div className="font-medium text-slate-900 dark:text-white">{row.def.name}</div>
+        {editable ? (
+          <button
+            type="button"
+            onClick={onEdit}
+            className="cursor-pointer font-medium text-primary hover:underline"
+          >
+            {row.def.name}
+          </button>
+        ) : (
+          <div className="font-medium text-slate-900 dark:text-white">{row.def.name}</div>
+        )}
         {row.def.description && (
           <div className="text-slate-400 dark:text-slate-500">{row.def.description}</div>
         )}
@@ -211,9 +221,8 @@ function NameCell({ row }: { row: Row }) {
   );
 }
 
-/** The single limits table — consumables and gauges together, no sub-headings. Each row shows the
- * current value in bold (with unit), a muted budget/limit summary, an edit pencil in the name (when
- * editable) and the remaining actions behind a 3-dots menu. */
+/** The single limits table — three columns (name, an inner details table, the actions menu), no
+ * header row. */
 function LimitsTable({
   rows,
   readOnly,
@@ -225,18 +234,9 @@ function LimitsTable({
   onAction: (view: "edit" | "ledger" | "history" | "topup", code: string) => void;
   onDelete: (code: string) => void;
 }) {
-  const { t } = useTranslation();
   return (
     <div className="overflow-x-auto">
       <table className="w-full border-collapse">
-        <thead>
-          <tr className="border-b border-slate-200 dark:border-slate-700">
-            <th className={th}>{t("limits.name")}</th>
-            <th className={th}>{t("limits.value")}</th>
-            <th className={th} />
-            <th className={`${th} text-right`} />
-          </tr>
-        </thead>
         <tbody>
           {rows.map((row) => (
             <LimitRow
@@ -264,84 +264,178 @@ function LimitRow({
   onAction: (view: "edit" | "ledger" | "history" | "topup", code: string) => void;
   onDelete: (code: string) => void;
 }) {
-  const { t } = useTranslation();
   const code = row.entry.code;
   const editable = !readOnly && row.def != null;
-  const unit = unitSuffix(row.def?.unit);
-  const s = row.entry.settings;
-  const st = row.entry.state;
-
-  let value: string;
-  let details: string;
-  if (row.kind === "gauge") {
-    value = st?.gaugeValue != null ? `${st.gaugeValue}${unit}` : "—";
-    details = `${t("limits.limitMax")}: ${s.max != null ? `${s.max}${unit}` : "—"}`;
-  } else {
-    const budget = s.monthly ?? 0;
-    const usedMonth = st ? Math.max(0, budget - st.monthlyRemaining) : 0;
-    value = `${usedMonth}${unit}`;
-    const parts: string[] = [`${t("limits.monthlyBudget")}: ${budget}${unit}`];
-    if (row.def?.daily && (s.daily ?? 0) > 0) {
-      const budgetToday = s.daily ?? 0;
-      const usedToday =
-        st?.dailyRemaining != null ? Math.max(0, budgetToday - st.dailyRemaining) : 0;
-      const daily = usedToday === 0 ? `${budgetToday}` : `${usedToday} / ${budgetToday}`;
-      parts.push(`${t("limits.dailyBudget")}: ${daily}${unit}`);
-    }
-    const balance = st?.customBalance ?? 0;
-    if (balance > 0) {
-      parts.push(`${t("limits.balance")}: ${balance}${unit}`);
-    }
-    if (row.def?.overuse && (s.overuse ?? 0) > 0) {
-      const maxOveruse = s.overuse ?? 0;
-      const usedOveruse = st ? Math.max(0, maxOveruse - st.overuseRemaining) : 0;
-      const over = usedOveruse === 0 ? `${maxOveruse}` : `${usedOveruse} / ${maxOveruse}`;
-      parts.push(`${t("limits.overusage")}: ${over}${unit}`);
-    }
-    if ((st?.overdrawn ?? 0) > 0) {
-      parts.push(`${t("limits.overdrawn")}: ${st?.overdrawn}${unit}`);
-    }
-    details = parts.join(", ");
-  }
-
   return (
-    <tr className="border-b border-slate-100 dark:border-slate-700/50">
+    <tr className="border-b border-slate-100 align-top dark:border-slate-700/50">
+      <td className={`${td} whitespace-nowrap`}>
+        <NameCell row={row} editable={editable} onEdit={() => onAction("edit", code)} />
+      </td>
       <td className={td}>
-        <div className="flex items-start gap-2">
-          {editable && (
-            <button
-              type="button"
-              title={t("limits.edit")}
-              onClick={() => onAction("edit", code)}
-              className="mt-0.5 shrink-0 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
-            >
-              <PencilSquareIcon className="h-4 w-4" />
-            </button>
-          )}
-          <NameCell row={row} />
-        </div>
+        <DetailsTable row={row} />
       </td>
-      <td className={`${td} font-semibold`}>
-        {row.kind === "gauge" ? (
-          <span className="inline-flex items-center gap-2">
-            <Bobble
-              value={st?.gaugeValue}
-              max={s.max}
-              low={row.def?.lowWatermarkPercent}
-              high={row.def?.highWatermarkPercent}
-            />
-            {value}
-          </span>
-        ) : (
-          value
-        )}
-      </td>
-      <td className={`${td} text-slate-400 dark:text-slate-500`}>{details}</td>
-      <td className={`${td} text-right`}>
+      <td className={`${td} text-right align-middle`}>
         <RowMenu row={row} readOnly={readOnly} onAction={onAction} onDelete={onDelete} />
       </td>
     </tr>
   );
+}
+
+/** One line of a limit's inner details table: a labelled budget with its limit and the remaining
+ * amount from state, or — for balance/overdrawn — a single value whose label spans both other cols. */
+type DetailLine =
+  | { key: string; label: string; limit: number; remaining: number }
+  | { key: string; label: string; value: number; tone: "positive" | "negative" };
+
+/** The inner details table (three columns): a bobble + label, the limit (right), and the remaining
+ * amount from state (right). Balance and overdrawn span the first two columns. A gauge is a single
+ * line — its watermark bobble, the limit, and the current value. */
+function DetailsTable({ row }: { row: Row }) {
+  const { t } = useTranslation();
+  const unit = unitSuffix(row.def?.unit);
+  const s = row.entry.settings;
+  const st = row.entry.state;
+
+  if (row.kind === "gauge") {
+    const value = st?.gaugeValue;
+    return (
+      <table className="border-collapse text-sm">
+        <tbody>
+          <tr>
+            <td className="pr-3">
+              <Bobble
+                value={value}
+                max={s.max}
+                low={row.def?.lowWatermarkPercent}
+                high={row.def?.highWatermarkPercent}
+              />
+            </td>
+            <td className="pr-4 text-right tabular-nums text-slate-400 dark:text-slate-500">
+              {s.max != null ? `${s.max}${unit}` : "—"}
+            </td>
+            <td className="text-right font-medium tabular-nums">
+              {value != null ? `${value}${unit}` : "—"}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    );
+  }
+
+  const lines: DetailLine[] = [];
+  const monthly = s.monthly ?? 0;
+  lines.push({
+    key: "monthly",
+    label: t("limits.monthlyBudget"),
+    limit: monthly,
+    remaining: st?.monthlyRemaining ?? monthly,
+  });
+  if (row.def?.daily && (s.daily ?? 0) > 0) {
+    const daily = s.daily ?? 0;
+    lines.push({
+      key: "daily",
+      label: t("limits.dailyBudget"),
+      limit: daily,
+      remaining: st?.dailyRemaining ?? daily,
+    });
+  }
+  if (row.def?.overuse && (s.overuse ?? 0) > 0) {
+    const overuse = s.overuse ?? 0;
+    lines.push({
+      key: "overuse",
+      label: t("limits.overusage"),
+      limit: overuse,
+      remaining: st?.overuseRemaining ?? overuse,
+    });
+  }
+  if ((st?.customBalance ?? 0) > 0) {
+    lines.push({
+      key: "balance",
+      label: t("limits.balance"),
+      value: st?.customBalance ?? 0,
+      tone: "positive",
+    });
+  }
+  if ((st?.overdrawn ?? 0) > 0) {
+    lines.push({
+      key: "overdrawn",
+      label: t("limits.overdrawn"),
+      value: st?.overdrawn ?? 0,
+      tone: "negative",
+    });
+  }
+
+  return (
+    <table className="border-collapse text-sm">
+      <tbody>
+        {lines.map((line) => (
+          <DetailRow key={line.key} line={line} unit={unit} />
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function DetailRow({ line, unit }: { line: DetailLine; unit: string }) {
+  const label = (
+    <span className="inline-flex items-center gap-2">
+      {"value" in line ? (
+        <span
+          className={`inline-block h-2 w-2 shrink-0 rounded-full ${
+            line.tone === "negative" ? "bg-red-500" : "bg-green-500"
+          }`}
+        />
+      ) : (
+        <AvailabilityBobble remaining={line.remaining} limit={line.limit} />
+      )}
+      <span className="text-slate-500 dark:text-slate-400">{line.label}</span>
+    </span>
+  );
+  if ("value" in line) {
+    return (
+      <tr>
+        <td className="pr-4" colSpan={2}>
+          {label}
+        </td>
+        <td className="text-right font-medium tabular-nums">
+          {line.value}
+          {unit}
+        </td>
+      </tr>
+    );
+  }
+  return (
+    <tr>
+      <td className="pr-4">{label}</td>
+      <td className="pr-4 text-right tabular-nums text-slate-400 dark:text-slate-500">
+        {line.limit}
+        {unit}
+      </td>
+      <td className="text-right font-medium tabular-nums">
+        {line.remaining}
+        {unit}
+      </td>
+    </tr>
+  );
+}
+
+/** A round availability dot before a budget line: gray when untouched (remaining == limit), then
+ * light green (> 75% left), green (> 25%), amber (some left), red (nothing left). */
+function AvailabilityBobble({ remaining, limit }: { remaining: number; limit: number }) {
+  let color = "bg-slate-300";
+  if (limit > 0 && remaining < limit) {
+    const ratio = remaining / limit;
+    if (ratio > 0.75) {
+      color = "bg-emerald-300";
+    } else if (ratio > 0.25) {
+      color = "bg-green-500";
+    } else if (remaining > 0) {
+      color = "bg-amber-400";
+    } else {
+      color = "bg-red-500";
+    }
+  }
+  return <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${color}`} />;
 }
 
 /** A round status dot before a gauge reading: gray below the low watermark (or when the percent is
