@@ -374,6 +374,10 @@ Alles unter `/tenants/{id}/limits/...` (`tenantId` im Pfad — opake ID, kein PI
 - `POST /tenants/{id}/limits/{code}/topup` `{amount}` → Sonderguthaben zubuchen.
 - `GET /tenants/{id}/limits/{code}/transactions` → Ledger, paginiert (Cursor wie Audit-Log).
 - `GET /tenants/{id}/limits/{code}/history` → Monatsreihe fürs Billing.
+- `GET /tenants/{id}/limits/{code}/billing?year=&month=` → der abgeschlossene Monat *eines* Limits
+  (v.a. `overuseUsed` + `monthlyOverdrawn`) fürs Abrechnungstool (`manage:limits`).
+- `GET /tenants/{id}/billing?year=&month=` → derselbe Abschluss für *alle* Limits des Monats
+  (`manage:limits`).
 - `POST /tenants/{id}/limits/{code}/rollover` (+ Sweep) → Reporting/Cron erzwingt Monatsabschluss.
 
 Route-Builder als `pub fn x_route(deps) -> BoxedFilter`, dünne `into_response`-Handler über pure

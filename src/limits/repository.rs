@@ -39,6 +39,8 @@ const FIELD_VERSION: &str = "version";
 const FIELD_LEDGER_SK: &str = "ledgerSk";
 /// Range key of the history table: `"{code}#{yearMonth}"` (a limit's months).
 const FIELD_HISTORY_SK: &str = "historySk";
+/// The closed month on a history row (`"YYYY-MM"`), filtered on for an all-limits month read.
+const FIELD_YEAR_MONTH: &str = "yearMonth";
 
 /// Upper bound on rows a single ledger/history read returns.
 const READ_PAGE_SIZE: i32 = 100;
@@ -82,6 +84,16 @@ pub trait LimitRepository: Send + Sync {
 
     /// A limit's closed-month history, newest month first, capped at [`READ_PAGE_SIZE`].
     async fn read_history(&self, tenant_id: &str, code: &str) -> anyhow::Result<Vec<HistoryRow>>;
+
+    /// One closed month for billing: the history row(s) for `(tenant, year_month)`. With `code` it
+    /// is the single limit's row (empty when that month never closed); without it, every limit's row
+    /// for that month. Capped at [`READ_PAGE_SIZE`].
+    async fn read_month_history(
+        &self,
+        tenant_id: &str,
+        code: Option<&str>,
+        year_month: &str,
+    ) -> anyhow::Result<Vec<HistoryRow>>;
 }
 
 /// Opaque page cursor over a limit's ledger — the last-seen ledger sort key (`{code}#{ts}#{id}`),
@@ -315,6 +327,44 @@ impl LimitRepository for DynamoLimitRepository {
             .expression_attribute_values(":prefix", str(format!("{code}#")))
             .scan_index_forward(false)
             .limit(READ_PAGE_SIZE);
+
+        let mut stream = stream_all::<HistoryRow>(request)?;
+        let mut rows = Vec::new();
+        while let Some(row) = stream.next().await {
+            rows.push(row.context("Error reading 'limit-history' table")?);
+            if rows.len() >= READ_PAGE_SIZE as usize {
+                break;
+            }
+        }
+        Ok(rows)
+    }
+
+    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    async fn read_month_history(
+        &self,
+        tenant_id: &str,
+        code: Option<&str>,
+        year_month: &str,
+    ) -> anyhow::Result<Vec<HistoryRow>> {
+        // With a code the row is addressed exactly (`{code}#{month}`); without one we walk the
+        // tenant's history partition and keep only that month. The history sort key is prefixed by
+        // code, not month, so an all-limits month read cannot be a range query.
+        let request = self
+            .client
+            .query(TABLE_LIMIT_HISTORY)
+            .expression_attribute_names("#pk", FIELD_TENANT_ID)
+            .expression_attribute_values(":pk", str(tenant_id));
+        let request = match code {
+            Some(code) => request
+                .key_condition_expression("#pk = :pk AND #sk = :sk")
+                .expression_attribute_names("#sk", FIELD_HISTORY_SK)
+                .expression_attribute_values(":sk", str(format!("{code}#{year_month}"))),
+            None => request
+                .key_condition_expression("#pk = :pk")
+                .filter_expression("#ym = :ym")
+                .expression_attribute_names("#ym", FIELD_YEAR_MONTH)
+                .expression_attribute_values(":ym", str(year_month)),
+        };
 
         let mut stream = stream_all::<HistoryRow>(request)?;
         let mut rows = Vec::new();

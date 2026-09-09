@@ -6,6 +6,7 @@ import type {
   ApiKeyView,
   AudienceResponse,
   AuditPage,
+  BillingResult,
   Cadence,
   Capabilities,
   Catalogue,
@@ -841,6 +842,21 @@ export class UmamiClient {
   /** A limit's month-by-month usage history. */
   getLimitHistory(tenantId: string, code: string): Promise<LimitHistory> {
     return this.request<LimitHistory>(`/tenants/${enc(tenantId)}/limits/${enc(code)}/history`);
+  }
+  /** For a billing tool: the closed-month aggregates (notably `overuseUsed` and `monthlyOverdrawn`)
+   * for one month. With a `code`, the single limit's row; without one, every limit's row for the
+   * month. Requires `manage:limits`. */
+  getBilling(
+    tenantId: string,
+    year: number,
+    month: number,
+    code?: string,
+  ): Promise<BillingResult> {
+    const qs = `?year=${year}&month=${month}`;
+    const path = code
+      ? `/tenants/${enc(tenantId)}/limits/${enc(code)}/billing${qs}`
+      : `/tenants/${enc(tenantId)}/billing${qs}`;
+    return this.request<BillingResult>(path);
   }
   /** Whether a consume of `amount` would be allowed right now, without drawing anything down. */
   checkLimit(

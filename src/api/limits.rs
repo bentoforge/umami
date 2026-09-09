@@ -3,8 +3,9 @@
 
 use crate::boot::Platform;
 use crate::limits::service::{
-    check_limit_route, consume_limit_route, history_route, ledger_route, list_limits_route,
-    report_gauge_route, set_limit_settings_route, topup_limit_route,
+    billing_month_route, billing_route, check_limit_route, consume_limit_route, history_route,
+    ledger_route, list_limits_route, report_gauge_route, set_limit_settings_route,
+    topup_limit_route,
 };
 use warp::Filter;
 use warp::filters::BoxedFilter;
@@ -55,6 +56,14 @@ pub fn routes(platform: &Platform) -> BoxedFilter<(impl warp::Reply + use<>,)> {
             platform.authenticator.clone()
         ),
         history_route(
+            platform.repos.limits.clone(),
+            platform.authenticator.clone()
+        ),
+        billing_route(
+            platform.repos.limits.clone(),
+            platform.authenticator.clone()
+        ),
+        billing_month_route(
             platform.repos.limits.clone(),
             platform.authenticator.clone()
         )

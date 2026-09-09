@@ -928,12 +928,22 @@ export interface LimitHistoryRow {
   monthlyForfeited: number;
   overuseLimit: number;
   overuseUsed: number;
+  /** Consumption booked beyond everything available during the month (`track` policy). */
+  monthlyOverdrawn: number;
   endingCustomBalance: number;
 }
 
 /** A limit's usage history, month by month (`GET /tenants/{id}/limits/{code}/history`). */
 export interface LimitHistory {
   months: LimitHistoryRow[];
+}
+
+/** A billing read for one month: the closed-month rows (`GET /tenants/{id}/billing` for every
+ * limit, or `GET /tenants/{id}/limits/{code}/billing` for one). */
+export interface BillingResult {
+  /** `YYYY-MM`. */
+  yearMonth: string;
+  limits: LimitHistoryRow[];
 }
 
 /** Result of saving a limit's settings — `warnings` flag e.g. a lowered limit capped at current

@@ -1014,6 +1014,111 @@ async fn history(
     Ok(HistoryResponse { months })
 }
 
+/// The year and month a billing read is for — a `2026`/`9` pair the caller thinks in, normalised to
+/// the `"YYYY-MM"` a history row is keyed by.
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct BillingQuery {
+    year: i32,
+    month: u32,
+}
+
+impl BillingQuery {
+    /// `"YYYY-MM"`, or a client error when the month is out of range.
+    fn year_month(&self) -> anyhow::Result<String> {
+        if self.month < 1 || self.month > 12 {
+            client_bail!("month must be between 1 and 12");
+        }
+        Ok(format!("{:04}-{:02}", self.year, self.month))
+    }
+}
+
+/// One month's closed aggregates for billing — the settled `overuseUsed`/`monthlyOverdrawn` per
+/// limit that a billing tool reconciles against.
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct BillingResponse {
+    year_month: String,
+    limits: Vec<HistoryRow>,
+}
+
+/// `GET /tenants/{id}/limits/{code}/billing?year=&month=` — one limit's closed month (`manage:limits`).
+pub fn billing_route(
+    limits: Arc<dyn LimitRepository>,
+    authenticator: Arc<Authenticator>,
+) -> BoxedFilter<(impl warp::Reply,)> {
+    warp::path!("tenants" / String / "limits" / DecodedSegment / "billing")
+        .and(warp::get())
+        .and(warp::query::<BillingQuery>())
+        .and(with_cloneable(limits))
+        .and(with_user_with_any_permission(
+            authenticator,
+            REQUIRE_MANAGE_LIMITS,
+        ))
+        .and_then(handle_billing_route)
+        .boxed()
+}
+
+/// `GET /tenants/{id}/billing?year=&month=` — every limit's closed month (`manage:limits`).
+pub fn billing_month_route(
+    limits: Arc<dyn LimitRepository>,
+    authenticator: Arc<Authenticator>,
+) -> BoxedFilter<(impl warp::Reply,)> {
+    warp::path!("tenants" / String / "billing")
+        .and(warp::get())
+        .and(warp::query::<BillingQuery>())
+        .and(with_cloneable(limits))
+        .and(with_user_with_any_permission(
+            authenticator,
+            REQUIRE_MANAGE_LIMITS,
+        ))
+        .and_then(handle_billing_month_route)
+        .boxed()
+}
+
+#[tracing::instrument(
+    level = "debug",
+    name = "GET /tenants/{id}/limits/{code}/billing",
+    skip_all
+)]
+async fn handle_billing_route(
+    tenant_id: String,
+    code: DecodedSegment,
+    query: BillingQuery,
+    limits: Arc<dyn LimitRepository>,
+    _caller: AuthUser,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    into_response(billing(tenant_id, Some(code.0), query, limits).await)
+}
+
+#[tracing::instrument(level = "debug", name = "GET /tenants/{id}/billing", skip_all)]
+async fn handle_billing_month_route(
+    tenant_id: String,
+    query: BillingQuery,
+    limits: Arc<dyn LimitRepository>,
+    _caller: AuthUser,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    into_response(billing(tenant_id, None, query, limits).await)
+}
+
+async fn billing(
+    tenant_id: String,
+    code: Option<String>,
+    query: BillingQuery,
+    limits: Arc<dyn LimitRepository>,
+) -> anyhow::Result<BillingResponse> {
+    // Cross-tenant admin/billing read — the route already gates it on `manage:limits`, so there is
+    // no active-tenant scope to enforce here.
+    let year_month = query.year_month()?;
+    let rows = limits
+        .read_month_history(&tenant_id, code.as_deref(), &year_month)
+        .await?;
+    Ok(BillingResponse {
+        year_month,
+        limits: rows,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1905,5 +2010,99 @@ mod tests {
         assert!(codes.contains(&"limit:legacy"), "{codes:?}");
         // … but a limit that is neither relevant nor stored is not.
         assert!(!codes.contains(&"limit:ai-only"), "{codes:?}");
+    }
+
+    fn history_row(code: &str, year_month: &str) -> HistoryRow {
+        HistoryRow {
+            tenant_id: "t-1".to_owned(),
+            code: code.to_owned(),
+            year_month: year_month.to_owned(),
+            monthly_included: 1000,
+            monthly_used: 1000,
+            monthly_forfeited: 0,
+            overuse_limit: 200,
+            overuse_used: 120,
+            monthly_overdrawn: 30,
+            ending_custom_balance: 0,
+        }
+    }
+
+    #[tokio::test]
+    async fn billing_reads_one_limit_for_the_month() {
+        use crate::limits::repository::MockLimitRepository;
+
+        let mut limits = MockLimitRepository::new();
+        limits
+            .expect_read_month_history()
+            .withf(|_, code, ym| code == &Some("limit:ai-credits") && ym == "2026-09")
+            .returning(|_, _, _| {
+                Box::pin(async { Ok(vec![history_row("limit:ai-credits", "2026-09")]) })
+            });
+
+        let response = billing(
+            "t-1".to_owned(),
+            Some("limit:ai-credits".to_owned()),
+            BillingQuery {
+                year: 2026,
+                month: 9,
+            },
+            Arc::new(limits),
+        )
+        .await
+        .expect("billed");
+        assert_eq!(response.year_month, "2026-09");
+        assert_eq!(response.limits.len(), 1);
+        assert_eq!(response.limits[0].overuse_used, 120);
+        assert_eq!(response.limits[0].monthly_overdrawn, 30);
+    }
+
+    #[tokio::test]
+    async fn billing_without_a_code_reads_every_limit_for_the_month() {
+        use crate::limits::repository::MockLimitRepository;
+
+        let mut limits = MockLimitRepository::new();
+        limits
+            .expect_read_month_history()
+            .withf(|_, code, ym| code.is_none() && ym == "2026-09")
+            .returning(|_, _, _| {
+                Box::pin(async {
+                    Ok(vec![
+                        history_row("limit:ai-credits", "2026-09"),
+                        history_row("limit:storage", "2026-09"),
+                    ])
+                })
+            });
+
+        let response = billing(
+            "t-1".to_owned(),
+            None,
+            BillingQuery {
+                year: 2026,
+                month: 9,
+            },
+            Arc::new(limits),
+        )
+        .await
+        .expect("billed");
+        assert_eq!(response.limits.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn billing_rejects_a_month_out_of_range() {
+        use crate::limits::repository::MockLimitRepository;
+
+        let limits = MockLimitRepository::new(); // never queried
+        let error = billing(
+            "t-1".to_owned(),
+            None,
+            BillingQuery {
+                year: 2026,
+                month: 13,
+            },
+            Arc::new(limits),
+        )
+        .await
+        .expect_err("rejected");
+        assert!(error.to_string().contains("month"), "{error}");
     }
 }

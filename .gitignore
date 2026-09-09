@@ -5,4 +5,5 @@ target
 clients/**/node_modules
 clients/**/dist
 clients/**/.vite
+clients/**/*.tsbuildinfo
 .DS_Store
