@@ -12,7 +12,7 @@ ständig veränderlichen Zustand — deshalb die dritte Schicht.
 ## Herkunft
 
 Der verbrauchbare Kern ist eine Verallgemeinerung des AI-Budget-Subsystems aus `pip-core`
-(`src/ai/limits/`): pro `(issuer, tenant)` ein monatliches Credit-Kontingent mit Overuse und
+(`src/ai/limits/`): pro `(issuer, tenant)` ein monatliches Credit-Kontingent mit Zusatzkontingent und
 optionalem Tages-Cap, atomar gebucht, Limits auf die Periodenzeile gestempelt. Neu gegenüber
 pip sind: **Sonderguthaben** (persistentes Top-up), **Gauge-Limits** mit Watermarks, ein
 **Transaktions-Ledger**, eine **Monats-History** und ein backend-agnostischer Schnitt zwischen
@@ -23,7 +23,7 @@ Buchungslogik und Speicher.
 | Schicht | Ort | Inhalt | Änderungsrate |
 |---|---|---|---|
 | **L1 Katalog** | `Config.limits: Vec<LimitDef>` | *Was* ein Limit ist: Typ, aktive Facetten, Watermarks, Labels | selten (Deploy) |
-| **L2 Mandanten-Konfig** | `Tenant.limits: BTreeMap<String, LimitSettings>` | *Wie viel* je Mandant: monthly, overuse, daily, gauge-max | selten (Admin/UI) |
+| **L2 Mandanten-Konfig** | `Tenant.limits: BTreeMap<String, LimitSettings>` | *Wie viel* je Mandant: monthly, extraAllowance, daily, gauge-max | selten (Admin/UI) |
 | **L3 Laufzeit-State** | `limits`-Repository (drei Tabellen) | Zähler, Sonderguthaben, Ledger, History | ständig (jeder Call) |
 
 L1 folgt exakt `FeatureDef`, L2 exakt `custom_fields` — beide sind reine umami-Muster. L3 ist
@@ -49,7 +49,7 @@ pub struct LimitDef {
     pub kind: LimitKind,
 
     // Consumable-Facetten (opt-in; das monatliche Guthaben ist immer vorhanden):
-    #[serde(default)] pub overuse: bool,          // Overuse-Bucket erlaubt?
+    #[serde(default)] pub extra_allowance: bool,          // Zusatzkontingent-Bucket erlaubt?
     #[serde(default)] pub custom_balance: bool,    // Sonderguthaben zubuchbar?
     #[serde(default)] pub daily: bool,             // Daily-Throttle aktiv?
 
@@ -67,7 +67,7 @@ pub struct LimitDef {
 **Validierung** beim `PUT /config`:
 
 - `validate_labels` um Limit-Namen erweitern (nicht-leer).
-- Neues `validate_limits`: Facetten-Konsistenz (`overuse`/`custom_balance`/`daily` nur bei
+- Neues `validate_limits`: Facetten-Konsistenz (`extraAllowance`/`custom_balance`/`daily` nur bei
   `Consumable`, Watermarks nur bei `Gauge`), Prozente ≤ 100, `low < high`.
 
 **Katalog-Endpoint** `GET /config/catalogue` liefert die aufgelösten Limit-Defs mit (dann fällt
@@ -86,7 +86,7 @@ Ein Consumable (KI-Guthaben, alle Facetten, nur für Mandanten mit `feature:ai`)
       "name": { "de": "KI-Guthaben", "en": "AI credits", "*": "AI credits" },
       "description": { "en": "AI assistant usage, in credits." },
       "kind": "consumable",
-      "overuse": true,
+      "extraAllowance": true,
       "customBalance": true,
       "daily": true,
       "relevantIf": "feature:ai"
@@ -97,7 +97,7 @@ Ein Consumable (KI-Guthaben, alle Facetten, nur für Mandanten mit `feature:ai`)
 }
 ```
 
-Werte je Mandant (`PUT /tenants/{id}/limits/{code}/settings`): `{ "monthly": 100000, "overuse":
+Werte je Mandant (`PUT /tenants/{id}/limits/{code}/settings`): `{ "monthly": 100000, "extraAllowance":
 20000, "daily": 5000 }` für `limit:ai-credits`, `{ "max": 50 }` für `limit:seats`.
 
 `GET /tenants/{id}/limits` liefert dann Settings + projizierten State — beim Gauge sind die
@@ -107,11 +107,11 @@ markiert:
 ```json
 { "limits": [
   { "code": "limit:ai-credits",
-    "settings": { "monthly": 100000, "overuse": 20000, "daily": 5000 },
+    "settings": { "monthly": 100000, "extraAllowance": 20000, "daily": 5000 },
     "state": { "periodYearMonth": "2026-09", "monthlyRemaining": 63200,
-               "overuseRemaining": 20000, "customBalance": 5000, "dailyRemaining": 1800 } },
+               "extraAllowanceRemaining": 20000, "customBalance": 5000, "dailyRemaining": 1800 } },
   { "code": "limit:seats", "settings": { "max": 50 },
-    "state": { "periodYearMonth": "2026-09", "monthlyRemaining": 0, "overuseRemaining": 0,
+    "state": { "periodYearMonth": "2026-09", "monthlyRemaining": 0, "extraAllowanceRemaining": 0,
                "customBalance": 0, "gaugeValue": 48 } }
 ] }
 ```
@@ -123,7 +123,7 @@ Neues Feld auf `Tenant` (`src/tenants/mod.rs`), analog `custom_fields`:
 ```rust
 pub struct LimitSettings {          // je (tenant, limitCode)
     pub monthly: Option<i64>,       // Consumable: inkludiert pro Monat
-    pub overuse: Option<i64>,       // Consumable: zusätzlich tolerierbar pro Monat
+    pub extra_allowance: Option<i64>,       // Consumable: zusätzlich tolerierbar pro Monat
     pub daily:   Option<i64>,       // Consumable: Tages-Cap
     pub max:     Option<i64>,       // Gauge: absolute Obergrenze
 }
@@ -135,7 +135,7 @@ gestempelt mit `last_changed_by` + Tenant-OCC-`version`, wie `grant_feature`.
 
 ### Kluges Reconciliation beim Settings-Change
 
-Ändert sich `monthly`/`overuse` mit-Monat, wird die existierende L3-State-Zeile abgeglichen
+Ändert sich `monthly`/`extraAllowance` mit-Monat, wird die existierende L3-State-Zeile abgeglichen
 (pure Funktion `accounting::apply_settings_change`) über
 `usedMonthly = monthlySnapshot − monthlyRemaining`:
 
@@ -145,7 +145,7 @@ gestempelt mit `last_changed_by` + Tenant-OCC-`version`, wie `grant_feature`.
 | `oldMonthly > newMonthly > usedMonthly` | `remaining = newMonthly − usedMonthly` — verkleinern |
 | `newMonthly ≤ usedMonthly` | `remaining = 0` — auf Usage gedeckelt, **Warnung** in der Response |
 
-`used = snapshot − remaining`. Analog `overuse`. `customBalance` bleibt unberührt (nur `topup`).
+`used = snapshot − remaining`. Analog `extraAllowance`. `customBalance` bleibt unberührt (nur `topup`).
 Gauge-`max`-Änderung lässt den aktuellen Wert stehen (kann danach >max sein → Warnung). Existiert
 noch keine State-Zeile (Limit nie benutzt), wird nur `Tenant.limits` geschrieben — nichts zu
 reconcilen (der erste Call baut den State aus den neuen Settings).
@@ -165,18 +165,18 @@ Drei Tabellen, provisioniert in `DynamoLimitRepository::with_client`.
 Eine Zeile je Mandant×Limit, der heiße atomare Datensatz:
 
 ```
-periodYearMonth    "2026-09"   für welchen Monat monthly/overuse gerade gelten
+periodYearMonth    "2026-09"   für welchen Monat monthly/extraAllowance gerade gelten
 monthlyRemaining               verfällt am Monatsende
-overuseRemaining               verfällt am Monatsende
+extraAllowanceRemaining               verfällt am Monatsende
 monthlySnapshot                aus Tenant.limits bei Periodenstart kopiert
-overuseSnapshot                aus Tenant.limits bei Periodenstart kopiert
+extraAllowanceSnapshot                aus Tenant.limits bei Periodenstart kopiert
 customBalance                  persistent, verfällt NICHT
 dailyRemaining, dailyDate      Daily-Throttle (Facette)
 gaugeValue, gaugeMonth         Gauge: aktueller Wert, immer aktueller Monat
 version                        OCC
 ```
 
-`monthlySnapshot`/`overuseSnapshot` sind lasttragend: `usedMonthly = snapshot − remaining` ist
+`monthlySnapshot`/`extraAllowanceSnapshot` sind lasttragend: `usedMonthly = snapshot − remaining` ist
 so auch bei Mitte-Monat-Settings-Änderung wohldefiniert.
 
 ### `limit-ledger` — Hash `tenantId#limitCode`, Range `timestamp#id`
@@ -186,11 +186,11 @@ Append-only, jede Bewegung mit Bucket-Aufschlüsselung. Optional TTL.
 ```
 type: consume | topup | reset | gaugeSet | settings
 amount
-monthlyDrawn, customDrawn, overuseDrawn     (consume; Reihenfolge = Kaskade)
-overdrawn                                    (consume, falls über alle Buckets hinaus)
+monthlyDrawn, customDrawn, extraAllowanceDrawn     (consume; Reihenfolge = Kaskade)
+overrun                                      (consume, falls über alle Buckets hinaus)
 customAdded                                  (topup)
-monthlyForfeited, overuseForfeited           (reset)
-resultingMonthly, resultingCustom, resultingOveruse
+monthlyForfeited, extraAllowanceForfeited           (reset)
+resultingMonthly, resultingCustom, resultingExtraAllowance
 // Actor/Kontext — optional, caller-provided, KEINE umami-Validierung:
 actorUserId, actorUserName, txnName, txnId
 ```
@@ -205,7 +205,7 @@ Eine Zeile je abgeschlossenem Monat, geschrieben beim Rollover (s.u.), Guard
 
 ```
 monthlyIncluded, monthlyUsed, monthlyForfeited
-overuseLimit, overuseUsed
+extraAllowanceLimit, extraAllowanceUsed
 customDrawnDuringMonth, endingCustomBalance
 txnCount
 ```
@@ -214,28 +214,28 @@ txnCount
 
 ### Kaskade (Consumable)
 
-Abzug in fester Reihenfolge: **monthly → custom → overuse**. Zuerst das inkludierte
-Monatsguthaben, dann das persistente Sonderguthaben, zuletzt der (teure) Overuse. Reicht die
-Summe nicht, greift die Overdraw-Policy.
+Abzug in fester Reihenfolge: **monthly → custom → extraAllowance**. Zuerst das inkludierte
+Monatsguthaben, dann das persistente Sonderguthaben, zuletzt das (teure) Zusatzkontingent. Reicht die
+Summe nicht, greift die Overrun-Policy.
 
 ### Rollover (bei jedem Zugriff)
 
 Ein gemeinsamer `load_current(tenant, code)` liegt vor *jedem* Pfad (`consume`, `check`, `GET`).
 Sieht er `periodYearMonth != aktueller Monat`, schließt er den Vormonat: schreibt `limit-history`
-(idempotent), lässt monthly/overuse verfallen (Ledger-`reset`), füllt aus dem aktuellen
+(idempotent), lässt monthly/extraAllowance verfallen (Ledger-`reset`), füllt aus dem aktuellen
 `Tenant.limits`-Snapshot neu, `customBalance` bleibt. Kosten: **ein Extra-Write je Limit je
 Monat**, vom ersten Zugriff getragen. Für lückenlose History bei nie abgefragten Limits gibt es
 zusätzlich `POST /tenants/{id}/limits/{code}/rollover` bzw. einen Sweep, den ein
 Reporting-Service/Cron zum Monatswechsel anstößt.
 
-### Overdraw-Policy (je Limit, `LimitDef.overdraw`)
+### Overrun-Policy (je Limit, `LimitDef.overrunPolicy`)
 
 `check` (mutationsfrei) ist das Vorab-Gate, `consume` bucht post-hoc die *tatsächliche* Nutzung.
 Reicht die Summe nicht, entscheidet die Policy des Limits, was mit dem Überstand passiert:
 
-- **`track`** (Default): auf 0 buchen, den Überstand in den Monats-Zähler `monthlyOverdrawn` summieren
-  (und je Transaktion als `overdrawn` im Ledger). Der Call ist passiert → ehrlich verbucht,
-  abrechenbar. `monthlyOverdrawn` verfällt am Monatsende (wandert in die History).
+- **`track`** (Default): auf 0 buchen, den Überstand in den Monats-Zähler `overrun` summieren
+  (und je Transaktion als `overrun` im Ledger). Der Call ist passiert → ehrlich verbucht,
+  abrechenbar. `overrun` verfällt am Monatsende (wandert in die History).
 - **`reject`**: die ganze Buchung wird abgelehnt (**429**) und **nichts** geschrieben — hartes
   Prepaid-Gating, wo `consume` als Reserve-then-use genutzt wird.
 - **`ignore`**: auf 0 buchen, Überstand fallen lassen (nur im Ledger-Eintrag, kein Zähler) — weiches
@@ -246,19 +246,19 @@ Keine negativen Buckets — der Überstand lebt im Zähler, nicht als Minus-Guth
 
 #### Überzug ist wie eine Schuld — er wird verrechnet, nicht nur gemerkt
 
-`monthlyOverdrawn` verhält sich wie ein Soll auf dem Konto: sobald wieder Guthaben da ist, wird es
-zuerst gegen die Schuld gebucht (`settle_overdraw`, Reihenfolge monthly → custom → overuse). Damit
-gilt die Bilanz-Invariante: verfügbar (Summe der Buckets) und `monthlyOverdrawn` sind **nie
+`overrun` verhält sich wie ein Soll auf dem Konto: sobald wieder Guthaben da ist, wird es
+zuerst gegen die Schuld gebucht (`settle_overrun`, Reihenfolge monthly → custom → extraAllowance). Damit
+gilt die Bilanz-Invariante: verfügbar (Summe der Buckets) und `overrun` sind **nie
 gleichzeitig positiv**.
 
 Zwei Wege erzeugen eine solche Umbuchung — beide schreiben einen `settings`- bzw. `topup`-Ledger-
-Eintrag mit `resultingOverdrawn`:
+Eintrag mit `resultingOverrun`:
 
-- **Limit senken unter die schon verbrauchte Menge**: der Fehlbetrag wandert auf `monthlyOverdrawn`
-  (Warnung „shortfall is booked as overdraw"). 1000→500 bei 800 verbraucht ⇒ remaining 0,
-  overdrawn 300.
+- **Limit senken unter die schon verbrauchte Menge**: der Fehlbetrag wandert auf `overrun`
+  (Warnung „shortfall is booked as overrun"). 1000→500 bei 800 verbraucht ⇒ remaining 0,
+  overrun 300.
 - **Gutschrift (`topup`) oder Limit anheben**: das neue Guthaben tilgt zuerst den Überzug.
-  1000 wieder bei den 800 verbraucht ⇒ remaining 200, overdrawn 0 — self-healing, wie eine
+  1000 wieder bei den 800 verbraucht ⇒ remaining 200, overrun 0 — self-healing, wie eine
   Buchführung.
 
 #### Zwei-Phasen-Bestätigung bei Settings-Änderungen
@@ -339,12 +339,12 @@ version = $n` in einer Transaktion. Kaskade, Rollover, Reconciliation stehen nur
 Der Schnitt existiert genau, um Vollgas beim Testen zu erlauben — der schwere Teil ist pur.
 
 - **`accounting` (pur, kein I/O)** — der Löwenanteil. Tabellen-getriebene Unit-Tests, keine DB:
-  - Kaskade `monthly → custom → overuse` inkl. exakter Bucket-Aufschlüsselung im `Outcome`.
+  - Kaskade `monthly → custom → extraAllowance` inkl. exakter Bucket-Aufschlüsselung im `Outcome`.
   - Rollover-Grenzen: Monatswechsel füllt neu, `customBalance` bleibt, `reset`-/History-Werte
     stimmen; kein Rollover innerhalb des Monats.
-  - Overdraw: book-to-zero + `overdrawn`-Betrag; Prepaid-Hard-Reject-Modus.
+  - Overrun: book-to-zero + `overrun`-Betrag; Prepaid-Hard-Reject-Modus.
   - Reconciliation: die drei `apply_settings_change`-Fälle (vergrößern / verkleinern / auf Usage
-    gedeckelt + Warnung), analog `overuse`; `customBalance` unberührt.
+    gedeckelt + Warnung), analog `extraAllowance`; `customBalance` unberührt.
   - Gauge: `set` + Watermark-Schwellen (unter low / zwischen / über high / über 100 %).
   - Topup: `customBalance` wächst, Ledger-`topup`.
 - **Service / OCC-Schleife** — `mockall`-`LimitRepository`:
@@ -368,8 +368,8 @@ cargo run -- seed-limits [tenant] [limit-code]
 
 Ohne Argumente nimmt er den `UMAMI_SYSTEM_TENANT_ID` und `limit:ai-credits`. Er hinterlegt die
 Settings am Mandanten und spielt über den normalen `accounting`-Pfad eine 4-Monats-Aktivität ein:
-Ledger-Einträge, per Monatswechsel geschlossene History-Zeilen (inkl. `overuseUsed` und
-`monthlyOverdrawn`) und einen **live überzogenen** aktuellen Monat. Läuft er auf ein Limit, das
+Ledger-Einträge, per Monatswechsel geschlossene History-Zeilen (inkl. `extraAllowanceUsed` und
+`overrun`) und einen **live überzogenen** aktuellen Monat. Läuft er auf ein Limit, das
 schon State hat, hängt er nur einen frischen Monats-Burst an, statt die History neu zu schreiben.
 Braucht eine gültige AWS-Session (`aws sso login`), weil er gegen das echte Dynamo schreibt.
 
@@ -379,19 +379,19 @@ Alles unter `/tenants/{id}/limits/...` (`tenantId` im Pfad — opake ID, kein PI
 
 **Maschine (Produktdienste), `book:limits`:**
 
-- `POST /tenants/{id}/limits/{code}/check` `{amount}` → `{allowed, remaining:{monthly,custom,overuse,total}}`; Gauge: `{value,max,watermark}`. Mutationsfrei.
+- `POST /tenants/{id}/limits/{code}/check` `{amount}` → `{allowed, remaining:{monthly,custom,extraAllowance,total}}`; Gauge: `{value,max,watermark}`. Mutationsfrei.
 - `POST /tenants/{id}/limits/{code}/consume` `{amount, actorUserId?, actorUserName?, txnName?, txnId?, reference?}` → bucht, liefert Bucket-Breakdown + neue Stände (429 je Policy).
 - `POST /tenants/{id}/limits/{code}/report` `{value}` (Gauge) → setzt Wert, liefert Watermark-Status.
 
 **Admin/UI, `manage:limits`:**
 
 - `GET /tenants/{id}/limits` → alle Limits: Def + Settings + aktueller State.
-- `PUT /tenants/{id}/limits/{code}/settings` `{monthly,overuse,daily,max}` → schreibt `Tenant.limits`, reconciled State, liefert Warnungen.
+- `PUT /tenants/{id}/limits/{code}/settings` `{monthly,extraAllowance,daily,max}` → schreibt `Tenant.limits`, reconciled State, liefert Warnungen.
 - `POST /tenants/{id}/limits/{code}/topup` `{amount}` → Sonderguthaben zubuchen.
 - `GET /tenants/{id}/limits/{code}/transactions` → Ledger, paginiert (Cursor wie Audit-Log).
 - `GET /tenants/{id}/limits/{code}/history` → Monatsreihe fürs Billing.
 - `GET /tenants/{id}/limits/{code}/billing?year=&month=` → der abgeschlossene Monat *eines* Limits
-  (v.a. `overuseUsed` + `monthlyOverdrawn`) fürs Abrechnungstool (`manage:limits`).
+  (v.a. `extraAllowanceUsed` + `overrun`) fürs Abrechnungstool (`manage:limits`).
 - `GET /tenants/{id}/billing?year=&month=` → derselbe Abschluss für *alle* Limits des Monats
   (`manage:limits`).
 - `POST /tenants/{id}/limits/{code}/rollover` (+ Sweep) → Reporting/Cron erzwingt Monatsabschluss.
@@ -436,8 +436,8 @@ den *Dienst*.
   `validate_limit_settings`, Katalog-Endpoint (`GET /config/catalogue` mit `limits`).
 - L2 Werte: `Tenant.limits`, `PUT /tenants/{id}/limits/{code}/settings`, `GET /tenants/{id}/limits`
   (dual: `manage:limits` cross-tenant, `view:limits` eigener Mandant).
-- L3 State + Buchung: `limit-state`-Tabelle, `accounting` (pur, Kaskade monthly→custom→overuse,
-  Rollover in-memory, Overdraw book-to-zero, Topup, Gauge-`set`), dünnes CAS-Repo, bounded
+- L3 State + Buchung: `limit-state`-Tabelle, `accounting` (pur, Kaskade monthly→custom→extraAllowance,
+  Rollover in-memory, Overrun book-to-zero, Topup, Gauge-`set`), dünnes CAS-Repo, bounded
   OCC-Schleife, `check`/`consume`/`report`/`topup`. Permissions `book:limits`/`manage:limits`.
 - L3 Ledger + History: `limit-ledger` (append-only, Bucket-Breakdown + optionale Actor-Felder
   `actorUserId`/`actorUserName`/`txnName`/`txnId`/`reference` aus dem Request), `limit-history`
@@ -451,7 +451,7 @@ den *Dienst*.
   der Throttle aktiv ist.
 
 - L3 Reconciliation: `PUT .../settings` gleicht die Live-Zähler an die neuen Werte an
-  (`apply_settings_change`, pur): monthly/overuse **grow/shrink/cap** über `used = snapshot −
+  (`apply_settings_change`, pur): monthly/extraAllowance **grow/shrink/cap** über `used = snapshot −
   remaining`, `customBalance` unberührt, Gauge-Wert bleibt (Warnung wenn > neues max),
   `settings`-Ledger-Eintrag. Warnungen (auf Usage gedeckelt) kommen in der Response. Zweistufig
   (L2-Write, dann L3-CAS), idempotent.
@@ -486,7 +486,7 @@ Jede Phase `cargo fmt` + `clippy -D warnings` + `test` clean.
 
 1. **Katalog & Settings** — `LimitDef`/`LimitKind` + Validierung + Katalog-Endpoint; `Tenant.limits` + `PUT settings` (mit Reconciliation-Gerüst) + Tenant-UI-Card. Noch keine Buchung.
 2. **Consumable-Kern** — `accounting` (pur) + dünnes Repo (`load_state`/`compare_and_swap`), monthly-Buchung, Rollover schreibt `limit-history`, Ledger mit Actor-Feldern, `check`/`consume`.
-3. **Sonderguthaben** — `topup` + Kaskade `monthly → custom → overuse` + UI.
+3. **Sonderguthaben** — `topup` + Kaskade `monthly → custom → extraAllowance` + UI.
 4. **Gauge + Watermarks** — `report`/Query (nur `set`) + UI-Highlighting.
 5. **Daily-Throttle** — Daily-Bucket, in `check` integriert.
 6. **Abschluss** — Ledger-/History-/Transaktions-UI, Rollover-Sweep/Cron, Feinschliff.

@@ -1,7 +1,7 @@
 //! The booking logic — pure, no I/O, the heart of the limits domain.
 //!
 //! Every rule lives here: the monthly rollover (and the history row it closes), the consume cascade,
-//! the overdraw policy, the top-up, the gauge set — each producing the [`Outcome`] the repository
+//! the overrun policy, the top-up, the gauge set — each producing the [`Outcome`] the repository
 //! then commits atomically (state + ledger + optional history). The service runs the retry loop
 //! around these functions. Keeping the arithmetic free of the store is what makes it exhaustively
 //! testable — the tests below carry the weight, not an integration harness.
@@ -9,7 +9,7 @@
 //! Impurity is pushed to the edge: the caller supplies `now` and a pre-generated `entry_id`, so a
 //! function is deterministic given its inputs and a retry recomputes the same result.
 
-use crate::config::{LimitSettings, OverdrawPolicy};
+use crate::config::{LimitSettings, OverrunPolicy};
 use crate::limits::{HistoryRow, LedgerEntry, LimitState, ledger_type};
 use chrono::{DateTime, Datelike, SecondsFormat, Utc};
 
@@ -66,7 +66,7 @@ fn refresh_daily(
 /// The state as it applies to `now`'s month, plus the history row if a stale month was closed.
 ///
 /// If the stored period is stale — a real prior month — its aggregates become a [`HistoryRow`] and
-/// the monthly/overuse counters reset from `settings`, while the persistent custom balance and the
+/// the monthly/extra-allowance counters reset from `settings`, while the persistent custom balance and the
 /// gauge value carry over. With no state yet, a fresh row and no history. Pure: the caller decides
 /// whether to persist (a read projects and discards, a write commits).
 pub fn rolled_over(
@@ -87,20 +87,21 @@ pub fn rolled_over(
                 monthly_included: state.monthly_snapshot,
                 monthly_used: state.monthly_snapshot - state.monthly_remaining,
                 monthly_forfeited: state.monthly_remaining,
-                overuse_limit: state.overuse_snapshot,
-                overuse_used: state.overuse_snapshot - state.overuse_remaining,
-                monthly_overdrawn: state.monthly_overdrawn,
+                extra_allowance_limit: state.extra_allowance_snapshot,
+                extra_allowance_used: state.extra_allowance_snapshot
+                    - state.extra_allowance_remaining,
+                overrun: state.overrun,
                 ending_custom_balance: state.custom_balance,
             };
             let monthly = settings.monthly.unwrap_or(0);
-            let overuse = settings.overuse.unwrap_or(0);
+            let extra_allowance = settings.extra_allowance.unwrap_or(0);
             let new_state = LimitState {
                 period_year_month: month,
                 monthly_remaining: monthly,
-                overuse_remaining: overuse,
+                extra_allowance_remaining: extra_allowance,
                 monthly_snapshot: monthly,
-                overuse_snapshot: overuse,
-                monthly_overdrawn: 0,
+                extra_allowance_snapshot: extra_allowance,
+                overrun: 0,
                 // The persistent balance, daily throttle and gauge are not monthly and survive the
                 // rollover; the daily throttle is refreshed below on its own (daily) schedule.
                 ..state
@@ -130,14 +131,14 @@ fn ledger_base(
         amount,
         monthly_drawn: 0,
         custom_drawn: 0,
-        overuse_drawn: 0,
-        overdrawn: 0,
+        extra_allowance_drawn: 0,
+        overrun: 0,
         custom_added: 0,
         gauge_value: None,
         resulting_monthly: state.monthly_remaining,
         resulting_custom: state.custom_balance,
-        resulting_overuse: state.overuse_remaining,
-        resulting_overdrawn: state.monthly_overdrawn,
+        resulting_extra_allowance: state.extra_allowance_remaining,
+        resulting_overrun: state.overrun,
         actor_user_id: actor.user_id.clone(),
         actor_user_name: actor.user_name.clone(),
         txn_name: actor.txn_name.clone(),
@@ -154,15 +155,15 @@ fn draw(pool: &mut i64, left: &mut i64) -> i64 {
     taken
 }
 
-/// Nets spendable allowance against the overdraw debt so the two never both stand (the bookkeeping
-/// invariant): any available amount pays the debt down, drawing monthly → custom → overuse. Called
-/// after a top-up or a settings reconcile, so fresh allowance retires prior overdraw.
-fn settle_overdraw(state: &mut LimitState) {
-    let mut debt = state.monthly_overdrawn;
+/// Nets spendable allowance against the overrun debt so the two never both stand (the bookkeeping
+/// invariant): any available amount pays the debt down, drawing monthly → custom → extra allowance. Called
+/// after a top-up or a settings reconcile, so fresh allowance retires prior overrun.
+fn settle_overrun(state: &mut LimitState) {
+    let mut debt = state.overrun;
     debt -= draw_pay(&mut state.monthly_remaining, debt);
     debt -= draw_pay(&mut state.custom_balance, debt);
-    debt -= draw_pay(&mut state.overuse_remaining, debt);
-    state.monthly_overdrawn = debt;
+    debt -= draw_pay(&mut state.extra_allowance_remaining, debt);
+    state.overrun = debt;
 }
 
 /// Pays up to `debt` out of `*pool`, returning what was paid.
@@ -172,10 +173,10 @@ fn draw_pay(pool: &mut i64, debt: i64) -> i64 {
     paid
 }
 
-/// Books `amount` against a consumable, drawing **monthly → custom → overuse** in that order.
+/// Books `amount` against a consumable, drawing **monthly → custom → extra allowance** in that order.
 ///
-/// `amount` is assumed non-negative (the caller validates). What cannot be covered — the overdraw —
-/// is handled per [`OverdrawPolicy`]: `track` books to zero and sums it into the period counter (and
+/// `amount` is assumed non-negative (the caller validates). What cannot be covered — the overrun —
+/// is handled per [`OverrunPolicy`]: `track` books to zero and sums it into the period counter (and
 /// the ledger), `ignore` books to zero but does not sum it, `reject` refuses the whole booking and
 /// changes nothing (`rejected` set, the service returns a 429).
 #[allow(clippy::too_many_arguments)]
@@ -188,13 +189,13 @@ pub fn apply_consume(
     now: DateTime<Utc>,
     entry_id: &str,
     actor: &Actor,
-    policy: OverdrawPolicy,
+    policy: OverrunPolicy,
 ) -> Outcome {
     let (mut state, history) = rolled_over(existing, tenant_id, code, settings, now);
     let want = amount.max(0);
 
     // Reject: a booking that cannot be fully covered changes nothing — the service returns a 429.
-    if policy == OverdrawPolicy::Reject && want > state.available() {
+    if policy == OverrunPolicy::Reject && want > state.available() {
         let ledger = ledger_base(&state, entry_id, now, ledger_type::CONSUME, amount, actor);
         return Outcome {
             state,
@@ -207,26 +208,26 @@ pub fn apply_consume(
     let mut left = want;
     let monthly_drawn = draw(&mut state.monthly_remaining, &mut left);
     let custom_drawn = draw(&mut state.custom_balance, &mut left);
-    let overuse_drawn = draw(&mut state.overuse_remaining, &mut left);
+    let extra_allowance_drawn = draw(&mut state.extra_allowance_remaining, &mut left);
 
-    // `left` is now the uncovered overdraw. Under `track` it is summed into the period counter (and
+    // `left` is now the uncovered overrun. Under `track` it is summed into the period counter (and
     // always recorded on the ledger entry); `ignore` drops it from the counter.
-    if policy == OverdrawPolicy::Track {
-        state.monthly_overdrawn += left;
+    if policy == OverrunPolicy::Track {
+        state.overrun += left;
     }
 
     // The daily throttle is a parallel usage counter (not a source): what was actually booked is
     // subtracted from today's allowance, floored at zero. `check` gates on it before the call.
     if settings.daily.is_some() {
-        let drawn = monthly_drawn + custom_drawn + overuse_drawn;
+        let drawn = monthly_drawn + custom_drawn + extra_allowance_drawn;
         state.daily_remaining = (state.daily_remaining - drawn).max(0);
     }
 
     let mut ledger = ledger_base(&state, entry_id, now, ledger_type::CONSUME, amount, actor);
     ledger.monthly_drawn = monthly_drawn;
     ledger.custom_drawn = custom_drawn;
-    ledger.overuse_drawn = overuse_drawn;
-    ledger.overdrawn = left;
+    ledger.extra_allowance_drawn = extra_allowance_drawn;
+    ledger.overrun = left;
 
     Outcome {
         state,
@@ -252,8 +253,8 @@ pub fn apply_topup(
     let (mut state, history) = rolled_over(existing, tenant_id, code, settings, now);
     let added = amount.max(0);
     state.custom_balance += added;
-    // Fresh credit retires prior overdraw first (bookkeeping): the debt drops, the rest stays balance.
-    settle_overdraw(&mut state);
+    // Fresh credit retires prior overrun first (bookkeeping): the debt drops, the rest stays balance.
+    settle_overrun(&mut state);
 
     let mut ledger = ledger_base(&state, entry_id, now, ledger_type::TOPUP, amount, actor);
     ledger.custom_added = added;
@@ -267,7 +268,7 @@ pub fn apply_topup(
 }
 
 /// Sets a gauge's current value for `now`'s month. A gauge is never booked — only set — so the
-/// monthly/overuse counters (and any rollover/history) are untouched.
+/// monthly/extra-allowance counters (and any rollover/history) are untouched.
 pub fn set_gauge(
     existing: Option<LimitState>,
     tenant_id: &str,
@@ -297,7 +298,7 @@ pub fn set_gauge(
 /// Reconciles the live counters to changed per-tenant `settings`, keeping what is already used this
 /// month.
 ///
-/// For monthly and overuse: `remaining = max(0, new_limit - used)` where `used = snapshot -
+/// For monthly and extra allowance: `remaining = max(0, new_limit - used)` where `used = snapshot -
 /// remaining` — so a rise grows the remaining by the delta, a fall shrinks it, and a fall below what
 /// is already used caps it at zero and warns. The persistent custom balance is never touched (it
 /// moves only via top-ups); a gauge's value stays put but is flagged when it now exceeds its bound.
@@ -317,7 +318,7 @@ pub fn apply_settings_change(
     let mut warnings = Vec::new();
 
     // Monthly: what is already used stays used. A rise grows the remaining; a fall below usage caps
-    // it at zero and books the shortfall as overdraw (an honest debt, not a silently-dropped value).
+    // it at zero and books the shortfall as overrun (an honest debt, not a silently-dropped value).
     let used_monthly = (state.monthly_snapshot - state.monthly_remaining).max(0);
     let new_monthly = settings.monthly.unwrap_or(0);
     state.monthly_snapshot = new_monthly;
@@ -326,32 +327,33 @@ pub fn apply_settings_change(
         state.monthly_remaining = raw_monthly;
     } else {
         state.monthly_remaining = 0;
-        state.monthly_overdrawn += -raw_monthly;
+        state.overrun += -raw_monthly;
         warnings.push(format!(
             "monthly budget {new_monthly} is below the {used_monthly} already used this month; the \
-             {} shortfall is booked as overdraw",
+             {} shortfall is booked as overrun",
             -raw_monthly
         ));
     }
 
-    let used_overuse = (state.overuse_snapshot - state.overuse_remaining).max(0);
-    let new_overuse = settings.overuse.unwrap_or(0);
-    state.overuse_snapshot = new_overuse;
-    let raw_overuse = new_overuse - used_overuse;
-    if raw_overuse >= 0 {
-        state.overuse_remaining = raw_overuse;
+    let used_extra_allowance =
+        (state.extra_allowance_snapshot - state.extra_allowance_remaining).max(0);
+    let new_extra_allowance = settings.extra_allowance.unwrap_or(0);
+    state.extra_allowance_snapshot = new_extra_allowance;
+    let raw_extra_allowance = new_extra_allowance - used_extra_allowance;
+    if raw_extra_allowance >= 0 {
+        state.extra_allowance_remaining = raw_extra_allowance;
     } else {
-        state.overuse_remaining = 0;
-        state.monthly_overdrawn += -raw_overuse;
+        state.extra_allowance_remaining = 0;
+        state.overrun += -raw_extra_allowance;
         warnings.push(format!(
-            "extra allowance {new_overuse} is below the {used_overuse} already used this month; the \
-             {} shortfall is booked as overdraw",
-            -raw_overuse
+            "extra allowance {new_extra_allowance} is below the {used_extra_allowance} already used this month; the \
+             {} shortfall is booked as overrun",
+            -raw_extra_allowance
         ));
     }
 
-    // A rise in budget or allowance retires prior overdraw first (bookkeeping).
-    settle_overdraw(&mut state);
+    // A rise in budget or allowance retires prior overrun first (bookkeeping).
+    settle_overrun(&mut state);
 
     if let (Some(max), Some(value)) = (settings.max, state.gauge_value)
         && value > max
@@ -381,10 +383,10 @@ mod tests {
         Utc.with_ymd_and_hms(year, month, day, 12, 0, 0).unwrap()
     }
 
-    fn settings(monthly: Option<i64>, overuse: Option<i64>) -> LimitSettings {
+    fn settings(monthly: Option<i64>, extra_allowance: Option<i64>) -> LimitSettings {
         LimitSettings {
             monthly,
-            overuse,
+            extra_allowance,
             daily: None,
             max: None,
         }
@@ -405,7 +407,7 @@ mod tests {
             now,
             "entry-1",
             &Actor::default(),
-            OverdrawPolicy::Track,
+            OverrunPolicy::Track,
         )
     }
 
@@ -414,17 +416,17 @@ mod tests {
         let out = consume(None, &settings(Some(1000), Some(200)), 300, at(2026, 9, 7));
         assert_eq!(out.state.period_year_month, "2026-09");
         assert_eq!(out.state.monthly_remaining, 700);
-        assert_eq!(out.state.overuse_remaining, 200);
+        assert_eq!(out.state.extra_allowance_remaining, 200);
         assert_eq!(out.ledger.entry_type, ledger_type::CONSUME);
         assert_eq!(out.ledger.monthly_drawn, 300);
-        assert_eq!(out.ledger.overdrawn, 0);
+        assert_eq!(out.ledger.overrun, 0);
         assert_eq!(out.ledger.resulting_monthly, 700);
         assert!(out.history.is_none());
     }
 
     #[test]
-    fn the_cascade_is_monthly_then_custom_then_overuse() {
-        // 100 monthly + 50 custom + 200 overuse available; draw 320.
+    fn the_cascade_is_monthly_then_custom_then_extra_allowance() {
+        // 100 monthly + 50 custom + 200 extra allowance available; draw 320.
         let mut state =
             LimitState::fresh("t1", "limit:ai", "2026-09", &settings(Some(100), Some(200)));
         state.custom_balance = 50;
@@ -436,18 +438,18 @@ mod tests {
         );
         assert_eq!(out.ledger.monthly_drawn, 100);
         assert_eq!(out.ledger.custom_drawn, 50);
-        assert_eq!(out.ledger.overuse_drawn, 170);
-        assert_eq!(out.ledger.overdrawn, 0);
+        assert_eq!(out.ledger.extra_allowance_drawn, 170);
+        assert_eq!(out.ledger.overrun, 0);
         assert_eq!(out.state.monthly_remaining, 0);
         assert_eq!(out.state.custom_balance, 0);
-        assert_eq!(out.state.overuse_remaining, 30);
+        assert_eq!(out.state.extra_allowance_remaining, 30);
     }
 
     #[test]
-    fn an_overdraw_books_to_zero_and_is_recorded() {
+    fn an_overrun_books_to_zero_and_is_recorded() {
         let out = consume(None, &settings(Some(100), None), 250, at(2026, 9, 7));
         assert_eq!(out.ledger.monthly_drawn, 100);
-        assert_eq!(out.ledger.overdrawn, 150);
+        assert_eq!(out.ledger.overrun, 150);
         assert_eq!(out.state.available(), 0);
     }
 
@@ -456,7 +458,7 @@ mod tests {
         settings: &LimitSettings,
         amount: i64,
         now: DateTime<Utc>,
-        policy: OverdrawPolicy,
+        policy: OverrunPolicy,
     ) -> Outcome {
         apply_consume(
             existing,
@@ -472,22 +474,22 @@ mod tests {
     }
 
     #[test]
-    fn track_sums_the_overdraw_and_books_to_zero() {
+    fn track_sums_the_overrun_and_books_to_zero() {
         let cfg = settings(Some(100), None);
-        let out = consume_p(None, &cfg, 250, at(2026, 9, 7), OverdrawPolicy::Track);
+        let out = consume_p(None, &cfg, 250, at(2026, 9, 7), OverrunPolicy::Track);
         assert!(!out.rejected);
         assert_eq!(out.state.monthly_remaining, 0);
-        assert_eq!(out.ledger.overdrawn, 150);
-        assert_eq!(out.state.monthly_overdrawn, 150);
-        // A second overdraw in the same month accumulates.
+        assert_eq!(out.ledger.overrun, 150);
+        assert_eq!(out.state.overrun, 150);
+        // A second overrun in the same month accumulates.
         let out = consume_p(
             Some(out.state),
             &cfg,
             30,
             at(2026, 9, 8),
-            OverdrawPolicy::Track,
+            OverrunPolicy::Track,
         );
-        assert_eq!(out.state.monthly_overdrawn, 180);
+        assert_eq!(out.state.overrun, 180);
     }
 
     #[test]
@@ -497,20 +499,20 @@ mod tests {
             &settings(Some(100), None),
             250,
             at(2026, 9, 7),
-            OverdrawPolicy::Ignore,
+            OverrunPolicy::Ignore,
         );
         assert!(!out.rejected);
         assert_eq!(out.state.monthly_remaining, 0);
         // The excess is still on the ledger entry, but not summed into the period counter.
-        assert_eq!(out.ledger.overdrawn, 150);
-        assert_eq!(out.state.monthly_overdrawn, 0);
+        assert_eq!(out.ledger.overrun, 150);
+        assert_eq!(out.state.overrun, 0);
     }
 
     #[test]
     fn reject_refuses_and_changes_nothing_when_over() {
         let cfg = settings(Some(100), None);
         // Fits → books normally.
-        let out = consume_p(None, &cfg, 80, at(2026, 9, 7), OverdrawPolicy::Reject);
+        let out = consume_p(None, &cfg, 80, at(2026, 9, 7), OverrunPolicy::Reject);
         assert!(!out.rejected);
         assert_eq!(out.state.monthly_remaining, 20);
         // Over the remaining 20 → rejected, nothing drawn.
@@ -519,7 +521,7 @@ mod tests {
             &cfg,
             50,
             at(2026, 9, 7),
-            OverdrawPolicy::Reject,
+            OverrunPolicy::Reject,
         );
         assert!(out.rejected);
         assert_eq!(out.state.monthly_remaining, 20);
@@ -534,7 +536,7 @@ mod tests {
             &settings(Some(1000), Some(100)),
         );
         prior.monthly_remaining = 10; // 990 used
-        prior.overuse_remaining = 100; // untouched
+        prior.extra_allowance_remaining = 100; // untouched
         prior.custom_balance = 500; // topped up
         let out = consume(
             Some(prior),
@@ -554,7 +556,7 @@ mod tests {
         assert_eq!(history.monthly_included, 1000);
         assert_eq!(history.monthly_used, 990);
         assert_eq!(history.monthly_forfeited, 10);
-        assert_eq!(history.overuse_used, 0);
+        assert_eq!(history.extra_allowance_used, 0);
         assert_eq!(history.ending_custom_balance, 500);
     }
 
@@ -577,11 +579,11 @@ mod tests {
     }
 
     #[test]
-    fn a_topup_retires_overdraw_first() {
+    fn a_topup_retires_overrun_first() {
         let owing = |debt: i64| {
             let mut state =
                 LimitState::fresh("t1", "limit:ai", "2026-09", &settings(Some(0), None));
-            state.monthly_overdrawn = debt;
+            state.overrun = debt;
             state
         };
         // A partial top-up pays the debt down and leaves no balance.
@@ -595,9 +597,9 @@ mod tests {
             "e1",
             &Actor::default(),
         );
-        assert_eq!(out.state.monthly_overdrawn, 40);
+        assert_eq!(out.state.overrun, 40);
         assert_eq!(out.state.custom_balance, 0);
-        assert_eq!(out.ledger.resulting_overdrawn, 40);
+        assert_eq!(out.ledger.resulting_overrun, 40);
         // A larger top-up clears the debt and the remainder becomes balance.
         let out = apply_topup(
             Some(owing(100)),
@@ -609,17 +611,17 @@ mod tests {
             "e2",
             &Actor::default(),
         );
-        assert_eq!(out.state.monthly_overdrawn, 0);
+        assert_eq!(out.state.overrun, 0);
         assert_eq!(out.state.custom_balance, 150);
     }
 
     #[test]
-    fn lowering_below_usage_books_overdraw_and_a_rise_retires_it() {
+    fn lowering_below_usage_books_overrun_and_a_rise_retires_it() {
         // 1000 budget with 800 already used (remaining 200).
         let mut state = LimitState::fresh("t1", "limit:ai", "2026-09", &settings(Some(1000), None));
         state.monthly_remaining = 200;
 
-        // Lower to 500 (below the 800 used): remaining 0, the 300 shortfall becomes overdraw.
+        // Lower to 500 (below the 800 used): remaining 0, the 300 shortfall becomes overrun.
         let (out, warnings) = apply_settings_change(
             Some(state),
             "t1",
@@ -630,7 +632,7 @@ mod tests {
             &Actor::default(),
         );
         assert_eq!(out.state.monthly_remaining, 0);
-        assert_eq!(out.state.monthly_overdrawn, 300);
+        assert_eq!(out.state.overrun, 300);
         assert!(!warnings.is_empty());
 
         // Raise back to 1000: 800 is still used, so remaining settles to 200 and the debt is retired.
@@ -643,7 +645,7 @@ mod tests {
             "e2",
             &Actor::default(),
         );
-        assert_eq!(out.state.monthly_overdrawn, 0);
+        assert_eq!(out.state.overrun, 0);
         assert_eq!(out.state.monthly_remaining, 200);
     }
 
@@ -683,7 +685,7 @@ mod tests {
             at(2026, 9, 7),
             "entry-1",
             &actor,
-            OverdrawPolicy::Track,
+            OverrunPolicy::Track,
         );
         assert_eq!(out.ledger.actor_user_id.as_deref(), Some("u-42"));
         assert_eq!(out.ledger.txn_name.as_deref(), Some("qa-answer"));
@@ -695,7 +697,7 @@ mod tests {
     fn the_daily_throttle_decrements_and_resets_each_day() {
         let daily = LimitSettings {
             monthly: Some(1000),
-            overuse: None,
+            extra_allowance: None,
             daily: Some(100),
             max: None,
         };
@@ -709,7 +711,7 @@ mod tests {
             at(2026, 9, 7),
             "e1",
             &Actor::default(),
-            OverdrawPolicy::Track,
+            OverrunPolicy::Track,
         );
         assert_eq!(out.state.daily_remaining, 70);
         assert_eq!(out.state.daily_date.as_deref(), Some("2026-09-07"));
@@ -725,7 +727,7 @@ mod tests {
             at(2026, 9, 7),
             "e2",
             &Actor::default(),
-            OverdrawPolicy::Track,
+            OverrunPolicy::Track,
         );
         assert_eq!(out.state.daily_remaining, 0);
 
@@ -739,7 +741,7 @@ mod tests {
             at(2026, 9, 8),
             "e3",
             &Actor::default(),
-            OverdrawPolicy::Track,
+            OverrunPolicy::Track,
         );
         assert_eq!(out.state.daily_date.as_deref(), Some("2026-09-08"));
         assert_eq!(out.state.daily_remaining, 60);
@@ -847,6 +849,6 @@ mod tests {
         );
         assert_eq!(view.period_year_month, "2026-10");
         assert_eq!(view.monthly_remaining, 1000);
-        assert_eq!(view.overuse_remaining, 100);
+        assert_eq!(view.extra_allowance_remaining, 100);
     }
 }

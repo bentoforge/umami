@@ -1,14 +1,14 @@
-//! Dev-only seeding of realistic limit data — ledger, closed-month history and a live overdraw —
+//! Dev-only seeding of realistic limit data — ledger, closed-month history and a live overrun —
 //! for exercising the management UI against a real store. Compiled only in debug builds (see the
 //! `#[cfg(debug_assertions)]` in `main.rs`); it never reaches a release binary.
 //!
 //! Everything is written through the ordinary [`crate::limits::accounting`] path and committed with
 //! the repository's `compare_and_swap`, so the seeded rows are indistinguishable from ones a running
-//! service would produce — the month rollovers close history rows on their own, and the overdraw
+//! service would produce — the month rollovers close history rows on their own, and the overrun
 //! settles like a real debt.
 
 use crate::config::repository::ConfigRepository;
-use crate::config::{LimitKind, LimitSettings, OverdrawPolicy};
+use crate::config::{LimitKind, LimitSettings, OverrunPolicy};
 use crate::limits::LimitState;
 use crate::limits::accounting::{self, Actor, Outcome};
 use crate::limits::repository::{CasOutcome, LimitRepository};
@@ -21,7 +21,7 @@ use wasabi::aws::dynamodb::generate_id;
 /// The code seeded when the caller names none — override with the second CLI argument.
 const DEFAULT_CODE: &str = "limit:ai-credits";
 
-/// Seeds `(tenant, code)` with a multi-month history, a populated ledger and a live overdraw.
+/// Seeds `(tenant, code)` with a multi-month history, a populated ledger and a live overrun.
 ///
 /// `tenant_id` falls back to the configured system tenant, `code` to [`DEFAULT_CODE`]. When the
 /// limit already has a state row the timeline cannot be replayed cleanly, so it only appends a fresh
@@ -42,15 +42,13 @@ pub async fn seed_limits(
     };
     let code = code_arg.unwrap_or(DEFAULT_CODE).to_owned();
 
-    // Shape the settings from the catalogue definition when it exists, so facets (overuse, daily)
+    // Shape the settings from the catalogue definition when it exists, so facets (extra allowance, daily)
     // match a real limit; otherwise fall back to a full-featured consumable and warn.
     let current = config.current().await.context("reading the config")?;
     let def = current.limits.iter().find(|d| d.code == code);
     if let Some(def) = def {
         if def.kind != LimitKind::Consumable {
-            bail!(
-                "limit '{code}' is a gauge; this seeder fakes consumable ledger/history/overdraw"
-            );
+            bail!("limit '{code}' is a gauge; this seeder fakes consumable ledger/history/overrun");
         }
     } else {
         tracing::warn!(
@@ -60,7 +58,7 @@ pub async fn seed_limits(
     }
     let settings = LimitSettings {
         monthly: Some(100_000),
-        overuse: Some(20_000),
+        extra_allowance: Some(20_000),
         daily: def.map(|d| d.daily).unwrap_or(true).then_some(10_000),
         max: None,
     };
@@ -177,12 +175,12 @@ impl Seeder {
             when,
             &generate_id(),
             &Self::actor("consume"),
-            OverdrawPolicy::Track,
+            OverrunPolicy::Track,
         );
         self.commit(outcome).await
     }
 
-    /// A top-up of the persistent balance (retires any overdraw first).
+    /// A top-up of the persistent balance (retires any overrun first).
     async fn topup(&mut self, amount: i64, when: DateTime<Utc>) -> anyhow::Result<()> {
         let outcome = accounting::apply_topup(
             self.state.clone(),
@@ -197,7 +195,7 @@ impl Seeder {
         self.commit(outcome).await
     }
 
-    /// Four months of activity ending in a live overdraw. Each new month's first booking rolls the
+    /// Four months of activity ending in a live overrun. Each new month's first booking rolls the
     /// previous one shut, so history rows appear without any explicit rollover call.
     async fn full_timeline(&mut self) -> anyhow::Result<()> {
         let now = Utc::now();
@@ -208,28 +206,28 @@ impl Seeder {
         self.consume(15_000, m3).await?;
         self.consume(20_000, m3).await?;
 
-        // Two months back: heavy usage that eats into overuse, plus a top-up.
+        // Two months back: heavy usage that eats into the extra allowance, plus a top-up.
         let m2 = month_ago(2);
         self.consume(90_000, m2).await?;
         self.topup(25_000, m2).await?;
         self.consume(35_000, m2).await?;
 
-        // One month back: exhausts everything and overdraws — this closes into history's overdrawn.
+        // One month back: exhausts everything and overruns — this closes into history's overrun.
         let m1 = month_ago(1);
         self.consume(100_000, m1).await?;
         self.consume(60_000, m1).await?;
 
-        // This month: a live overdraw to exercise the amber line and the billing figures.
+        // This month: a live overrun to exercise the amber line and the billing figures.
         self.current_month_burst(now).await
     }
 
-    /// A burst in `now`'s month that ends exhausted and overdrawn, so the live view shows the amber
-    /// overdraw line and the ledger gains a handful of entries.
+    /// A burst in `now`'s month that ends exhausted and overrun, so the live view shows the amber
+    /// overrun line and the ledger gains a handful of entries.
     async fn current_month_burst(&mut self, now: DateTime<Utc>) -> anyhow::Result<()> {
         self.consume(40_000, now).await?;
         self.consume(55_000, now).await?;
         self.topup(10_000, now).await?;
-        // Blow past monthly + custom + overuse, leaving a tracked live overdraw.
+        // Blow past monthly + custom + extra allowance, leaving a tracked live overrun.
         self.consume(60_000, now).await?;
         Ok(())
     }

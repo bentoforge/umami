@@ -15,7 +15,7 @@
 
 use crate::config::repository::ConfigRepository;
 use crate::config::text::LocalizedText;
-use crate::config::{Config, CustomFieldDef, LimitDef, LimitKind, OverdrawPolicy};
+use crate::config::{Config, CustomFieldDef, LimitDef, LimitKind, OverrunPolicy};
 use crate::constants::{MANAGE_CONFIG_PERMISSION, MAX_TEXT_BODY_SIZE};
 use serde::Serialize;
 use std::sync::Arc;
@@ -63,7 +63,7 @@ impl CatalogueEntry {
 }
 
 /// One limit as a screen shows it: its labels resolved, plus the facets a form needs to render the
-/// right inputs (a gauge shows `max` + watermarks; a consumable shows monthly/overuse/daily).
+/// right inputs (a gauge shows `max` + watermarks; a consumable shows monthly/extraAllowance/daily).
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct LimitCatalogueEntry {
@@ -72,7 +72,7 @@ struct LimitCatalogueEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     description: Option<String>,
     kind: LimitKind,
-    overuse: bool,
+    extra_allowance: bool,
     custom_balance: bool,
     daily: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -81,7 +81,7 @@ struct LimitCatalogueEntry {
     high_watermark_percent: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     unit: Option<String>,
-    overdraw: OverdrawPolicy,
+    overrun_policy: OverrunPolicy,
 }
 
 impl LimitCatalogueEntry {
@@ -95,7 +95,7 @@ impl LimitCatalogueEntry {
                 .as_ref()
                 .map(|text| text.resolve(locale, default_locale).to_owned()),
             kind: def.kind,
-            overuse: def.overuse,
+            extra_allowance: def.extra_allowance,
             custom_balance: def.custom_balance,
             daily: def.daily,
             low_watermark_percent: def.low_watermark_percent,
@@ -104,7 +104,7 @@ impl LimitCatalogueEntry {
                 .unit
                 .as_ref()
                 .map(|text| text.resolve(locale, default_locale).to_owned()),
-            overdraw: def.overdraw,
+            overrun_policy: def.overrun_policy,
         }
     }
 }

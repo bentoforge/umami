@@ -7,7 +7,7 @@
 
 use crate::bail_i18n;
 use crate::config::repository::ConfigRepository;
-use crate::config::{LimitDef, LimitKind, LimitSettings, OverdrawPolicy};
+use crate::config::{LimitDef, LimitKind, LimitSettings, OverrunPolicy};
 use crate::constants::{
     BOOK_LIMITS_PERMISSION, LIMIT_CAS_BACKOFF_MAX_MS, LIMIT_CAS_BACKOFF_MIN_MS,
     LIMIT_CAS_MAX_ATTEMPTS, MANAGE_LIMITS_PERMISSION, MAX_TEXT_BODY_SIZE, VIEW_LIMITS_PERMISSION,
@@ -49,12 +49,12 @@ const REQUIRE_BOOK_LIMITS: &[&str] = &[BOOK_LIMITS_PERMISSION];
 struct LimitStateView {
     period_year_month: String,
     monthly_remaining: i64,
-    overuse_remaining: i64,
+    extra_allowance_remaining: i64,
     custom_balance: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     daily_remaining: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    overdrawn: Option<i64>,
+    overrun: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     gauge_value: Option<i64>,
 }
@@ -64,10 +64,10 @@ impl LimitStateView {
         LimitStateView {
             period_year_month: state.period_year_month.clone(),
             monthly_remaining: state.monthly_remaining,
-            overuse_remaining: state.overuse_remaining,
+            extra_allowance_remaining: state.extra_allowance_remaining,
             custom_balance: state.custom_balance,
             daily_remaining: state.daily_date.as_ref().map(|_| state.daily_remaining),
-            overdrawn: (state.monthly_overdrawn > 0).then_some(state.monthly_overdrawn),
+            overrun: (state.overrun > 0).then_some(state.overrun),
             gauge_value: state.gauge_value,
         }
     }
@@ -140,7 +140,7 @@ pub fn set_limit_settings_route(
         .boxed()
 }
 
-/// `?confirm=true` acknowledges a settings change that re-books overdraw, so it is applied rather
+/// `?confirm=true` acknowledges a settings change that re-books overrun, so it is applied rather
 /// than previewed.
 #[derive(Deserialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
@@ -273,9 +273,9 @@ async fn set_limit_settings(
         config.validate_limit_settings(&code, &settings)?;
     }
 
-    // A value change against an existing state row may re-book overdraw (a cut below usage adds debt;
+    // A value change against an existing state row may re-book overrun (a cut below usage adds debt;
     // a rise retires it). That is a real ledger movement, so unless the caller confirmed it, preview
-    // the reconcile and, when it would move the overdraw, ask first instead of writing anything.
+    // the reconcile and, when it would move the overrun, ask first instead of writing anything.
     if !clearing
         && !confirm
         && let Some(state) = limits.load_state(&tenant_id, &code).await?
@@ -292,7 +292,7 @@ async fn set_limit_settings(
             &generate_id(),
             &settings_actor(&caller),
         );
-        if outcome.state.monthly_overdrawn != rolled.monthly_overdrawn {
+        if outcome.state.overrun != rolled.overrun {
             return Ok(SettingsResponse {
                 status: "confirmationRequired",
                 requires_confirmation: true,
@@ -338,7 +338,7 @@ fn settings_actor(caller: &AuthUser) -> Actor {
 }
 
 /// The result of a settings write: whether it saved (or needs confirmation because it would re-book
-/// overdraw), and any advisory reconciliation warnings.
+/// overrun), and any advisory reconciliation warnings.
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct SettingsResponse {
@@ -428,8 +428,8 @@ struct ValueRequest {
 struct Breakdown {
     monthly_drawn: i64,
     custom_drawn: i64,
-    overuse_drawn: i64,
-    overdrawn: i64,
+    extra_allowance_drawn: i64,
+    overrun: i64,
 }
 
 impl Breakdown {
@@ -437,8 +437,8 @@ impl Breakdown {
         Breakdown {
             monthly_drawn: entry.monthly_drawn,
             custom_drawn: entry.custom_drawn,
-            overuse_drawn: entry.overuse_drawn,
-            overdrawn: entry.overdrawn,
+            extra_allowance_drawn: entry.extra_allowance_drawn,
+            overrun: entry.overrun,
         }
     }
 }
@@ -451,7 +451,7 @@ impl Breakdown {
 struct Remaining {
     monthly: i64,
     custom: i64,
-    overuse: i64,
+    extra_allowance: i64,
     total: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     daily: Option<i64>,
@@ -462,7 +462,7 @@ impl Remaining {
         Remaining {
             monthly: state.monthly_remaining,
             custom: state.custom_balance,
-            overuse: state.overuse_remaining,
+            extra_allowance: state.extra_allowance_remaining,
             total: state.available(),
             // Present only once a daily throttle has been applied (its date is then set).
             daily: state.daily_date.as_ref().map(|_| state.daily_remaining),
@@ -694,13 +694,13 @@ async fn consumable_settings(
     code: &str,
     tenants: &Arc<dyn TenantRepository>,
     config: &Arc<dyn ConfigRepository>,
-) -> anyhow::Result<(LimitSettings, OverdrawPolicy)> {
+) -> anyhow::Result<(LimitSettings, OverrunPolicy)> {
     let def = limit_def(config, code).await?;
     if def.kind != LimitKind::Consumable {
         client_bail!("Limit '{code}' is a gauge; use report, not consume/check");
     }
     let settings = tenant_limit_settings(tenants, tenant_id, code).await?;
-    Ok((settings, def.overdraw))
+    Ok((settings, def.overrun_policy))
 }
 
 /// A limit's definition, or a client error if the code is unknown.
@@ -1033,7 +1033,7 @@ impl BillingQuery {
     }
 }
 
-/// One month's closed aggregates for billing — the settled `overuseUsed`/`monthlyOverdrawn` per
+/// One month's closed aggregates for billing — the settled `extraAllowanceUsed`/`overrun` per
 /// limit that a billing tool reconciles against.
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -1149,56 +1149,56 @@ mod tests {
                 name: "AI credits".into(),
                 description: None,
                 kind: LimitKind::Consumable,
-                overuse: true,
+                extra_allowance: true,
                 custom_balance: true,
                 daily: false,
                 low_watermark_percent: None,
                 high_watermark_percent: None,
                 relevant_if: None,
                 unit: None,
-                overdraw: OverdrawPolicy::Track,
+                overrun_policy: OverrunPolicy::Track,
             },
             LimitDef {
                 code: "limit:seats".to_owned(),
                 name: "Seats".into(),
                 description: None,
                 kind: LimitKind::Gauge,
-                overuse: false,
+                extra_allowance: false,
                 custom_balance: false,
                 daily: false,
                 low_watermark_percent: Some(70),
                 high_watermark_percent: Some(90),
                 relevant_if: None,
                 unit: None,
-                overdraw: OverdrawPolicy::Track,
+                overrun_policy: OverrunPolicy::Track,
             },
             LimitDef {
                 code: "limit:ai-daily".to_owned(),
                 name: "AI (throttled)".into(),
                 description: None,
                 kind: LimitKind::Consumable,
-                overuse: false,
+                extra_allowance: false,
                 custom_balance: false,
                 daily: true,
                 low_watermark_percent: None,
                 high_watermark_percent: None,
                 relevant_if: None,
                 unit: None,
-                overdraw: OverdrawPolicy::Track,
+                overrun_policy: OverrunPolicy::Track,
             },
             LimitDef {
                 code: "limit:prepaid".to_owned(),
                 name: "Prepaid".into(),
                 description: None,
                 kind: LimitKind::Consumable,
-                overuse: false,
+                extra_allowance: false,
                 custom_balance: false,
                 daily: false,
                 low_watermark_percent: None,
                 high_watermark_percent: None,
                 relevant_if: None,
                 unit: None,
-                overdraw: OverdrawPolicy::Reject,
+                overrun_policy: OverrunPolicy::Reject,
             },
         ];
         // Save bumps the version; hand it the expected one so optimistic concurrency is satisfied.
@@ -1264,14 +1264,14 @@ mod tests {
             Box::pin(async move {
                 let stored = tenant.limits.get("limit:ai-credits").expect("stored");
                 assert_eq!(stored.monthly, Some(1000));
-                assert_eq!(stored.overuse, Some(200));
+                assert_eq!(stored.extra_allowance, Some(200));
                 Ok(tenant)
             })
         });
 
         let settings = LimitSettings {
             monthly: Some(1000),
-            overuse: Some(200),
+            extra_allowance: Some(200),
             daily: None,
             max: None,
         };
@@ -1419,7 +1419,7 @@ mod tests {
             "limit:ai-credits".to_owned(),
             LimitSettings {
                 monthly: Some(1000),
-                overuse: Some(200),
+                extra_allowance: Some(200),
                 daily: None,
                 max: None,
             },
@@ -1708,7 +1708,7 @@ mod tests {
         let today = now.format("%Y-%m-%d").to_string();
         let daily_settings = LimitSettings {
             monthly: Some(1000),
-            overuse: None,
+            extra_allowance: None,
             daily: Some(100),
             max: None,
         };
@@ -1769,7 +1769,7 @@ mod tests {
                     "limit:ai-credits".to_owned(),
                     LimitSettings {
                         monthly: Some(200),
-                        overuse: None,
+                        extra_allowance: None,
                         daily: None,
                         max: None,
                     },
@@ -1788,7 +1788,7 @@ mod tests {
             &month,
             &LimitSettings {
                 monthly: Some(1000),
-                overuse: None,
+                extra_allowance: None,
                 daily: None,
                 max: None,
             },
@@ -1809,7 +1809,7 @@ mod tests {
             "limit:ai-credits".to_owned(),
             LimitSettings {
                 monthly: Some(200),
-                overuse: None,
+                extra_allowance: None,
                 daily: None,
                 max: None,
             },
@@ -1842,7 +1842,7 @@ mod tests {
             &month,
             &LimitSettings {
                 monthly: Some(1000),
-                overuse: Some(200),
+                extra_allowance: Some(200),
                 daily: None,
                 max: None,
             },
@@ -1861,14 +1861,14 @@ mod tests {
         });
         // No expect_compare_and_swap: the preview path must not reconcile the state either.
 
-        // Cutting monthly 1000 -> 500 (below the 900 used) re-books overdraw, so without confirm it
+        // Cutting monthly 1000 -> 500 (below the 900 used) re-books overrun, so without confirm it
         // asks first and writes nothing.
         let response = set_limit_settings(
             "t-1".to_owned(),
             "limit:ai-credits".to_owned(),
             LimitSettings {
                 monthly: Some(500),
-                overuse: Some(200),
+                extra_allowance: Some(200),
                 daily: None,
                 max: None,
             },
@@ -1901,7 +1901,7 @@ mod tests {
             &month,
             &LimitSettings {
                 monthly: Some(1000),
-                overuse: Some(200),
+                extra_allowance: Some(200),
                 daily: None,
                 max: None,
             },
@@ -1934,7 +1934,7 @@ mod tests {
             .as_ref()
             .expect("a used limit carries its state");
         assert_eq!(state.monthly_remaining, 400);
-        assert_eq!(state.overuse_remaining, 200);
+        assert_eq!(state.extra_allowance_remaining, 200);
     }
 
     #[tokio::test]
@@ -1948,14 +1948,14 @@ mod tests {
             name: code.into(),
             description: None,
             kind: LimitKind::Consumable,
-            overuse: false,
+            extra_allowance: false,
             custom_balance: false,
             daily: false,
             low_watermark_percent: None,
             high_watermark_percent: None,
             relevant_if: relevant_if.map(str::to_owned),
             unit: None,
-            overdraw: OverdrawPolicy::Track,
+            overrun_policy: OverrunPolicy::Track,
         };
         let current = repository.current().await.expect("seeded");
         repository
@@ -2020,9 +2020,9 @@ mod tests {
             monthly_included: 1000,
             monthly_used: 1000,
             monthly_forfeited: 0,
-            overuse_limit: 200,
-            overuse_used: 120,
-            monthly_overdrawn: 30,
+            extra_allowance_limit: 200,
+            extra_allowance_used: 120,
+            overrun: 30,
             ending_custom_balance: 0,
         }
     }
@@ -2052,8 +2052,8 @@ mod tests {
         .expect("billed");
         assert_eq!(response.year_month, "2026-09");
         assert_eq!(response.limits.len(), 1);
-        assert_eq!(response.limits[0].overuse_used, 120);
-        assert_eq!(response.limits[0].monthly_overdrawn, 30);
+        assert_eq!(response.limits[0].extra_allowance_used, 120);
+        assert_eq!(response.limits[0].overrun, 30);
     }
 
     #[tokio::test]

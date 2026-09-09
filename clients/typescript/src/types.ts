@@ -291,7 +291,7 @@ export interface CatalogueEntry {
 export type LimitKind = "consumable" | "gauge";
 
 /** What `consume` does when a booking exceeds everything available. */
-export type OverdrawPolicy = "track" | "reject" | "ignore";
+export type OverrunPolicy = "track" | "reject" | "ignore";
 
 /** One limit definition with its labels resolved into the caller's language, plus the facets and
  * watermarks that shape its per-tenant editor. Arrives in {@link Catalogue.limits}. */
@@ -300,8 +300,8 @@ export interface LimitCatalogueEntry {
   name: string;
   description?: string;
   kind: LimitKind;
-  /** Whether a consumable may be drawn past its monthly allowance into a separate overuse budget. */
-  overuse: boolean;
+  /** Whether a consumable may be drawn past its monthly allowance into a separate extra-allowance budget. */
+  extraAllowance: boolean;
   /** Whether a consumable carries a top-up (custom) balance that survives the monthly reset. */
   customBalance: boolean;
   /** Whether a consumable also enforces a per-day sub-allowance. */
@@ -313,7 +313,7 @@ export interface LimitCatalogueEntry {
   /** Unit label for the figures (e.g. "credits", "seats"), resolved to the caller's language. */
   unit?: string;
   /** Consumable only: what `consume` does when a booking exceeds everything available. */
-  overdraw: OverdrawPolicy;
+  overrunPolicy: OverrunPolicy;
 }
 
 /** The label catalogues, resolved (`GET /config/catalogue`). */
@@ -826,13 +826,13 @@ export interface RateLimitBlockPage {
 // ── Limits (per-tenant quotas) ────────────────────────────────────────────────
 
 /** The per-tenant settings for one limit. Which fields apply depends on the limit's
- * {@link LimitCatalogueEntry.kind} and facets: a consumable reads `monthly`/`overuse`/`daily`, a
+ * {@link LimitCatalogueEntry.kind} and facets: a consumable reads `monthly`/`extraAllowance`/`daily`, a
  * gauge reads `max`. Every field is optional — an unset one leaves the server's default in place. */
 export interface LimitSettings {
   /** Consumable: the monthly allowance that resets each period. */
   monthly?: number;
-  /** Consumable: the separate overuse budget drawn on once the monthly allowance is exhausted. */
-  overuse?: number;
+  /** Consumable: the separate extra-allowance budget drawn on once the monthly allowance is exhausted. */
+  extraAllowance?: number;
   /** Consumable: the per-day sub-allowance. */
   daily?: number;
   /** Gauge: the ceiling the live reading is measured against. */
@@ -844,13 +844,13 @@ export interface LimitStateView {
   /** The period this state belongs to, `YYYY-MM`. */
   periodYearMonth: string;
   monthlyRemaining: number;
-  overuseRemaining: number;
+  extraAllowanceRemaining: number;
   /** The top-up balance that carries across periods. */
   customBalance: number;
   /** Present only when the limit enforces a daily sub-allowance. */
   dailyRemaining?: number;
   /** Consumption booked beyond everything available this period (`track` policy); present when > 0. */
-  overdrawn?: number;
+  overrun?: number;
   /** Present only for a gauge. */
   gaugeValue?: number;
 }
@@ -871,7 +871,7 @@ export interface LimitsListResponse {
 export interface LimitRemaining {
   monthly: number;
   custom: number;
-  overuse: number;
+  extraAllowance: number;
   total: number;
   /** Present only when the limit enforces a daily sub-allowance. */
   daily?: number;
@@ -881,8 +881,8 @@ export interface LimitRemaining {
 export interface LimitBreakdown {
   monthlyDrawn: number;
   customDrawn: number;
-  overuseDrawn: number;
-  overdrawn: number;
+  extraAllowanceDrawn: number;
+  overrun: number;
 }
 
 /** One entry in a limit's transaction ledger. */
@@ -896,14 +896,14 @@ export interface LedgerEntry {
   amount: number;
   monthlyDrawn: number;
   customDrawn: number;
-  overuseDrawn: number;
-  overdrawn: number;
+  extraAllowanceDrawn: number;
+  overrun: number;
   customAdded: number;
   /** Present only for a gauge report. */
   gaugeValue?: number;
   resultingMonthly: number;
   resultingCustom: number;
-  resultingOveruse: number;
+  resultingExtraAllowance: number;
   actorUserId?: string;
   actorUserName?: string;
   txnName?: string;
@@ -926,10 +926,10 @@ export interface LimitHistoryRow {
   monthlyIncluded: number;
   monthlyUsed: number;
   monthlyForfeited: number;
-  overuseLimit: number;
-  overuseUsed: number;
+  extraAllowanceLimit: number;
+  extraAllowanceUsed: number;
   /** Consumption booked beyond everything available during the month (`track` policy). */
-  monthlyOverdrawn: number;
+  overrun: number;
   endingCustomBalance: number;
 }
 
@@ -950,9 +950,9 @@ export interface BillingResult {
  * usage. */
 export interface SettingsSaveResult {
   /** `"saved"` when the change was applied, or `"confirmationRequired"` when it would re-book
-   * overdraw and needs an explicit confirm (see {@link requiresConfirmation}). */
+   * overrun and needs an explicit confirm (see {@link requiresConfirmation}). */
   status: string;
-  /** True when nothing was written because the change would move the overdraw; re-send with
+  /** True when nothing was written because the change would move the overrun; re-send with
    * `confirm: true` (see {@link UmamiClient.setTenantLimitSettings}) to apply it. */
   requiresConfirmation?: boolean;
   warnings?: string[];

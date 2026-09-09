@@ -127,7 +127,7 @@ async fn app() -> anyhow::Result<()> {
 
     let platform = Platform::boot().await?;
 
-    // Dev-only: `seed-limits [tenant] [code]` fakes ledger/history/overdraw for the UI, then exits
+    // Dev-only: `seed-limits [tenant] [code]` fakes ledger/history/overrun for the UI, then exits
     // without serving. Compiled out of release builds entirely.
     #[cfg(debug_assertions)]
     {

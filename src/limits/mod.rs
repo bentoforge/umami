@@ -18,9 +18,9 @@ use serde::{Deserialize, Serialize};
 
 /// The live counters for one `(tenant, limit)`, the row the hot path reads and writes.
 ///
-/// A consumable uses the monthly/overuse/custom fields; a gauge uses only `gauge_*`. One struct
+/// A consumable uses the monthly/extra-allowance/custom fields; a gauge uses only `gauge_*`. One struct
 /// serves both because a limit code is one kind or the other, and a shared row keeps the store
-/// uniform. `monthly_snapshot`/`overuse_snapshot` record the budget in force at the period's start,
+/// uniform. `monthly_snapshot`/`extra_allowance_snapshot` record the budget in force at the period's start,
 /// so `used = snapshot - remaining` stays well-defined even when the settings change mid-month.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -30,22 +30,22 @@ pub struct LimitState {
     /// Sort key — the limit's config code.
     #[serde(rename = "limitCode")]
     pub code: String,
-    /// The month (`"YYYY-MM"`) the monthly/overuse counters currently belong to.
+    /// The month (`"YYYY-MM"`) the monthly/extra-allowance counters currently belong to.
     pub period_year_month: String,
     /// Remaining included allowance this month (expires at month end).
     pub monthly_remaining: i64,
-    /// Remaining overuse allowance this month (expires at month end).
-    pub overuse_remaining: i64,
+    /// Remaining extra allowance this month (expires at month end).
+    pub extra_allowance_remaining: i64,
     /// Included allowance in force at the start of `period_year_month`.
     pub monthly_snapshot: i64,
-    /// Overuse allowance in force at the start of `period_year_month`.
-    pub overuse_snapshot: i64,
+    /// Extra allowance in force at the start of `period_year_month`.
+    pub extra_allowance_snapshot: i64,
     /// Persistent top-up balance — does not expire at month end.
     pub custom_balance: i64,
-    /// Consumption booked this month beyond everything available, summed under the `track` overdraw
+    /// Consumption booked this month beyond everything available, summed under the `track` overrun
     /// policy. Resets at month end (captured into history). `0` under `reject`/`ignore`.
     #[serde(default)]
-    pub monthly_overdrawn: i64,
+    pub overrun: i64,
     /// Daily throttle: consumption still allowed today. Reset each day from the tenant's `daily`
     /// setting; a parallel cap, not a spendable bucket. `0` and `daily_date` unset when the limit
     /// has no daily throttle.
@@ -67,7 +67,7 @@ pub struct LimitState {
 }
 
 impl LimitState {
-    /// A zeroed row for `(tenant, limit)` in `month`, with the monthly/overuse counters filled from
+    /// A zeroed row for `(tenant, limit)` in `month`, with the monthly/extra-allowance counters filled from
     /// `settings`. The starting point when a limit is first touched.
     pub fn fresh(
         tenant_id: &str,
@@ -76,17 +76,17 @@ impl LimitState {
         settings: &crate::config::LimitSettings,
     ) -> Self {
         let monthly = settings.monthly.unwrap_or(0);
-        let overuse = settings.overuse.unwrap_or(0);
+        let extra_allowance = settings.extra_allowance.unwrap_or(0);
         LimitState {
             tenant_id: tenant_id.to_owned(),
             code: code.to_owned(),
             period_year_month: month.to_owned(),
             monthly_remaining: monthly,
-            overuse_remaining: overuse,
+            extra_allowance_remaining: extra_allowance,
             monthly_snapshot: monthly,
-            overuse_snapshot: overuse,
+            extra_allowance_snapshot: extra_allowance,
             custom_balance: 0,
-            monthly_overdrawn: 0,
+            overrun: 0,
             daily_remaining: 0,
             daily_date: None,
             gauge_value: None,
@@ -95,9 +95,9 @@ impl LimitState {
         }
     }
 
-    /// Total spendable now: this month's monthly + overuse remaining plus the persistent balance.
+    /// Total spendable now: this month's monthly + extra-allowance remaining plus the persistent balance.
     pub fn available(&self) -> i64 {
-        self.monthly_remaining + self.custom_balance + self.overuse_remaining
+        self.monthly_remaining + self.custom_balance + self.extra_allowance_remaining
     }
 }
 
@@ -140,12 +140,12 @@ pub struct LedgerEntry {
     /// Consume: drawn from the persistent custom balance.
     #[serde(default)]
     pub custom_drawn: i64,
-    /// Consume: drawn from this month's overuse allowance.
+    /// Consume: drawn from this month's extra allowance.
     #[serde(default)]
-    pub overuse_drawn: i64,
+    pub extra_allowance_drawn: i64,
     /// Consume: the part nothing could cover (booked to zero).
     #[serde(default)]
-    pub overdrawn: i64,
+    pub overrun: i64,
     /// Top-up: added to the custom balance.
     #[serde(default)]
     pub custom_added: i64,
@@ -156,12 +156,12 @@ pub struct LedgerEntry {
     pub resulting_monthly: i64,
     /// The custom balance after the movement.
     pub resulting_custom: i64,
-    /// The overuse-remaining after the movement.
-    pub resulting_overuse: i64,
-    /// The overdraw debt after the movement — so every booking snapshots it and the ledger reads as
+    /// The extra-allowance-remaining after the movement.
+    pub resulting_extra_allowance: i64,
+    /// The overrun debt after the movement — so every booking snapshots it and the ledger reads as
     /// a consistent account.
     #[serde(default)]
-    pub resulting_overdrawn: i64,
+    pub resulting_overrun: i64,
     /// Optional actor/context — pass-through, GDPR-sensitive for the name (see `docs/LIMITS.md`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actor_user_id: Option<String>,
@@ -193,13 +193,13 @@ pub struct HistoryRow {
     pub monthly_used: i64,
     /// Included allowance left unspent when the month ended (it expires).
     pub monthly_forfeited: i64,
-    /// Overuse allowance the month started with.
-    pub overuse_limit: i64,
-    /// Overuse allowance consumed during the month.
-    pub overuse_used: i64,
+    /// Extra allowance the month started with.
+    pub extra_allowance_limit: i64,
+    /// Extra allowance consumed during the month.
+    pub extra_allowance_used: i64,
     /// Consumption booked beyond everything available during the month (`track` policy).
     #[serde(default)]
-    pub monthly_overdrawn: i64,
+    pub overrun: i64,
     /// Persistent custom balance carried into the next month.
     pub ending_custom_balance: i64,
 }

@@ -451,7 +451,7 @@ pub struct FeatureDef {
 #[serde(rename_all = "camelCase")]
 pub enum LimitKind {
     /// A budget booked down on every call (AI credits, tokens): a monthly included allowance, an
-    /// optional overuse ceiling beyond it, and an optional persistent top-up balance.
+    /// optional extra-allowance ceiling beyond it, and an optional persistent top-up balance.
     Consumable,
     /// An absolute upper bound whose current value is only ever *set* (never booked), read back with
     /// its watermark status.
@@ -461,9 +461,9 @@ pub enum LimitKind {
 /// What `consume` does when a booking exceeds everything available — see `docs/LIMITS.md`.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
-pub enum OverdrawPolicy {
+pub enum OverrunPolicy {
     /// Book what is there (flooring the buckets at zero) and add the uncovered excess to the
-    /// period's overdraw counter and the ledger entry. The default: the call already happened, so
+    /// period's overrun counter and the ledger entry. The default: the call already happened, so
     /// it is recorded honestly and can be billed as overage.
     #[default]
     Track,
@@ -490,9 +490,9 @@ pub struct LimitDef {
     pub description: Option<LocalizedText>,
     /// What this limit counts and how it is read/written.
     pub kind: LimitKind,
-    /// Consumable only: whether an overuse ceiling beyond the monthly allowance is available.
+    /// Consumable only: whether an extra-allowance ceiling beyond the monthly allowance is available.
     #[serde(default)]
-    pub overuse: bool,
+    pub extra_allowance: bool,
     /// Consumable only: whether a persistent, non-expiring top-up balance can be granted.
     #[serde(default)]
     pub custom_balance: bool,
@@ -517,9 +517,9 @@ pub struct LimitDef {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unit: Option<LocalizedText>,
     /// Consumable only: what `consume` does when a booking exceeds everything available. Default
-    /// [`OverdrawPolicy::Track`].
+    /// [`OverrunPolicy::Track`].
     #[serde(default)]
-    pub overdraw: OverdrawPolicy,
+    pub overrun_policy: OverrunPolicy,
 }
 
 /// A tenant's values for one limit (keyed by [`LimitDef::code`] in `Tenant.limits`). Which fields
@@ -532,7 +532,7 @@ pub struct LimitSettings {
     pub monthly: Option<i64>,
     /// Consumable: additional allowance tolerated beyond `monthly`, per month.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub overuse: Option<i64>,
+    pub extra_allowance: Option<i64>,
     /// Consumable: per-day throttle.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub daily: Option<i64>,
@@ -951,7 +951,7 @@ impl Config {
 
     /// Validates a tenant's [`LimitSettings`] for one limit against its [`LimitDef`]: the code must
     /// be defined, only the facets the definition enables may carry a value, and every value must be
-    /// non-negative. `max` belongs to a gauge; `monthly`/`overuse`/`daily` to a consumable.
+    /// non-negative. `max` belongs to a gauge; `monthly`/`extraAllowance`/`daily` to a consumable.
     pub fn validate_limit_settings(
         &self,
         code: &str,
@@ -963,7 +963,7 @@ impl Config {
         };
         for (label, value) in [
             ("monthly", settings.monthly),
-            ("overuse", settings.overuse),
+            ("extraAllowance", settings.extra_allowance),
             ("daily", settings.daily),
             ("max", settings.max),
         ] {
@@ -978,9 +978,9 @@ impl Config {
                 if settings.max.is_some() {
                     client_bail!("Limit '{code}' is consumable; 'max' applies only to a gauge");
                 }
-                if settings.overuse.is_some() && !def.overuse {
+                if settings.extra_allowance.is_some() && !def.extra_allowance {
                     client_bail!(
-                        "Limit '{code}' has no overuse — enable it on the definition first"
+                        "Limit '{code}' has no extra allowance — enable it on the definition first"
                     );
                 }
                 if settings.daily.is_some() && !def.daily {
@@ -1000,7 +1000,7 @@ impl Config {
             LimitKind::Gauge => {
                 for (label, value) in [
                     ("monthly", settings.monthly),
-                    ("overuse", settings.overuse),
+                    ("extraAllowance", settings.extra_allowance),
                     ("daily", settings.daily),
                 ] {
                     if value.is_some() {
@@ -1176,9 +1176,9 @@ pub fn validate_labels(config: &Config) -> anyhow::Result<()> {
 
 /// Rejects a limit catalogue entry whose facets contradict its kind, at publish time.
 ///
-/// A consumable's overuse/custom-balance/daily and a gauge's watermarks describe different
-/// machinery; a watermark on a consumable, or an overuse flag on a gauge, is a config that cannot
-/// mean what it says. Duplicate codes are refused too — the tenant's settings and the runtime state
+/// A consumable's extra-allowance/custom-balance/daily and a gauge's watermarks describe different
+/// machinery; a watermark on a consumable, or an extra-allowance flag on a gauge, is a config that
+/// cannot mean what it says. Duplicate codes are refused too — the tenant's settings and the state
 /// are keyed by code, so two definitions sharing one would be ambiguous.
 pub fn validate_limits(config: &Config) -> anyhow::Result<()> {
     let mut seen = BTreeSet::new();
@@ -1196,16 +1196,16 @@ pub fn validate_limits(config: &Config) -> anyhow::Result<()> {
                 }
             }
             LimitKind::Gauge => {
-                if def.overuse || def.custom_balance || def.daily {
+                if def.extra_allowance || def.custom_balance || def.daily {
                     client_bail!(
-                        "Limit '{}' is a gauge; overuse, customBalance and daily apply only to a \
-                         consumable",
+                        "Limit '{}' is a gauge; extraAllowance, customBalance and daily apply only \
+                         to a consumable",
                         def.code
                     );
                 }
-                if def.overdraw != OverdrawPolicy::Track {
+                if def.overrun_policy != OverrunPolicy::Track {
                     client_bail!(
-                        "Limit '{}' is a gauge; an overdraw policy applies only to a consumable",
+                        "Limit '{}' is a gauge; an overrun policy applies only to a consumable",
                         def.code
                     );
                 }
@@ -1935,28 +1935,28 @@ mod tests {
             name: "AI credits".into(),
             description: None,
             kind: super::LimitKind::Consumable,
-            overuse: true,
+            extra_allowance: true,
             custom_balance: true,
             daily: true,
             low_watermark_percent: None,
             high_watermark_percent: None,
             relevant_if: None,
             unit: None,
-            overdraw: super::OverdrawPolicy::Track,
+            overrun_policy: super::OverrunPolicy::Track,
         };
         let gauge = |code: &str| super::LimitDef {
             code: code.to_owned(),
             name: "Seats".into(),
             description: None,
             kind: super::LimitKind::Gauge,
-            overuse: false,
+            extra_allowance: false,
             custom_balance: false,
             daily: false,
             low_watermark_percent: Some(70),
             high_watermark_percent: Some(90),
             relevant_if: None,
             unit: None,
-            overdraw: super::OverdrawPolicy::Track,
+            overrun_policy: super::OverrunPolicy::Track,
         };
         let with_limits = |limits: Vec<super::LimitDef>| super::Config {
             limits,
@@ -1971,14 +1971,14 @@ mod tests {
             .is_ok()
         );
 
-        // A watermark on a consumable, or an overuse flag on a gauge, cannot mean what it says.
+        // A watermark on a consumable, or an extra-allowance flag on a gauge, cannot mean what it says.
         let mut consumable_with_watermark = consumable("limit:ai");
         consumable_with_watermark.low_watermark_percent = Some(80);
         assert!(super::validate_limits(&with_limits(vec![consumable_with_watermark])).is_err());
 
-        let mut gauge_with_overuse = gauge("limit:seats");
-        gauge_with_overuse.overuse = true;
-        assert!(super::validate_limits(&with_limits(vec![gauge_with_overuse])).is_err());
+        let mut gauge_with_extra = gauge("limit:seats");
+        gauge_with_extra.extra_allowance = true;
+        assert!(super::validate_limits(&with_limits(vec![gauge_with_extra])).is_err());
 
         // Watermarks must be ordered and within range.
         let mut inverted = gauge("limit:seats");
@@ -2011,28 +2011,28 @@ mod tests {
                     name: "AI".into(),
                     description: None,
                     kind: super::LimitKind::Consumable,
-                    overuse: false,
+                    extra_allowance: false,
                     custom_balance: false,
                     daily: false,
                     low_watermark_percent: None,
                     high_watermark_percent: None,
                     relevant_if: None,
                     unit: None,
-                    overdraw: super::OverdrawPolicy::Track,
+                    overrun_policy: super::OverrunPolicy::Track,
                 },
                 super::LimitDef {
                     code: "limit:seats".to_owned(),
                     name: "Seats".into(),
                     description: None,
                     kind: super::LimitKind::Gauge,
-                    overuse: false,
+                    extra_allowance: false,
                     custom_balance: false,
                     daily: false,
                     low_watermark_percent: None,
                     high_watermark_percent: None,
                     relevant_if: None,
                     unit: None,
-                    overdraw: super::OverdrawPolicy::Track,
+                    overrun_policy: super::OverrunPolicy::Track,
                 },
             ],
             ..super::Config::default()
@@ -2048,15 +2048,15 @@ mod tests {
                 .is_ok()
         );
 
-        // Overuse is off on the definition → a value for it is refused.
-        let with_overuse = super::LimitSettings {
+        // Extra allowance is off on the definition → a value for it is refused.
+        let with_extra = super::LimitSettings {
             monthly: Some(1000),
-            overuse: Some(100),
+            extra_allowance: Some(100),
             ..Default::default()
         };
         assert!(
             config
-                .validate_limit_settings("limit:ai", &with_overuse)
+                .validate_limit_settings("limit:ai", &with_extra)
                 .is_err()
         );
 

@@ -273,7 +273,7 @@ function LimitsTable({
   );
 }
 
-/** One budget line of a limit: a bobble + label, its ceiling (a gauge/balance/overdrawn line has
+/** One budget line of a limit: a bobble + label, its ceiling (a gauge/balance/overrun line has
  * none), and the current value. */
 interface DetailLine {
   key: string;
@@ -347,15 +347,15 @@ function detailLines(row: Row, t: (key: string) => string): DetailLine[] {
       ),
     );
   }
-  if (row.def?.overuse && (s.overuse ?? 0) > 0) {
-    const overuse = s.overuse ?? 0;
+  if (row.def?.extraAllowance && (s.extraAllowance ?? 0) > 0) {
+    const extraAllowance = s.extraAllowance ?? 0;
     lines.push(
       budget(
-        "overuse",
-        t("limits.overusage"),
-        t("limits.overuseHint"),
-        overuse,
-        st?.overuseRemaining ?? overuse,
+        "extraAllowance",
+        t("limits.extraAllowance"),
+        t("limits.extraAllowanceHint"),
+        extraAllowance,
+        st?.extraAllowanceRemaining ?? extraAllowance,
       ),
     );
   }
@@ -369,14 +369,14 @@ function detailLines(row: Row, t: (key: string) => string): DetailLine[] {
       value: st?.customBalance ?? 0,
     });
   }
-  if ((st?.overdrawn ?? 0) > 0) {
+  if ((st?.overrun ?? 0) > 0) {
     lines.push({
-      key: "overdrawn",
-      label: t("limits.overdrawn"),
-      hint: t("limits.overdrawnHint"),
+      key: "overrun",
+      label: t("limits.overrun"),
+      hint: t("limits.overrunHint"),
       bobble: <ToneDot className="bg-amber-400" />,
       ceiling: null,
-      value: st?.overdrawn ?? 0,
+      value: st?.overrun ?? 0,
     });
   }
   return lines;
@@ -548,7 +548,7 @@ function RowMenu({
 }
 
 /** A full-card editor for one limit's settings, shaped by kind and facets: a consumable edits its
- * monthly allowance plus overuse/daily when it has them, a gauge edits its max. Save surfaces the
+ * monthly allowance plus extra-allowance/daily when it has them, a gauge edits its max. Save surfaces the
  * server's capping `warnings` in an amber banner; with none, it returns to the list. */
 function LimitEditor({
   tenantId,
@@ -568,7 +568,7 @@ function LimitEditor({
   const [settings, setSettings] = useState<LimitSettings>(row.entry.settings);
   const [saving, setSaving] = useState(false);
   const [warnings, setWarnings] = useState<string[]>([]);
-  // A change that would re-book overdraw is previewed first: the server reports it without writing,
+  // A change that would re-book overrun is previewed first: the server reports it without writing,
   // and we ask for an explicit confirm before re-sending. Any edit invalidates that preview.
   const [needsConfirm, setNeedsConfirm] = useState(false);
 
@@ -635,15 +635,15 @@ function LimitEditor({
                 <FieldHint>{t("limits.dailyHint")}</FieldHint>
               </Field>
             )}
-            {row.def?.overuse && (
-              <Field label={t("limits.overusage")}>
+            {row.def?.extraAllowance && (
+              <Field label={t("limits.extraAllowance")}>
                 <input
                   className={input}
                   type="number"
-                  value={numValue("overuse")}
-                  onChange={(e) => setNum("overuse", e.target.value)}
+                  value={numValue("extraAllowance")}
+                  onChange={(e) => setNum("extraAllowance", e.target.value)}
                 />
-                <FieldHint>{t("limits.overuseHint")}</FieldHint>
+                <FieldHint>{t("limits.extraAllowanceHint")}</FieldHint>
               </Field>
             )}
           </>
@@ -662,9 +662,7 @@ function LimitEditor({
 
       {warnings.length > 0 && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300">
-          {needsConfirm && (
-            <p className="mb-1 font-medium">{t("limits.confirmBookingTitle")}</p>
-          )}
+          {needsConfirm && <p className="mb-1 font-medium">{t("limits.confirmBookingTitle")}</p>}
           <ul className="list-disc space-y-0.5 pl-4">
             {warnings.map((w) => (
               <li key={w}>{w}</li>
@@ -837,7 +835,7 @@ function LedgerView({
                     <td className={td}>{e.type}</td>
                     <td className={td}>{e.gaugeValue != null ? e.gaugeValue : e.amount}</td>
                     <td className={`${td} whitespace-nowrap font-mono text-xs`}>
-                      {e.resultingMonthly} · {e.resultingCustom} · {e.resultingOveruse}
+                      {e.resultingMonthly} · {e.resultingCustom} · {e.resultingExtraAllowance}
                     </td>
                     <td className={td}>{e.actorUserName || e.actorUserId || "—"}</td>
                   </tr>
@@ -916,7 +914,7 @@ function HistoryView({
                 <th className={th}>{t("limits.monthlyIncluded")}</th>
                 <th className={th}>{t("limits.monthlyUsed")}</th>
                 <th className={th}>{t("limits.forfeited")}</th>
-                <th className={th}>{t("limits.overuseUsed")}</th>
+                <th className={th}>{t("limits.extraAllowanceUsed")}</th>
                 <th className={th}>{t("limits.endingBalance")}</th>
               </tr>
             </thead>
@@ -931,7 +929,7 @@ function HistoryView({
                   <td className={td}>{m.monthlyUsed}</td>
                   <td className={td}>{m.monthlyForfeited}</td>
                   <td className={td}>
-                    {m.overuseUsed} / {m.overuseLimit}
+                    {m.extraAllowanceUsed} / {m.extraAllowanceLimit}
                   </td>
                   <td className={td}>{m.endingCustomBalance}</td>
                 </tr>

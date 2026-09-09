@@ -802,7 +802,7 @@ export class UmamiClient {
   /** Set one limit's per-tenant settings. `warnings` on the result flag e.g. a lowered allowance
    * that was capped at the current usage.
    *
-   * A change that would re-book overdraw (lowering a limit below its usage, or a raise that retires
+   * A change that would re-book overrun (lowering a limit below its usage, or a raise that retires
    * a debt) is not written on the first call: the result comes back with `status`
    * `"confirmationRequired"` and `requiresConfirmation: true`, its `warnings` describing the
    * booking. Show them, then call again with `{ confirm: true }` to apply it. */
@@ -843,7 +843,7 @@ export class UmamiClient {
   getLimitHistory(tenantId: string, code: string): Promise<LimitHistory> {
     return this.request<LimitHistory>(`/tenants/${enc(tenantId)}/limits/${enc(code)}/history`);
   }
-  /** For a billing tool: the closed-month aggregates (notably `overuseUsed` and `monthlyOverdrawn`)
+  /** For a billing tool: the closed-month aggregates (notably `extraAllowanceUsed` and `overrun`)
    * for one month. With a `code`, the single limit's row; without one, every limit's row for the
    * month. Requires `manage:limits`. */
   getBilling(
