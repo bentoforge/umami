@@ -73,12 +73,38 @@ export class UmamiError extends Error {
   }
 }
 
+/**
+ * The session is over and no request will succeed until the user signs in again: a call needed a
+ * token, had none that worked, and the server turned down the refresh cookie as well.
+ *
+ * Thrown instead of a bare 401 `UmamiError` so a caller can tell "you are signed out" from "you
+ * may not do this" — the two are not the same repair. Applications normally react through
+ * {@link UmamiClientOptions.onSessionExpired} and let this one travel as a plain rejection.
+ */
+export class SessionExpiredError extends UmamiError {
+  constructor(message: string, body?: ApiErrorBody) {
+    super(401, message, body);
+    this.name = "SessionExpiredError";
+  }
+}
+
 export interface UmamiClientOptions {
   /** Base URL of the umami service, e.g. `https://umami.example.com`. */
   baseUrl: string;
   /** Called whenever the in-memory access token changes (login/refresh/logout). */
   onTokenChange?: (token: string | null) => void;
+  /**
+   * Called once the session is provably over — the moment a {@link SessionExpiredError} is raised.
+   *
+   * The place to drop the profile and show the sign-in screen. Not called for a 401 the refresh
+   * repaired, for a refresh that never reached the server, or at start-up when there was no
+   * session to lose.
+   */
+  onSessionExpired?: () => void;
 }
+
+/** What the server said about the refresh cookie. A refresh that never arrived throws instead. */
+type RefreshVerdict = "renewed" | "rejected";
 
 /**
  * Typed client for the umami API. Holds the access token **in memory only** and silently refreshes
@@ -87,13 +113,17 @@ export interface UmamiClientOptions {
 export class UmamiClient {
   private readonly baseUrl: string;
   private readonly onTokenChange?: (token: string | null) => void;
+  private readonly onSessionExpired?: () => void;
   private accessToken: string | null = null;
   /** In-flight refresh, if any — coalesces concurrent 401s into a single rotation. */
-  private refreshing: Promise<boolean> | null = null;
+  private refreshing: Promise<RefreshVerdict> | null = null;
+  /** Whether the end of this session has already been announced — see {@link request}. */
+  private expiryAnnounced = false;
 
   constructor(options: UmamiClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, "");
     this.onTokenChange = options.onTokenChange;
+    this.onSessionExpired = options.onSessionExpired;
   }
 
   /** The current in-memory access token, if any. */
@@ -121,6 +151,9 @@ export class UmamiClient {
 
   private setToken(token: string | null): void {
     this.accessToken = token;
+    if (token) {
+      this.expiryAnnounced = false;
+    }
     this.onTokenChange?.(token);
   }
 
@@ -137,24 +170,42 @@ export class UmamiClient {
     return fetch(`${this.baseUrl}${path}`, { ...init, headers, credentials: "include" });
   }
 
-  /** Performs a request, refreshing once on a 401 for authenticated calls. */
+  /**
+   * Performs a request, refreshing once on a 401 for authenticated calls.
+   *
+   * A **rejected** refresh is the one unambiguous end of a session, and the only thing that raises
+   * {@link SessionExpiredError}. The 401 on its own is not: services still on older wasabi answer
+   * a permission gap with 401 too, so reading the status alone would sign a user out for pressing
+   * a button they were merely not allowed to press. A refresh that never reached the server is no
+   * verdict either — the original 401 travels on and the session stays as it was.
+   *
+   * {@link UmamiClientOptions.onSessionExpired} runs once per session death, not once per call
+   * that hit it.
+   */
   private async request<T>(path: string, init: RequestInit = {}, useAuth = true): Promise<T> {
     let response = await this.doFetch(path, init, useAuth);
     if (response.status === 401 && useAuth) {
-      const refreshed = await this.refresh().catch(() => false);
-      if (refreshed) response = await this.doFetch(path, init, useAuth);
+      const verdict = await this.refreshOnce().catch(() => "unreachable" as const);
+      if (verdict === "renewed") {
+        response = await this.doFetch(path, init, useAuth);
+      } else if (verdict === "rejected") {
+        const body = await errorBody(response);
+        // Announced once per session, however many calls were in flight when it ended: every one
+        // of them lands here, and a handler that navigates or tears down state should not be run
+        // three times over the same event. Each caller still gets its own rejection.
+        if (!this.expiryAnnounced) {
+          this.expiryAnnounced = true;
+          this.onSessionExpired?.();
+        }
+        throw new SessionExpiredError(body?.message ?? response.statusText, body);
+      }
     }
     return this.handle<T>(response);
   }
 
   private async handle<T>(response: Response): Promise<T> {
     if (!response.ok) {
-      let body: ApiErrorBody | undefined;
-      try {
-        body = (await response.json()) as ApiErrorBody;
-      } catch {
-        // non-JSON error body
-      }
+      const body = await errorBody(response);
       throw new UmamiError(response.status, body?.message ?? response.statusText, body);
     }
     if (response.status === 204) return undefined as T;
@@ -183,12 +234,17 @@ export class UmamiClient {
     return data;
   }
 
-  /** Silent refresh via the cookie. Returns whether a fresh token was obtained.
+  /** Silent refresh via the cookie. Returns whether a fresh token was obtained. */
+  async refresh(): Promise<boolean> {
+    return (await this.refreshOnce()) === "renewed";
+  }
+
+  /** As {@link refresh}, but keeps the server's verdict — see {@link request}.
    *
    * Single-flighted: concurrent callers (e.g. several requests that 401 at once) all await one
    * rotation. Without this, the second refresh would send the just-rotated-out cookie secret, which
    * the server treats as token reuse and revokes the whole session. */
-  async refresh(): Promise<boolean> {
+  private refreshOnce(): Promise<RefreshVerdict> {
     if (this.refreshing) return this.refreshing;
     this.refreshing = this.doRefresh().finally(() => {
       this.refreshing = null;
@@ -196,15 +252,15 @@ export class UmamiClient {
     return this.refreshing;
   }
 
-  private async doRefresh(): Promise<boolean> {
+  private async doRefresh(): Promise<RefreshVerdict> {
     const response = await this.doFetch("/auth/refresh", { method: "POST" }, false);
     if (!response.ok) {
       this.setToken(null);
-      return false;
+      return "rejected";
     }
     const data = (await response.json()) as TokenResponse;
     this.setToken(data.accessToken);
-    return true;
+    return "renewed";
   }
 
   /** Logs out this device and clears the in-memory token. */
@@ -973,6 +1029,15 @@ export class UmamiClient {
 
 function enc(value: string): string {
   return encodeURIComponent(value);
+}
+
+/** The server's error payload, or `undefined` when the body was not the JSON shape. */
+async function errorBody(response: Response): Promise<ApiErrorBody | undefined> {
+  try {
+    return (await response.json()) as ApiErrorBody;
+  } catch {
+    return undefined;
+  }
 }
 
 /** base64url (no padding) of raw bytes. */

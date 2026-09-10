@@ -41,6 +41,10 @@ export const headerIconButton =
 export const errorBox =
   "rounded-lg border border-red-700 bg-red-100 text-red-800 text-sm px-3 py-2";
 
+/** A statement of fact rather than a failure — same self-supplied ground as `errorBox`, calmer. */
+export const noticeBox =
+  "rounded-lg border border-amber-600 bg-amber-50 text-amber-900 text-sm px-3 py-2";
+
 export const card =
   "rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-6";
 

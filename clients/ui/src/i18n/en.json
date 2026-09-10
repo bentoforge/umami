@@ -113,6 +113,7 @@
     "mfaHint": "Enter the 6-digit code from your authenticator app.",
     "passkey": "Sign in with a passkey",
     "failed": "Sign-in failed",
+    "expired": "Your session has expired. Please sign in again.",
     "forgot": "Forgot your password?",
     "recoverHeading": "Reset password",
     "recoverHint": "Enter your username or a confirmed email address. If we can reach you, a link follows.",

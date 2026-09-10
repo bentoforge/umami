@@ -1,5 +1,5 @@
 export type { UmamiClientOptions } from "./client.js";
-export { UmamiClient, UmamiError } from "./client.js";
+export { SessionExpiredError, UmamiClient, UmamiError } from "./client.js";
 export * from "./types.js";
 export {
   assertionToJSON,

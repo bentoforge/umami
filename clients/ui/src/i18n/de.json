@@ -113,6 +113,7 @@
     "mfaHint": "Gib den 6-stelligen Code aus deiner Authenticator-App ein.",
     "passkey": "Mit Passkey anmelden",
     "failed": "Anmeldung fehlgeschlagen",
+    "expired": "Deine Sitzung ist abgelaufen. Bitte melde dich erneut an.",
     "forgot": "Passwort vergessen?",
     "recoverHeading": "Passwort zurücksetzen",
     "recoverHint": "Benutzername oder eine bestätigte E-Mail-Adresse eingeben. Wenn wir Sie erreichen können, folgt ein Link.",

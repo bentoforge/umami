@@ -1,5 +1,14 @@
 import { type MeResponse, UmamiClient } from "@bentoforge/umami-iam";
-import { createContext, type ReactNode, useContext, useEffect, useMemo, useState } from "react";
+import {
+  createContext,
+  type ReactNode,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import i18n from "../i18n/i18n";
 
 interface AuthContextValue {
@@ -8,6 +17,8 @@ interface AuthContextValue {
   me: MeResponse | null;
   /** `true` until the initial silent-refresh + `getMe` completes. */
   loading: boolean;
+  /** The session ended while the app was open — the sign-in screen says so rather than staying mute. */
+  sessionExpired: boolean;
   /** The tenant the current access token is scoped to (changes on switch-tenant). */
   activeTenantId: string | null;
   /** Display name of the active tenant, if known. */
@@ -30,11 +41,50 @@ export function useUmami(): AuthContextValue {
 }
 
 export function UmamiProvider({ baseUrl, children }: { baseUrl: string; children: ReactNode }) {
-  const client = useMemo(() => new UmamiClient({ baseUrl }), [baseUrl]);
+  const navigate = useNavigate();
+  const location = useLocation();
   const [me, setMe] = useState<MeResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [sessionExpired, setSessionExpired] = useState(false);
   const [activeTenantId, setActiveTenantId] = useState<string | null>(null);
   const [activeTenantName, setActiveTenantName] = useState<string | null>(null);
+
+  // Read by the expiry callback, which outlives the render that built it.
+  const locationRef = useRef(location);
+  locationRef.current = location;
+
+  /**
+   * Where the session died, for the jump back after signing in again.
+   *
+   * In memory, deliberately — not in `?next=`. That parameter is part of the hosted-login handoff
+   * and travels in a URL anyone can hand a user, which is why `LoginPage` vets it and follows it
+   * with a full page load. This value is neither: the router put it there, the router takes it
+   * back, and it never reaches a URL for someone else to choose.
+   */
+  const returnTo = useRef<string | null>(null);
+
+  /**
+   * The session is over: drop the profile so `App` shows the sign-in screen.
+   *
+   * The alternative is what used to happen — the failed call's own error surfaced in whatever
+   * banner the page had, the shell stayed up around a session that no longer existed, and the
+   * sign-out only became visible on the next reload.
+   */
+  const client = useMemo(
+    () =>
+      new UmamiClient({
+        baseUrl,
+        onSessionExpired: () => {
+          const at = `${locationRef.current.pathname}${locationRef.current.search}`;
+          returnTo.current = at === "/" ? null : at;
+          setSessionExpired(true);
+          setMe(null);
+          setActiveTenantId(null);
+          setActiveTenantName(null);
+        },
+      }),
+    [baseUrl],
+  );
 
   const refreshMe = async () => {
     try {
@@ -55,6 +105,12 @@ export function UmamiProvider({ baseUrl, children }: { baseUrl: string; children
       // would name the user's own tenant while showing someone else's data.
       setActiveTenantId(client.getClaims()?.tenant ?? profile.user.tenantId);
       setActiveTenantName(profile.activeTenant?.name ?? profile.tenant?.name ?? null);
+      setSessionExpired(false);
+      const target = returnTo.current;
+      returnTo.current = null;
+      if (target) {
+        navigate(target, { replace: true });
+      }
     } catch {
       setMe(null);
       setActiveTenantId(null);
@@ -62,15 +118,21 @@ export function UmamiProvider({ baseUrl, children }: { baseUrl: string; children
     }
   };
 
+  // Back to the start page, because the routes below it are tenant-scoped: `/users/:userId` names
+  // a row the new tenant does not have, so a switch made from there answers with "no such user".
+  // The start page is the one screen that is true in every tenant. `replace`, so going back does
+  // not return to the route that just became meaningless.
   const switchTenant = async (tenantId: string, tenantName?: string) => {
     const active = await client.switchTenant(tenantId);
     setActiveTenantId(active);
     setActiveTenantName(tenantName ?? null);
+    navigate("/", { replace: true });
   };
 
   const signOut = async () => {
     await client.logout();
     setMe(null);
+    setSessionExpired(false);
     setActiveTenantId(null);
     setActiveTenantName(null);
   };
@@ -97,6 +159,7 @@ export function UmamiProvider({ baseUrl, children }: { baseUrl: string; children
         client,
         me,
         loading,
+        sessionExpired,
         activeTenantId,
         activeTenantName,
         refreshMe,

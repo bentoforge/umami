@@ -4,29 +4,32 @@ import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router-dom";
 import { useUmami } from "../auth/UmamiProvider";
 import { Footer, Logo } from "../components";
-import { errorBox } from "../ui";
+import { errorBox, noticeBox } from "../ui";
 
 /**
  * Where to go after a successful login, from `?next=`.
  *
- * Only **same-origin absolute paths** are honoured. `next` arrives in a URL that anyone can hand
- * a user, so an unchecked value turns the login page into an open redirector — and one that runs
- * right after the user typed their password, which is the worst possible moment to bounce them
- * somewhere hostile.
+ * Honoured **only for `/auth/authorize`**, the single route that ever produces this parameter:
+ * umami writes `/app/login?next=/auth/authorize?…` when an app's hosted-login redirect finds no
+ * session. `next` arrives in a URL that anyone can hand a user, and it is followed by a full page
+ * load moments after they typed their password — the worst possible moment to send them anywhere
+ * unexpected.
  *
- * Rejected: anything with a scheme or authority (`https://evil.test`, `//evil.test`), and
- * backslash variants that some browsers normalise into `//`. The cross-origin case is served by
- * `GET /auth/authorize`, which has its own exact-match allow-list — `next` only ever points back
- * at umami itself.
+ * Pinned to that one path rather than merely checked for shape, because same-origin is not the
+ * property that matters: a plain path check still leaves every umami endpoint reachable as a
+ * credentialed `GET` chosen by whoever wrote the link. Nothing umami answers to `GET` changes
+ * state today, and this keeps that from being what the check rests on.
+ *
+ * Rejected therefore: every other path, anything carrying a scheme or authority
+ * (`https://evil.test`, `//evil.test`), and backslashes, which some browsers normalise into `//`.
+ * The cross-origin case belongs to `GET /auth/authorize` itself, which vets `redirectUri` against
+ * its own exact-match allow-list.
  */
 function safeNext(raw: string | null): string | null {
-  if (!raw) {
+  if (!raw || raw.includes("\\")) {
     return null;
   }
-  if (!raw.startsWith("/") || raw.startsWith("//") || raw.startsWith("/\\")) {
-    return null;
-  }
-  if (raw.includes("\\")) {
+  if (raw !== "/auth/authorize" && !raw.startsWith("/auth/authorize?")) {
     return null;
   }
   return raw;
@@ -34,7 +37,7 @@ function safeNext(raw: string | null): string | null {
 
 export function LoginPage() {
   const { t } = useTranslation();
-  const { client, refreshMe } = useUmami();
+  const { client, refreshMe, sessionExpired } = useUmami();
   const [searchParams] = useSearchParams();
   // Set when an app sent the user here through /auth/authorize; the value points back at that
   // endpoint, which re-decides the redirect now that a session cookie exists.
@@ -186,6 +189,13 @@ export function LoginPage() {
         <h1 className="text-2xl font-semibold mb-6">
           {t(recoverMode ? "login.recoverHeading" : "login.heading")}
         </h1>
+
+        {/* Why the user is looking at this screen without having asked for it. Independent of
+            `error`, which answers a different question — why an attempt of theirs failed — and
+            which the passkey autofill can set on its own, over a ceremony nobody started. */}
+        {sessionExpired && !recoverMode && (
+          <p className={`${noticeBox} mb-4`}>{t("login.expired")}</p>
+        )}
 
         {recoverMode && (
           <div className="space-y-4">
