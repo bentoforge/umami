@@ -199,10 +199,20 @@
     "when": "Wann",
     "type": "Typ",
     "amount": "Menge",
+    "details": "Details",
     "resulting": "Ergebnis (m · c · e)",
     "source": "Quelle",
     "txn": "Txn",
     "actor": "Akteur",
+    "expand": "Details anzeigen",
+    "collapse": "Details ausblenden",
+    "ledgerType": {
+      "consume": "Verbrauch",
+      "topup": "Gutschrift",
+      "settings": "Einstellung",
+      "carry": "Übertrag",
+      "gaugeSet": "Wert gesetzt"
+    },
     "noHistory": "Noch kein Verlauf.",
     "noLedger": "Noch keine Buchungen."
   },

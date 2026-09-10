@@ -763,8 +763,9 @@ function TopupForm({
   );
 }
 
-/** A limit's transaction ledger, newest-first and paged via `nextCursor`. Headed by the limit's name
- * and description so the expanded view keeps its context. */
+/** A limit's transaction ledger, newest-first and paged via `nextCursor`. The card heading names the
+ * limit; each row's amount is coloured by direction and its txn/user ids expand from the source
+ * column into the details cell. */
 function LedgerView({
   tenantId,
   code,
@@ -779,6 +780,7 @@ function LedgerView({
   const [entries, setEntries] = useState<LedgerEntry[] | null>(null);
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [busy, setBusy] = useState(false);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     let alive = true;
@@ -814,6 +816,19 @@ function LedgerView({
     }
   };
 
+  const toggle = (id: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+
+  const muted = "font-mono text-xs text-slate-400 dark:text-slate-500";
+
   return (
     <div className="space-y-4">
       {entries === null ? (
@@ -821,61 +836,107 @@ function LedgerView({
       ) : entries.length === 0 ? (
         <p className="text-sm text-slate-500">{t("limits.noLedger")}</p>
       ) : (
-        <>
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse">
-              <thead>
-                <tr className="border-b border-slate-200 dark:border-slate-700">
-                  <th className={th}>{t("limits.when")}</th>
-                  <th className={th}>{t("limits.type")}</th>
-                  <th className={th}>{t("limits.amount")}</th>
-                  <th className={th}>{t("limits.resulting")}</th>
-                  <th className={th}>{t("limits.source")}</th>
-                  <th className={th}>{t("limits.txn")}</th>
-                  <th className={th}>{t("limits.actor")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {entries.map((e) => (
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse">
+            <thead>
+              <tr className="border-b border-slate-200 dark:border-slate-700">
+                <th className={th}>{t("limits.when")}</th>
+                <th className={th}>{t("limits.type")}</th>
+                <th className={`${th} text-right`}>{t("limits.amount")}</th>
+                <th className={`${th} align-top`}>
+                  <div>{t("limits.details")}</div>
+                  <div className="text-[10px] font-normal normal-case text-slate-400">
+                    {t("limits.monthlyBudget")} · {t("limits.balance")} ·{" "}
+                    {t("limits.extraAllowance")}
+                  </div>
+                </th>
+                <th className={th}>{t("limits.source")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {entries.map((e) => {
+                const isOpen = expanded.has(e.id);
+                const canExpand = e.txnId != null || e.actorUserId != null;
+                return (
                   <tr key={e.id} className="border-b border-slate-100 dark:border-slate-700/50">
-                    <td className={`${td} whitespace-nowrap`}>{formatDateTime(e.timestamp)}</td>
-                    <td className={td}>{e.type}</td>
-                    <td className={td}>
-                      {formatNumber(e.gaugeValue != null ? e.gaugeValue : e.amount)}
+                    <td className={`${td} whitespace-nowrap align-top`}>
+                      {formatDateTime(e.timestamp)}
                     </td>
-                    <td className={`${td} whitespace-nowrap font-mono text-xs`}>
-                      {formatNumber(e.resultingMonthly)} · {formatNumber(e.resultingCustom)} ·{" "}
-                      {formatNumber(e.resultingExtraAllowance)}
+                    <td className={`${td} align-top`}>
+                      {t(`limits.ledgerType.${e.type}`, { defaultValue: e.type })}
                     </td>
-                    <td className={`${td} font-mono text-xs text-slate-400 dark:text-slate-500`}>
-                      {e.source ?? "—"}
+                    <td className={`${td} text-right align-top whitespace-nowrap font-mono`}>
+                      <LedgerAmount entry={e} />
                     </td>
-                    <td className={`${td} font-mono text-xs text-slate-400 dark:text-slate-500`}>
-                      {e.txnId ?? "—"}
+                    <td className={`${td} align-top`}>
+                      <div className={`${muted} whitespace-nowrap`}>
+                        {formatNumber(e.resultingMonthly)} · {formatNumber(e.resultingCustom)} ·{" "}
+                        {formatNumber(e.resultingExtraAllowance)}
+                      </div>
+                      {isOpen && (
+                        <div className={`mt-1 space-y-0.5 ${muted}`}>
+                          {e.txnId != null && <div>txnId · {e.txnId}</div>}
+                          {e.actorUserId != null && <div>userId · {e.actorUserId}</div>}
+                        </div>
+                      )}
                     </td>
-                    <td className={`${td} font-mono text-xs text-slate-400 dark:text-slate-500`}>
-                      {e.actorUserId ?? "—"}
+                    <td className={`${td} align-top`}>
+                      <span className="inline-flex items-center gap-1.5">
+                        {e.source != null && <span className={muted}>{e.source}</span>}
+                        {canExpand && (
+                          <button
+                            type="button"
+                            onClick={() => toggle(e.id)}
+                            aria-label={isOpen ? t("limits.collapse") : t("limits.expand")}
+                            aria-expanded={isOpen}
+                            className="flex h-4 w-4 items-center justify-center rounded border border-slate-300 text-xs leading-none text-slate-500 hover:bg-slate-100 dark:border-slate-600 dark:hover:bg-slate-700"
+                          >
+                            {isOpen ? "−" : "+"}
+                          </button>
+                        )}
+                      </span>
                     </td>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {cursor && (
-            <button
-              type="button"
-              className="text-sm text-primary hover:underline disabled:opacity-50"
-              disabled={busy}
-              onClick={() => void loadMore()}
-            >
-              {t("common.loadMore")}
-            </button>
-          )}
-        </>
+                );
+              })}
+              {cursor && (
+                <tr>
+                  <td colSpan={5} className="px-2 py-3 text-center">
+                    <button
+                      type="button"
+                      className="text-primary hover:underline disabled:opacity-50"
+                      disabled={busy}
+                      onClick={() => void loadMore()}
+                    >
+                      {t("common.loadMore")}
+                    </button>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       )}
       <BackButton onClick={onBack} />
     </div>
   );
+}
+
+/** The amount for one ledger entry, right-aligned and coloured by direction: a debit
+ * (consume/carry) red with a `−`, a credit (top-up) green with a `+`, and a settings entry — which
+ * has no quantity — a muted dash. */
+function LedgerAmount({ entry }: { entry: LedgerEntry }) {
+  if (entry.type === "settings") {
+    return <span className="text-slate-400 dark:text-slate-500">—</span>;
+  }
+  const value = formatNumber(entry.amount);
+  if (entry.type === "topup") {
+    return <span className="text-green-600 dark:text-green-400">+{value}</span>;
+  }
+  if (entry.type === "consume" || entry.type === "carry") {
+    return <span className="text-red-600 dark:text-red-400">−{value}</span>;
+  }
+  return <span>{value}</span>;
 }
 
 /** A two-line table header: the label, and a muted `used / limit` clarifier under it. */

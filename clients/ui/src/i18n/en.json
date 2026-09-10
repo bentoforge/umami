@@ -199,10 +199,20 @@
     "when": "When",
     "type": "Type",
     "amount": "Amount",
+    "details": "Details",
     "resulting": "Resulting (m · c · e)",
     "source": "Source",
     "txn": "Txn",
     "actor": "Actor",
+    "expand": "Show details",
+    "collapse": "Hide details",
+    "ledgerType": {
+      "consume": "Consumption",
+      "topup": "Credit",
+      "settings": "Settings",
+      "carry": "Carry-over",
+      "gaugeSet": "Gauge set"
+    },
     "noHistory": "No history yet.",
     "noLedger": "No transactions yet."
   },
