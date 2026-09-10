@@ -201,4 +201,10 @@ pub struct HistoryRow {
     pub overrun: i64,
     /// Persistent custom balance carried into the next month.
     pub ending_custom_balance: i64,
+    /// Gauge: the value that stood at the month's close (`None` on a consumable row).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gauge_value: Option<i64>,
+    /// Gauge: the bound the value was measured against (`None` on a consumable row).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gauge_max: Option<i64>,
 }

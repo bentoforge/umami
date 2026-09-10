@@ -854,9 +854,12 @@ async fn report_gauge(
     let actor = request.actor.into_actor()?;
     let now = Utc::now();
     let entry_id = generate_id();
+    let max = settings.max;
     let (outcome, ()) = commit_state(&limits, &tenant_id, &code, |existing| {
         (
-            accounting::set_gauge(existing, &tenant_id, &code, value, now, &entry_id, &actor),
+            accounting::set_gauge(
+                existing, &tenant_id, &code, value, max, now, &entry_id, &actor,
+            ),
             (),
         )
     })
@@ -2067,6 +2070,8 @@ mod tests {
             extra_allowance_used: 120,
             overrun: 30,
             ending_custom_balance: 0,
+            gauge_value: None,
+            gauge_max: None,
         }
     }
 

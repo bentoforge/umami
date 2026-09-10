@@ -931,6 +931,9 @@ export interface LimitHistoryRow {
   /** Consumption booked beyond everything available during the month (`track` policy). */
   overrun: number;
   endingCustomBalance: number;
+  /** Gauge only: the value at the month's close and the bound it was measured against. */
+  gaugeValue?: number;
+  gaugeMax?: number;
 }
 
 /** A limit's usage history, month by month (`GET /tenants/{id}/limits/{code}/history`). */

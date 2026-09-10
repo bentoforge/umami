@@ -208,9 +208,14 @@ Eine Zeile je abgeschlossenem Monat, geschrieben beim Rollover (s.u.), Guard
 ```
 monthlyIncluded, monthlyUsed, monthlyForfeited
 extraAllowanceLimit, extraAllowanceUsed
-customDrawnDuringMonth, endingCustomBalance
-txnCount
+overrun, endingCustomBalance
+gaugeValue, gaugeMax          // nur Gauge: Wert + Schranke am Monatsende
 ```
+
+Auch ein **Gauge** schreibt hier: setzt jemand im neuen Monat einen Wert, wird der Wert, der am
+Ende des vorigen Gauge-Monats stand, als Zeile mit `gaugeValue`/`gaugeMax` festgehalten (die
+Consumable-Felder sind dann 0). `gaugeMax` ist die aktuell geltende Schranke — best effort, ein
+Gauge führt keinen Perioden-Snapshot.
 
 ## Buchungslogik
 

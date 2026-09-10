@@ -93,6 +93,8 @@ pub fn rolled_over(
                     - state.extra_allowance_remaining,
                 overrun: state.overrun,
                 ending_custom_balance: state.custom_balance,
+                gauge_value: None,
+                gauge_max: None,
             };
             let monthly = settings.monthly.unwrap_or(0);
             let extra_allowance = settings.extra_allowance.unwrap_or(0);
@@ -267,12 +269,16 @@ pub fn apply_topup(
 }
 
 /// Sets a gauge's current value for `now`'s month. A gauge is never booked — only set — so the
-/// monthly/extra-allowance counters (and any rollover/history) are untouched.
+/// monthly/extra-allowance counters are untouched. When the value is the first one set in a new
+/// month, the value that stood at the previous gauge month's close is captured into a history row
+/// (`max` is the bound in force now, a best effort — a gauge keeps no per-period snapshot).
+#[allow(clippy::too_many_arguments)]
 pub fn set_gauge(
     existing: Option<LimitState>,
     tenant_id: &str,
     code: &str,
     value: i64,
+    max: Option<i64>,
     now: DateTime<Utc>,
     entry_id: &str,
     actor: &Actor,
@@ -280,6 +286,26 @@ pub fn set_gauge(
     let month = year_month(now);
     let mut state = existing
         .unwrap_or_else(|| LimitState::fresh(tenant_id, code, &month, &LimitSettings::default()));
+
+    // A value already set in an earlier month closes that month into history before this one lands.
+    let history = match (state.gauge_month.as_deref(), state.gauge_value) {
+        (Some(prev_month), Some(prev_value)) if prev_month != month => Some(HistoryRow {
+            tenant_id: state.tenant_id.clone(),
+            code: state.code.clone(),
+            year_month: prev_month.to_owned(),
+            monthly_included: 0,
+            monthly_used: 0,
+            monthly_forfeited: 0,
+            extra_allowance_limit: 0,
+            extra_allowance_used: 0,
+            overrun: 0,
+            ending_custom_balance: 0,
+            gauge_value: Some(prev_value),
+            gauge_max: max,
+        }),
+        _ => None,
+    };
+
     state.gauge_value = Some(value);
     state.gauge_month = Some(month);
 
@@ -289,7 +315,7 @@ pub fn set_gauge(
     Outcome {
         state,
         ledger,
-        history: None,
+        history,
         rejected: false,
     }
 }
@@ -655,6 +681,7 @@ mod tests {
             "t1",
             "limit:seats",
             42,
+            Some(50),
             at(2026, 9, 7),
             "entry-1",
             &Actor::default(),
@@ -665,6 +692,36 @@ mod tests {
         assert_eq!(out.ledger.entry_type, ledger_type::GAUGE_SET);
         assert_eq!(out.ledger.gauge_value, Some(42));
         assert!(out.history.is_none());
+    }
+
+    #[test]
+    fn a_gauge_set_in_a_new_month_closes_the_previous_one_into_history() {
+        // A value stood in August; setting one in September closes August.
+        let august = set_gauge(
+            None,
+            "t1",
+            "limit:seats",
+            40,
+            Some(50),
+            at(2026, 8, 20),
+            "entry-a",
+            &Actor::default(),
+        );
+        let september = set_gauge(
+            Some(august.state),
+            "t1",
+            "limit:seats",
+            45,
+            Some(50),
+            at(2026, 9, 3),
+            "entry-b",
+            &Actor::default(),
+        );
+        let history = september.history.expect("August closed into history");
+        assert_eq!(history.year_month, "2026-08");
+        assert_eq!(history.gauge_value, Some(40));
+        assert_eq!(history.gauge_max, Some(50));
+        assert_eq!(september.state.gauge_value, Some(45));
     }
 
     #[test]
