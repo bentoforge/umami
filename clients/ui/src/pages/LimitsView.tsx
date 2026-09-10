@@ -8,6 +8,7 @@ import type {
 } from "@bentoforge/umami-iam";
 import {
   ArrowLeftIcon,
+  ClipboardDocumentIcon,
   ClockIcon,
   ListBulletIcon,
   PlusCircleIcon,
@@ -780,7 +781,6 @@ function LedgerView({
   const [entries, setEntries] = useState<LedgerEntry[] | null>(null);
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [busy, setBusy] = useState(false);
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     let alive = true;
@@ -816,16 +816,9 @@ function LedgerView({
     }
   };
 
-  const toggle = (id: string) =>
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
-    });
+  const copy = (value: string) => {
+    void navigator.clipboard?.writeText(value);
+  };
 
   const muted = "font-mono text-xs text-slate-400 dark:text-slate-500";
 
@@ -843,62 +836,52 @@ function LedgerView({
                 <th className={th}>{t("limits.when")}</th>
                 <th className={th}>{t("limits.type")}</th>
                 <th className={`${th} text-right`}>{t("limits.amount")}</th>
-                <th className={`${th} align-top`}>
-                  <div>{t("limits.details")}</div>
-                  <div className="text-[10px] font-normal normal-case text-slate-400">
-                    {t("limits.monthlyBudget")} · {t("limits.extraAllowance")} ·{" "}
-                    {t("limits.balance")} · {t("limits.overrun")}
-                  </div>
-                </th>
-                <th className={th}>{t("limits.source")}</th>
+                <th className={th}>{t("limits.current")}</th>
+                <th className={th} />
               </tr>
             </thead>
             <tbody>
               {entries.map((e) => {
-                const isOpen = expanded.has(e.id);
-                const canExpand = e.txnId != null || e.actorUserId != null;
+                const ids: MenuAction[] = [];
+                if (e.txnId != null) {
+                  ids.push({
+                    label: `${t("limits.transaction")}: ${e.txnId}`,
+                    icon: ClipboardDocumentIcon,
+                    onSelect: () => copy(e.txnId as string),
+                  });
+                }
+                if (e.actorUserId != null) {
+                  ids.push({
+                    label: `${t("limits.user")}: ${e.actorUserId}`,
+                    icon: ClipboardDocumentIcon,
+                    onSelect: () => copy(e.actorUserId as string),
+                  });
+                }
                 return (
                   <tr key={e.id} className="border-b border-slate-100 dark:border-slate-700/50">
-                    <td className={`${td} whitespace-nowrap align-top`}>
-                      {formatDateTime(e.timestamp)}
-                    </td>
-                    <td className={`${td} align-top`}>
+                    <td className={`${td} whitespace-nowrap`}>{formatDateTime(e.timestamp)}</td>
+                    <td className={td}>
                       {t(`limits.ledgerType.${e.type}`, { defaultValue: e.type })}
-                    </td>
-                    <td className={`${td} text-right align-top whitespace-nowrap font-mono`}>
-                      <LedgerAmount entry={e} />
-                    </td>
-                    <td className={`${td} align-top`}>
-                      <div className={`${muted} whitespace-nowrap`}>
-                        {formatNumber(e.resultingMonthly)} ·{" "}
-                        {formatNumber(e.resultingExtraAllowance)} ·{" "}
-                        {formatNumber(e.resultingCustom)} ·{" "}
-                        <span className={e.resultingOverrun > 0 ? "text-amber-500" : undefined}>
-                          {formatNumber(e.resultingOverrun)}
+                      {e.source != null && (
+                        <span className="ml-1 text-slate-400 dark:text-slate-500">
+                          ({e.source})
                         </span>
-                      </div>
-                      {isOpen && (
-                        <div className={`mt-1 space-y-0.5 ${muted}`}>
-                          {e.txnId != null && <div>txnId · {e.txnId}</div>}
-                          {e.actorUserId != null && <div>userId · {e.actorUserId}</div>}
-                        </div>
                       )}
                     </td>
-                    <td className={`${td} align-top`}>
-                      <span className="inline-flex items-center gap-1.5">
-                        {e.source != null && <span className={muted}>{e.source}</span>}
-                        {canExpand && (
-                          <button
-                            type="button"
-                            onClick={() => toggle(e.id)}
-                            aria-label={isOpen ? t("limits.collapse") : t("limits.expand")}
-                            aria-expanded={isOpen}
-                            className="flex h-4 w-4 items-center justify-center rounded border border-slate-300 text-xs leading-none text-slate-500 hover:bg-slate-100 dark:border-slate-600 dark:hover:bg-slate-700"
-                          >
-                            {isOpen ? "−" : "+"}
-                          </button>
-                        )}
+                    <td className={`${td} text-right whitespace-nowrap font-mono`}>
+                      <LedgerAmount entry={e} />
+                    </td>
+                    <td className={`${td} whitespace-nowrap ${muted}`}>
+                      {formatNumber(e.resultingMonthly)} · {formatNumber(e.resultingExtraAllowance)}{" "}
+                      · {formatNumber(e.resultingCustom)} ·{" "}
+                      <span className={e.resultingOverrun > 0 ? "text-amber-500" : undefined}>
+                        {formatNumber(e.resultingOverrun)}
                       </span>
+                    </td>
+                    <td className={`${td} text-right`}>
+                      {ids.length > 0 && (
+                        <DropdownMenu actions={ids} label={t("common.moreActions")} />
+                      )}
                     </td>
                   </tr>
                 );
