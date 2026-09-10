@@ -207,7 +207,8 @@
       "consume": "Verbrauch",
       "topup": "Gutschrift",
       "settings": "Einstellung",
-      "carry": "Übertrag"
+      "carry": "Übertrag",
+      "reset": "Monatsabschluss"
     },
     "noHistory": "Noch kein Verlauf.",
     "noLedger": "Noch keine Buchungen."

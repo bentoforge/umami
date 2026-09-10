@@ -432,7 +432,7 @@ async fn reconcile_limit_state(
         &actor,
         policy,
     );
-    if preview.state == rolled && preview.history.is_none() && preview.carry.is_none() {
+    if preview.state == rolled && preview.history.is_none() && preview.rollover.is_none() {
         return Ok(warnings);
     }
 

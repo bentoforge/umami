@@ -921,7 +921,8 @@ function LedgerView({
  * (consume/carry) red with a `−`, a credit (top-up) green with a `+`, and a settings entry — which
  * has no quantity — a muted dash. */
 function LedgerAmount({ entry }: { entry: LedgerEntry }) {
-  if (entry.type === "settings") {
+  // No quantity for a settings change or a month-end reset marker.
+  if (entry.type === "settings" || entry.type === "reset") {
     return <span className="text-slate-400 dark:text-slate-500">—</span>;
   }
   const value = formatNumber(entry.amount);

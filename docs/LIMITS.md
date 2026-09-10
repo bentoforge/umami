@@ -184,7 +184,7 @@ so auch bei Mitte-Monat-Settings-Änderung wohldefiniert.
 Append-only, jede Bewegung mit Bucket-Aufschlüsselung. Optional TTL.
 
 ```
-type: consume | topup | settings | carry        // ein Gauge-`set` schreibt KEINEN Ledger-Eintrag
+type: consume | topup | settings | carry | reset // ein Gauge-`set` schreibt KEINEN Ledger-Eintrag
 amount
 monthlyDrawn, customDrawn, extraAllowanceDrawn     (consume/carry; Reihenfolge = Kaskade)
 overrun                                      (consume/carry, falls über alle Buckets hinaus)
@@ -228,8 +228,10 @@ Summe nicht, greift die Overrun-Policy.
 
 Ein gemeinsamer `load_current(tenant, code)` liegt vor *jedem* Pfad (`consume`, `check`, `GET`).
 Sieht er `periodYearMonth != aktueller Monat`, schließt er den Vormonat: schreibt `limit-history`
-(idempotent), lässt monthly/extraAllowance verfallen (Ledger-`reset`), füllt aus dem aktuellen
-`Tenant.limits`-Snapshot neu, `customBalance` bleibt. Kosten: **ein Extra-Write je Limit je
+(idempotent), lässt monthly/extraAllowance verfallen, füllt aus dem aktuellen
+`Tenant.limits`-Snapshot neu, `customBalance` bleibt. Jeder Abschluss schreibt **genau einen**
+Rollover-Ledger-Eintrag, damit die Buchungen den Monatswechsel und den Stand-Sprung erklären: unter
+`carry` ein `carry` (zieht die Schuld ins neue Budget), sonst ein `reset`-Marker (kein Abzug). Kosten: **ein Extra-Write je Limit je
 Monat**, vom ersten Zugriff getragen. Für lückenlose History bei nie abgefragten Limits gibt es
 zusätzlich `POST /tenants/{id}/limits/{code}/rollover` bzw. einen Sweep, den ein
 Reporting-Service/Cron zum Monatswechsel anstößt.

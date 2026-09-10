@@ -207,7 +207,8 @@
       "consume": "Consumption",
       "topup": "Credit",
       "settings": "Settings",
-      "carry": "Carry-over"
+      "carry": "Carry-over",
+      "reset": "Month close"
     },
     "noHistory": "No history yet.",
     "noLedger": "No transactions yet."

@@ -172,7 +172,7 @@ pub async fn rollover_limits(
         .await
         .context("clearing the closed month's history row")?;
 
-    let (mut new_state, history, carry) = accounting::rolled_over(
+    let (mut new_state, history, rollover) = accounting::rolled_over(
         Some(state),
         &tenant_id,
         &code,
@@ -186,7 +186,7 @@ pub async fn rollover_limits(
         state: new_state.clone(),
         ledger: None,
         history: history.clone(),
-        carry: carry.clone(),
+        rollover: rollover.clone(),
         rejected: false,
     };
     match limits
@@ -199,7 +199,8 @@ pub async fn rollover_limits(
     }
 
     let closed_overrun = history.map(|row| row.overrun).unwrap_or(0);
-    let carried = carry
+    let carried = rollover
+        .filter(|entry| entry.entry_type == crate::limits::ledger_type::CARRY)
         .map(|c| c.monthly_drawn + c.custom_drawn + c.extra_allowance_drawn)
         .unwrap_or(0);
     tracing::info!(

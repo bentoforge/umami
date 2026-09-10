@@ -111,6 +111,8 @@ pub mod ledger_type {
     pub const SETTINGS: &str = "settings";
     /// A prior month's overrun carried into this month (`carry` policy), drawn across the buckets.
     pub const CARRY: &str = "carry";
+    /// A month-end rollover that reset the counters (marks the boundary; no draw).
+    pub const RESET: &str = "reset";
 }
 
 /// One append-only transaction in a limit's ledger — what came in, what went out, and how much from

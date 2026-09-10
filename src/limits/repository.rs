@@ -216,7 +216,7 @@ impl LimitRepository for DynamoLimitRepository {
 
         // Ledger: the operation's entry, plus a `carry`-policy rollover's — each appended (with its
         // storage sort key) in the same atomic transaction. A gauge set records neither.
-        for entry in [outcome.ledger.as_ref(), outcome.carry.as_ref()]
+        for entry in [outcome.ledger.as_ref(), outcome.rollover.as_ref()]
             .into_iter()
             .flatten()
         {
