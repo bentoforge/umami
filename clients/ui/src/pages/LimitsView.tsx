@@ -118,14 +118,18 @@ export function LimitsView({
   const selected = "code" in mode ? rows.find((r) => r.entry.code === mode.code) : undefined;
   const selectedName = selected ? (selected.def?.name ?? selected.entry.code) : "";
 
-  // In the ledger/history sub-views the card heading carries the context ("Limits – Transactions")
-  // and the limit's name becomes the subheading — one heading, not four stacked ones.
+  // In every sub-view the card heading carries the context ("Limits – Transactions") and the limit's
+  // name becomes the subheading — one heading per view, not several stacked ones.
   const contextLabel =
     mode.view === "ledger"
       ? t("limits.ledger")
       : mode.view === "history"
         ? t("limits.history")
-        : null;
+        : mode.view === "edit"
+          ? t("limits.edit")
+          : mode.view === "topup"
+            ? t("limits.credit")
+            : null;
 
   return (
     <section className={`${card} space-y-4`}>
@@ -164,7 +168,6 @@ export function LimitsView({
         <TopupForm
           tenantId={tenantId}
           code={selected.entry.code}
-          name={selectedName}
           onDone={reloadAndList}
           onCancel={backToList}
           onError={setError}
@@ -618,10 +621,6 @@ function LimitEditor({
 
   return (
     <div className="space-y-4">
-      <h3 className="font-medium text-slate-800 dark:text-slate-200">
-        {row.def?.name ?? row.entry.code}
-      </h3>
-
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         {row.kind === "consumable" ? (
           <>
@@ -704,14 +703,12 @@ function LimitEditor({
 function TopupForm({
   tenantId,
   code,
-  name,
   onDone,
   onCancel,
   onError,
 }: {
   tenantId: string;
   code: string;
-  name: string;
   onDone: () => void;
   onCancel: () => void;
   onError: (msg: string) => void;
@@ -740,7 +737,6 @@ function TopupForm({
 
   return (
     <div className="space-y-4">
-      <h3 className="font-medium text-slate-800 dark:text-slate-200">{name}</h3>
       <div className="max-w-xs">
         <Field label={t("limits.creditAmount")}>
           <input
@@ -882,7 +878,7 @@ function LedgerView({
 function UsedLimitHead({ label }: { label: string }) {
   const { t } = useTranslation();
   return (
-    <th className={`${th} text-right`}>
+    <th className={`${th} text-right align-top`}>
       <div>{label}</div>
       <div className="text-[10px] font-normal normal-case text-slate-400">
         {t("limits.monthlyUsed")} / {t("limits.limit")}
@@ -942,17 +938,17 @@ function HistoryView({
           <table className="w-full border-collapse">
             <thead>
               <tr className="border-b border-slate-200 dark:border-slate-700">
-                <th className={th}>{t("limits.month")}</th>
+                <th className={`${th} align-top`}>{t("limits.month")}</th>
                 {kind === "gauge" ? (
                   <>
-                    <th className={`${th} text-right`}>{t("limits.value")}</th>
-                    <th className={`${th} text-right`}>{t("limits.ceiling")}</th>
+                    <th className={`${th} text-right align-top`}>{t("limits.value")}</th>
+                    <th className={`${th} text-right align-top`}>{t("limits.ceiling")}</th>
                   </>
                 ) : (
                   <>
                     <UsedLimitHead label={t("limits.monthlyBudget")} />
                     <UsedLimitHead label={t("limits.extraAllowance")} />
-                    <th className={`${th} text-right`}>{t("limits.balance")}</th>
+                    <th className={`${th} text-right align-top`}>{t("limits.balance")}</th>
                   </>
                 )}
               </tr>
