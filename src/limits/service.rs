@@ -392,12 +392,33 @@ async fn reconcile_limit_state(
     caller: &AuthUser,
     policy: OverrunPolicy,
 ) -> anyhow::Result<Vec<String>> {
-    if limits.load_state(tenant_id, code).await?.is_none() {
+    let Some(state) = limits.load_state(tenant_id, code).await? else {
         return Ok(Vec::new());
-    }
+    };
     let actor = settings_actor(caller);
     let now = Utc::now();
     let entry_id = generate_id();
+
+    // Preview the reconcile once: when it changes nothing — the counters already match and no month
+    // rolled over — skip the write entirely, so re-saving an unchanged limit leaves no all-zero
+    // `settings` ledger entry. Any advisory warnings (e.g. a gauge value now above its max) still
+    // come back.
+    let (rolled, _, _) =
+        accounting::rolled_over(Some(state.clone()), tenant_id, code, settings, policy, now, "");
+    let (preview, warnings) = accounting::apply_settings_change(
+        Some(state),
+        tenant_id,
+        code,
+        settings,
+        now,
+        &entry_id,
+        &actor,
+        policy,
+    );
+    if preview.state == rolled && preview.history.is_none() && preview.carry.is_none() {
+        return Ok(warnings);
+    }
+
     let (_outcome, warnings) = commit_state(limits, tenant_id, code, |existing| {
         accounting::apply_settings_change(
             existing, tenant_id, code, settings, now, &entry_id, &actor, policy,
@@ -1884,6 +1905,72 @@ mod tests {
             "{:?}",
             response.warnings
         );
+    }
+
+    #[tokio::test]
+    async fn an_unchanged_settings_save_writes_no_ledger_entry() {
+        use crate::limits::repository::MockLimitRepository;
+
+        let month = accounting::year_month(Utc::now());
+        let mut tenants = MockTenantRepository::new();
+        tenants.expect_get_tenant().returning(|_| {
+            Box::pin(async {
+                let mut tenant = tenant("t-1");
+                let _ = tenant.limits.insert(
+                    "limit:ai-credits".to_owned(),
+                    LimitSettings {
+                        monthly: Some(1000),
+                        extra_allowance: None,
+                        daily: None,
+                        max: None,
+                    },
+                );
+                Ok(Some(tenant))
+            })
+        });
+        tenants
+            .expect_put_tenant()
+            .returning(|tenant| Box::pin(async move { Ok(tenant) }));
+
+        // 600 already used of 1000; the save re-submits the same 1000.
+        let mut seeded = LimitState::fresh(
+            "t-1",
+            "limit:ai-credits",
+            &month,
+            &LimitSettings {
+                monthly: Some(1000),
+                extra_allowance: None,
+                daily: None,
+                max: None,
+            },
+        );
+        seeded.monthly_remaining = 400;
+        let mut limits = MockLimitRepository::new();
+        limits.expect_load_state().returning(move |_, _| {
+            let state = seeded.clone();
+            Box::pin(async move { Ok(Some(state)) })
+        });
+        // No expect_compare_and_swap: an unchanged reconcile must not write a ledger entry.
+
+        let response = set_limit_settings(
+            "t-1".to_owned(),
+            "limit:ai-credits".to_owned(),
+            LimitSettings {
+                monthly: Some(1000),
+                extra_allowance: None,
+                daily: None,
+                max: None,
+            },
+            false,
+            Arc::new(tenants),
+            consumable_config().await,
+            Arc::new(limits),
+            caller(),
+        )
+        .await
+        .expect("saved");
+        assert_eq!(response.status, "saved");
+        assert!(response.warnings.is_empty());
     }
 
     #[tokio::test]
