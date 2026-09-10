@@ -163,7 +163,11 @@ reference: [docs/SEAMS.md](docs/SEAMS.md).
   / `into_response_with_status`, wrapping a pure `anyhow::Result<T>` / `Result<(StatusCode, T)>`
   business handler. Guard with `enforce_user_with_any_permission(authenticator, &[…])`.
 - **Errors**: `anyhow::Context` everywhere; wasabi's `ResultExt` (`mark_client_error()` /
-  `map_err_to_http()`); `status_bail!` / `client_bail!`.
+  `map_err_to_http()`); `status_bail!` / `client_bail!`. **401 means unauthenticated, 403 means
+  not allowed** — a caller who proved who they are and simply lacks a permission or reaches into
+  another tenant gets 403, and only a missing, expired or unverifiable token gets 401. Clients act
+  on that split: a 401 whose refresh the server turns down is what ends a session, so an
+  authorization verdict dressed as 401 signs people out over a button they may not press.
 - **IDs**: `wasabi::aws::dynamodb::generate_id()` (32-char) for all entity ids.
 - **Time**: `chrono` `DateTime<Utc>`, serialize RFC3339 (`to_rfc3339_opts(SecondsFormat::…, true)`).
 - **Tracing**: `#[tracing::instrument(level = "debug", skip(self|secrets), err(level = "debug",
@@ -193,7 +197,7 @@ reference: [docs/SEAMS.md](docs/SEAMS.md).
 - **AWS SDK feature flags**: `aws-sdk-dynamodb = { version = "1", default-features = false,
   features = ["default-https-client", "rt-tokio"] }` — must match wasabi-core so cargo unions to a
   single version and avoids the legacy rustls 0.21 CVE path.
-- Pin `wasabi` to a released tag (currently **`2.7.0`**); confirm shared crate versions
+- Pin `wasabi` to a released tag (currently **`4.1.0`**); confirm shared crate versions
   (`aws-sdk-*`, `jsonwebtoken`) resolve to a single version against wasabi's lockfile.
 
 ## Token claims (must match `wasabi::web::auth::User`)
