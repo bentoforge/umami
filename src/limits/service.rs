@@ -338,17 +338,27 @@ async fn set_limit_settings(
         Some(tenant) => tenant,
         None => client_bail!("No such tenant"),
     };
-    if clearing {
-        let _ = tenant.limits.remove(&code);
-    } else {
-        let _ = tenant.limits.insert(code.clone(), settings.clone());
-    }
-    tenant.last_changed_by = Some(caller.user_id()?.to_owned());
-    let _ = tenants.put_tenant(tenant).await?;
 
-    // The tenant record (L2) is the source of truth and is now written. Reconcile the live counters
-    // (L3) so the change takes effect this month, not just next. Clearing skips it — the limit is
-    // gone, so there is nothing to keep consistent (its state row is left orphaned).
+    // Only write the tenant when the stored value actually differs — a re-save of the same settings
+    // must not bump the version. (Clearing an already-absent entry is likewise nothing to write.)
+    let stored_matches = match tenant.limits.get(&code) {
+        Some(stored) => !clearing && stored == &settings,
+        None => clearing,
+    };
+    if !stored_matches {
+        if clearing {
+            let _ = tenant.limits.remove(&code);
+        } else {
+            let _ = tenant.limits.insert(code.clone(), settings.clone());
+        }
+        tenant.last_changed_by = Some(caller.user_id()?.to_owned());
+        let _ = tenants.put_tenant(tenant).await?;
+    }
+
+    // Reconcile the live counters (L3) to the settings so the change takes effect this month, not
+    // just next. Its own preview skips the write when nothing changed, so a true no-op save touches
+    // neither store; a state that drifted from L2 still catches up here. Clearing skips it — the
+    // limit is gone, so there is nothing to keep consistent (its state row is left orphaned).
     let warnings = if clearing {
         Vec::new()
     } else {
@@ -1842,10 +1852,11 @@ mod tests {
         tenants.expect_get_tenant().returning(|_| {
             Box::pin(async {
                 let mut tenant = tenant("t-1");
+                // Stored at 1000; the save below lowers it to 200 — a genuine change.
                 let _ = tenant.limits.insert(
                     "limit:ai-credits".to_owned(),
                     LimitSettings {
-                        monthly: Some(200),
+                        monthly: Some(1000),
                         extra_allowance: None,
                         daily: None,
                         max: None,
@@ -1908,7 +1919,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_unchanged_settings_save_writes_no_ledger_entry() {
+    async fn an_unchanged_settings_save_writes_nothing() {
         use crate::limits::repository::MockLimitRepository;
 
         let month = accounting::year_month(Utc::now());
@@ -1928,9 +1939,7 @@ mod tests {
                 Ok(Some(tenant))
             })
         });
-        tenants
-            .expect_put_tenant()
-            .returning(|tenant| Box::pin(async move { Ok(tenant) }));
+        // No expect_put_tenant: an unchanged save must not write the tenant (no version bump).
 
         // 600 already used of 1000; the save re-submits the same 1000.
         let mut seeded = LimitState::fresh(
