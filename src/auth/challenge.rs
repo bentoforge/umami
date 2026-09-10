@@ -125,7 +125,7 @@ pub struct DynamoChallengeRepository {
 }
 
 impl DynamoChallengeRepository {
-    #[tracing::instrument(skip(client), err(Display))]
+    #[tracing::instrument(skip(client), err(level = "debug", Display))]
     pub async fn with_client(client: &DynamoClient) -> anyhow::Result<Self> {
         client
             .create_table_with_ttl(TABLE_CHALLENGES, FIELD_TTL, |table| {
@@ -166,7 +166,7 @@ fn generate_secret() -> String {
 
 #[async_trait]
 impl ChallengeRepository for DynamoChallengeRepository {
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn issue(
         &self,
         purpose: Purpose,
@@ -195,7 +195,7 @@ impl ChallengeRepository for DynamoChallengeRepository {
         Ok(secret)
     }
 
-    #[tracing::instrument(level = "debug", skip(self, secret), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self, secret), err(level = "debug", Display))]
     async fn consume(&self, purpose: Purpose, secret: &str) -> anyhow::Result<Option<Proven>> {
         // Single-use by construction: the delete *is* the consumption, so two concurrent clicks on
         // the same link cannot both succeed — only one receives the old item.

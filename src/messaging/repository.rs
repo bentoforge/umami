@@ -129,7 +129,7 @@ pub struct DynamoMessagingRepository {
 }
 
 impl DynamoMessagingRepository {
-    #[tracing::instrument(skip(client), err(Display))]
+    #[tracing::instrument(skip(client), err(level = "debug", Display))]
     pub async fn with_client(client: &DynamoClient) -> anyhow::Result<Self> {
         client
             .create_table_with_ttl(TABLE_CODES, FIELD_TTL, |table| {
@@ -283,7 +283,7 @@ fn hash_range_gsi(
 
 #[async_trait]
 impl MessagingRepository for DynamoMessagingRepository {
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn current_code(
         &self,
         user_id: &str,
@@ -300,7 +300,7 @@ impl MessagingRepository for DynamoMessagingRepository {
         Ok((code, true))
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn regenerate_code(
         &self,
         user_id: &str,
@@ -320,7 +320,7 @@ impl MessagingRepository for DynamoMessagingRepository {
         self.put_new_code(user_id, tenant_id, ttl_secs).await
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn consume_code(&self, code: &str, ttl_secs: i64) -> anyhow::Result<Option<LinkSubject>> {
         // Atomic single-use: delete the row and inspect what was there. Under a race, only one
         // caller receives the old item; a concurrent second delete returns nothing. Expired rows are
@@ -346,7 +346,7 @@ impl MessagingRepository for DynamoMessagingRepository {
         }))
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn create_link(
         &self,
         subject: &LinkSubject,
@@ -383,7 +383,7 @@ impl MessagingRepository for DynamoMessagingRepository {
             }))
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn subject_for_external(
         &self,
         platform: &str,
@@ -404,7 +404,7 @@ impl MessagingRepository for DynamoMessagingRepository {
         }))
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn list_links(&self, user_id: &str) -> anyhow::Result<Vec<MessagingLink>> {
         let query = self
             .client
@@ -420,7 +420,7 @@ impl MessagingRepository for DynamoMessagingRepository {
             .context("Error listing 'messaging-links' by user")
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn delete_all_for_user(&self, user_id: &str) -> anyhow::Result<usize> {
         // The code first: it is the only one of the two that can still *create* something.
         if let Some(existing) = self.code_entity(user_id).await? {
@@ -447,7 +447,7 @@ impl MessagingRepository for DynamoMessagingRepository {
         Ok(count)
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn delete_link(
         &self,
         user_id: &str,

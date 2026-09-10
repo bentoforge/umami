@@ -97,7 +97,7 @@ pub struct DynamoTenantRepository {
 }
 
 impl DynamoTenantRepository {
-    #[tracing::instrument(skip(client), err(Display))]
+    #[tracing::instrument(skip(client), err(level = "debug", Display))]
     pub async fn with_client(client: &DynamoClient) -> anyhow::Result<Self> {
         client
             .create_table(TABLE_TENANTS, |table| {
@@ -142,7 +142,7 @@ impl DynamoTenantRepository {
 
 #[async_trait]
 impl TenantRepository for DynamoTenantRepository {
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn create_tenant(
         &self,
         name: &str,
@@ -153,7 +153,7 @@ impl TenantRepository for DynamoTenantRepository {
             .await
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn create_tenant_with_id(
         &self,
         tenant_id: &str,
@@ -193,7 +193,7 @@ impl TenantRepository for DynamoTenantRepository {
         Ok(tenant)
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn get_tenant(&self, tenant_id: &str) -> anyhow::Result<Option<Tenant>> {
         // Strongly consistent: tenant PATCH (name / features / custom fields) read-modify-writes
         // this record under an optimistic version, so a stale read must never be the basis of a write.
@@ -209,7 +209,7 @@ impl TenantRepository for DynamoTenantRepository {
         deserialize_entity(result.item)
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn find_tenants(&self, query: &str, limit: usize) -> anyhow::Result<(Vec<Tenant>, bool)> {
         // Constant-partition GSI, newest-active first. We *stream* the pages and filter in-memory —
         // DynamoDB can't search — stopping the moment we have `limit`+1 matches, so an unfiltered
@@ -240,7 +240,7 @@ impl TenantRepository for DynamoTenantRepository {
         Ok((matched, truncated))
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn put_tenant(&self, mut tenant: Tenant) -> anyhow::Result<Tenant> {
         // Optimistic lock: require the stored version to equal the one we read, then bump it. A
         // concurrent writer that already bumped it makes this fail → 409, forcing a reload.
@@ -278,7 +278,7 @@ impl TenantRepository for DynamoTenantRepository {
         Ok(tenant)
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn touch_last_active(&self, tenant_id: &str) -> anyhow::Result<()> {
         let _ = self
             .client
@@ -300,7 +300,7 @@ impl TenantRepository for DynamoTenantRepository {
         Ok(())
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn delete_tenant(&self, tenant_id: &str) -> anyhow::Result<()> {
         let _ = self
             .client

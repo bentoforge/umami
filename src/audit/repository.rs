@@ -84,7 +84,7 @@ pub struct DynamoAuditRepository {
 }
 
 impl DynamoAuditRepository {
-    #[tracing::instrument(skip(client), err(Display))]
+    #[tracing::instrument(skip(client), err(level = "debug", Display))]
     pub async fn with_client(client: &DynamoClient) -> anyhow::Result<Self> {
         client
             .create_table_with_ttl(TABLE_AUDIT, FIELD_TTL, |table| {
@@ -194,7 +194,7 @@ fn gsi(
 
 #[async_trait]
 impl AuditRepository for DynamoAuditRepository {
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn record(&self, entry: NewAuditEntry) -> anyhow::Result<()> {
         let now = Utc::now();
         let audit = AuditEntry {
@@ -218,7 +218,7 @@ impl AuditRepository for DynamoAuditRepository {
         Ok(())
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn list_by_user(
         &self,
         user_id: &str,
@@ -229,7 +229,7 @@ impl AuditRepository for DynamoAuditRepository {
             .await
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn list_by_tenant(
         &self,
         tenant_id: &str,

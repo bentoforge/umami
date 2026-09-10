@@ -20,7 +20,7 @@ use std::sync::Arc;
 use wasabi::aws::dynamodb::client::DynamoClient;
 
 /// Builds every repository against one `DynamoClient`, creating the tables it does not find.
-#[tracing::instrument(skip_all, err(Display))]
+#[tracing::instrument(skip_all, err(level = "debug", Display))]
 pub async fn repositories(client: &DynamoClient) -> anyhow::Result<Repositories> {
     Ok(Repositories {
         users: Arc::new(DynamoUserRepository::with_client(client).await?),

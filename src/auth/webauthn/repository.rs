@@ -110,7 +110,7 @@ pub struct DynamoWebauthnRepository {
 }
 
 impl DynamoWebauthnRepository {
-    #[tracing::instrument(skip(client), err(Display))]
+    #[tracing::instrument(skip(client), err(level = "debug", Display))]
     pub async fn with_client(client: &DynamoClient) -> anyhow::Result<Self> {
         client
             .create_table(TABLE_CREDENTIALS, |table| {
@@ -145,7 +145,7 @@ impl DynamoWebauthnRepository {
 
 #[async_trait]
 impl WebauthnRepository for DynamoWebauthnRepository {
-    #[tracing::instrument(level = "debug", skip(self, passkey), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self, passkey), err(level = "debug", Display))]
     async fn put_credential(
         &self,
         user_id: &str,
@@ -167,7 +167,7 @@ impl WebauthnRepository for DynamoWebauthnRepository {
         Ok(())
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn list_passkeys(&self, user_id: &str) -> anyhow::Result<Vec<String>> {
         let query = self
             .client
@@ -183,7 +183,7 @@ impl WebauthnRepository for DynamoWebauthnRepository {
         Ok(records.into_iter().map(|record| record.passkey).collect())
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn delete_all_for_user(&self, user_id: &str) -> anyhow::Result<usize> {
         // Its own query rather than `list_passkeys`, which yields the serialized passkeys; what a
         // delete needs is the range key.
@@ -212,7 +212,7 @@ impl WebauthnRepository for DynamoWebauthnRepository {
         Ok(count)
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn find_user_by_credential(&self, credential_id: &str) -> anyhow::Result<Option<String>> {
         let query = self
             .client
@@ -229,7 +229,7 @@ impl WebauthnRepository for DynamoWebauthnRepository {
         Ok(records.into_iter().next().map(|record| record.user_id))
     }
 
-    #[tracing::instrument(level = "debug", skip(self, state), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self, state), err(level = "debug", Display))]
     async fn store_ceremony(
         &self,
         ceremony_id: &str,
@@ -252,7 +252,7 @@ impl WebauthnRepository for DynamoWebauthnRepository {
         Ok(())
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn take_ceremony(&self, ceremony_id: &str) -> anyhow::Result<Option<StoredCeremony>> {
         // Delete-and-return so a ceremony can be consumed exactly once (replay-safe).
         let result = self

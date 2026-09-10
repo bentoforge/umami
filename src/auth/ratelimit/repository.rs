@@ -120,7 +120,7 @@ pub struct DynamoRateLimitRepository {
 }
 
 impl DynamoRateLimitRepository {
-    #[tracing::instrument(skip(client), err(Display))]
+    #[tracing::instrument(skip(client), err(level = "debug", Display))]
     pub async fn with_client(client: &DynamoClient) -> anyhow::Result<Self> {
         client
             .create_table_with_ttl(TABLE_RATE_LIMITS, FIELD_TTL, |table| {
@@ -280,7 +280,7 @@ fn text(item: &HashMap<String, AttributeValue>, field: &str) -> Option<String> {
 
 #[async_trait]
 impl RateLimitRepository for DynamoRateLimitRepository {
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn increment(&self, id: &str, ttl_epoch: i64) -> anyhow::Result<u64> {
         let output = self
             .client
@@ -305,7 +305,7 @@ impl RateLimitRepository for DynamoRateLimitRepository {
         Ok(count)
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn get_block(&self, id: &str) -> anyhow::Result<Option<i64>> {
         let result = self
             .client
@@ -323,7 +323,7 @@ impl RateLimitRepository for DynamoRateLimitRepository {
         Ok(blocked_until)
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn set_block(
         &self,
         id: &str,
@@ -360,7 +360,7 @@ impl RateLimitRepository for DynamoRateLimitRepository {
         Ok(())
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn clear(&self, id: &str) -> anyhow::Result<()> {
         let _ = self
             .client
@@ -372,7 +372,7 @@ impl RateLimitRepository for DynamoRateLimitRepository {
         Ok(())
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn get_items(&self, ids: &[String]) -> anyhow::Result<HashMap<String, StoredItem>> {
         // Reads run concurrently rather than as one BatchGetItem: the wasabi client exposes
         // GetItem, and inspection is a handful of keys at a time (never a list-sized fan-out).
@@ -396,7 +396,7 @@ impl RateLimitRepository for DynamoRateLimitRepository {
         Ok(found.into_iter().flatten().collect())
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn list_blocks(
         &self,
         policy: &str,

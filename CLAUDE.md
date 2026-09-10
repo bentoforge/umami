@@ -166,8 +166,13 @@ reference: [docs/SEAMS.md](docs/SEAMS.md).
   `map_err_to_http()`); `status_bail!` / `client_bail!`.
 - **IDs**: `wasabi::aws::dynamodb::generate_id()` (32-char) for all entity ids.
 - **Time**: `chrono` `DateTime<Utc>`, serialize RFC3339 (`to_rfc3339_opts(SecondsFormat::…, true)`).
-- **Tracing**: `#[tracing::instrument(level = "debug", skip(self|secrets), err(Display))]` on repo
-  and handler fns. **Never** log secrets, tokens, password hashes, or refresh values.
+- **Tracing**: `#[tracing::instrument(level = "debug", skip(self|secrets), err(level = "debug",
+  Display))]` on repo and handler fns. Pin `err` to `debug`: it defaults to `Level::ERROR` whatever
+  the span's level is, which would report a caller's malformed request as loudly as a broken
+  database, once per instrumented function on the way out. The trace still shows which function
+  failed (`RUST_TRACE=debug`); the container log stays quiet unless something is really broken.
+  `info` is for boot and setup only (`with_client`, `from_env`, `install`). **Never** log secrets,
+  tokens, password hashes, or refresh values.
 - **Tests**: `#[tokio::test]`, `warp::test::request()` for filters, `mockall` mocks for
   repositories, `User::builder()` to mint test users.
 - **Env/config**: `dotenvy` + `X::from_env()` constructors, like every wasabi component.

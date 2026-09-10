@@ -149,7 +149,7 @@ pub struct DynamoApiKeyRepository {
 }
 
 impl DynamoApiKeyRepository {
-    #[tracing::instrument(skip(client), err(Display))]
+    #[tracing::instrument(skip(client), err(level = "debug", Display))]
     pub async fn with_client(client: &DynamoClient) -> anyhow::Result<Self> {
         client
             .create_table(TABLE_API_KEYS, |table| {
@@ -187,7 +187,7 @@ impl DynamoApiKeyRepository {
 
 #[async_trait]
 impl ApiKeyRepository for DynamoApiKeyRepository {
-    #[tracing::instrument(level = "debug", skip(self, new_key), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self, new_key), err(level = "debug", Display))]
     async fn create(&self, new_key: NewApiKey) -> anyhow::Result<()> {
         let key = ApiKey {
             key_id: new_key.key_id,
@@ -218,7 +218,7 @@ impl ApiKeyRepository for DynamoApiKeyRepository {
         Ok(())
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn get(&self, key_id: &str) -> anyhow::Result<Option<ApiKey>> {
         let result = self
             .client
@@ -230,7 +230,7 @@ impl ApiKeyRepository for DynamoApiKeyRepository {
         deserialize_entity(result.item)
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn list_by_tenant(&self, tenant_id: &str) -> anyhow::Result<Vec<ApiKey>> {
         let query = self
             .client
@@ -243,8 +243,8 @@ impl ApiKeyRepository for DynamoApiKeyRepository {
         find_all(query).await.context("Error listing 'api-keys'")
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn delete_all_for_user(&self, tenant_id: &str, user_id: &str) -> anyhow::Result<usize> {
         // Listing by tenant and filtering beats a `ByUser` index nothing else would read: a tenant's
         // key list is small, and the filter is the same one that decides PAT versus service key.
@@ -273,7 +273,7 @@ impl ApiKeyRepository for DynamoApiKeyRepository {
         Ok(())
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn touch_last_used(&self, key_id: &str) -> anyhow::Result<()> {
         let _ = self
             .client

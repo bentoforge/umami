@@ -159,7 +159,7 @@ pub struct DynamoUserRepository {
 }
 
 impl DynamoUserRepository {
-    #[tracing::instrument(skip(client), err(Display))]
+    #[tracing::instrument(skip(client), err(level = "debug", Display))]
     pub async fn with_client(client: &DynamoClient) -> anyhow::Result<Self> {
         client
             .create_table(TABLE_USERS, |table| {
@@ -212,7 +212,7 @@ impl DynamoUserRepository {
 
 #[async_trait]
 impl UserRepository for DynamoUserRepository {
-    #[tracing::instrument(level = "debug", skip(self, new_user), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self, new_user), err(level = "debug", Display))]
     async fn create_user(&self, new_user: NewUser) -> anyhow::Result<User> {
         let username = new_user.username.trim().to_owned();
         if username.is_empty() {
@@ -300,7 +300,7 @@ impl UserRepository for DynamoUserRepository {
         Ok(user)
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn find_by_username(&self, username: &str) -> anyhow::Result<Option<User>> {
         let normalized = normalize_username(username);
 
@@ -320,7 +320,7 @@ impl UserRepository for DynamoUserRepository {
         }
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn get_user(&self, user_id: &str) -> anyhow::Result<Option<User>> {
         let result = self
             .client
@@ -333,7 +333,7 @@ impl UserRepository for DynamoUserRepository {
         deserialize_entity(result.item)
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn find_users(
         &self,
         tenant_id: &str,
@@ -368,7 +368,7 @@ impl UserRepository for DynamoUserRepository {
         Ok((matched, truncated))
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn put_user(&self, mut user: User) -> anyhow::Result<User> {
         user.last_updated = Utc::now();
 
@@ -382,7 +382,7 @@ impl UserRepository for DynamoUserRepository {
         Ok(user)
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn bump_token_version(&self, user_id: &str) -> anyhow::Result<()> {
         let _ = self
             .client
@@ -405,7 +405,7 @@ impl UserRepository for DynamoUserRepository {
         Ok(())
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn touch_last_seen(&self, user_id: &str) -> anyhow::Result<()> {
         let _ = self
             .client
@@ -427,7 +427,7 @@ impl UserRepository for DynamoUserRepository {
         Ok(())
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn set_has_passkey(&self, user_id: &str) -> anyhow::Result<()> {
         let _ = self
             .client
@@ -445,7 +445,7 @@ impl UserRepository for DynamoUserRepository {
         Ok(())
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn rename_username(
         &self,
         user_id: &str,

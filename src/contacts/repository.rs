@@ -107,7 +107,7 @@ pub struct DynamoContactRepository {
 }
 
 impl DynamoContactRepository {
-    #[tracing::instrument(skip(client), err(Display))]
+    #[tracing::instrument(skip(client), err(level = "debug", Display))]
     pub async fn with_client(client: &DynamoClient) -> anyhow::Result<Self> {
         client
             .create_table(TABLE_CONTACTS, |table| {
@@ -150,7 +150,11 @@ impl DynamoContactRepository {
 
 #[async_trait]
 impl ContactRepository for DynamoContactRepository {
-    #[tracing::instrument(level = "debug", skip(self, new_contact), err(Display))]
+    #[tracing::instrument(
+        level = "debug",
+        skip(self, new_contact),
+        err(level = "debug", Display)
+    )]
     async fn add_contact(&self, new_contact: NewContact) -> anyhow::Result<Contact> {
         // An address a user typed is never verified on arrival: typing a string proves nothing about
         // who owns the mailbox.
@@ -189,7 +193,7 @@ impl ContactRepository for DynamoContactRepository {
         }
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn get_contact(&self, user_id: &str, address: &str) -> anyhow::Result<Option<Contact>> {
         let result = self
             .client
@@ -203,7 +207,7 @@ impl ContactRepository for DynamoContactRepository {
         deserialize_entity(result.item)
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn list_contacts(&self, user_id: &str) -> anyhow::Result<Vec<Contact>> {
         let query = self
             .client
@@ -218,7 +222,7 @@ impl ContactRepository for DynamoContactRepository {
             .context("Error listing 'user-contacts' by user")
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn contacts_for_address(&self, address: &str) -> anyhow::Result<Vec<Contact>> {
         let query = self
             .client
@@ -235,7 +239,7 @@ impl ContactRepository for DynamoContactRepository {
             .context("Error querying 'user-contacts' by address")
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn mark_verified(&self, user_id: &str, address: &str) -> anyhow::Result<()> {
         let result = self
             .client
@@ -269,7 +273,7 @@ impl ContactRepository for DynamoContactRepository {
         }
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn mark_unverified(&self, user_id: &str, address: &str) -> anyhow::Result<()> {
         let result = self
             .client
@@ -301,8 +305,8 @@ impl ContactRepository for DynamoContactRepository {
         }
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn delete_all_for_user(&self, user_id: &str) -> anyhow::Result<usize> {
         let contacts = self.list_contacts(user_id).await?;
         let count = contacts.len();

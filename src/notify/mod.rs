@@ -777,7 +777,7 @@ impl SqsNotifier {
 
 #[async_trait]
 impl Notifier for SqsNotifier {
-    #[tracing::instrument(level = "debug", skip(self, mail), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self, mail), err(level = "debug", Display))]
     async fn send(&self, mail: OutboundMail) -> anyhow::Result<()> {
         // Serialize before the call so a malformed message is a local error, not a queue write that
         // a worker later fails to parse.
@@ -871,7 +871,7 @@ impl SesNotifier {
 
 #[async_trait]
 impl Notifier for SesNotifier {
-    #[tracing::instrument(level = "debug", skip(self, mail), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self, mail), err(level = "debug", Display))]
     async fn send(&self, mail: OutboundMail) -> anyhow::Result<()> {
         let body = aws_sdk_sesv2::types::Body::builder()
             .text(SesNotifier::utf8(&mail.body)?)

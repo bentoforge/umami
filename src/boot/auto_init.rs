@@ -15,7 +15,7 @@ use wasabi::aws::dynamodb::generate_id;
 /// [`BOOTSTRAP_ADMIN_ROLE`], with a **randomly generated** one-time password. The tenant id,
 /// username and password are logged once, prominently; no credentials are hard-coded. Intended for
 /// first-run/dev, not steady-state provisioning.
-#[tracing::instrument(skip_all, err(Display))]
+#[tracing::instrument(skip_all, err(level = "debug", Display))]
 pub async fn maybe_auto_init(platform: &Platform) -> anyhow::Result<()> {
     let tenants = &platform.repos.tenants;
     let users = &platform.repos.users;

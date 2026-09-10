@@ -104,7 +104,7 @@ pub struct DynamoSessionRepository {
 }
 
 impl DynamoSessionRepository {
-    #[tracing::instrument(skip(client), err(Display))]
+    #[tracing::instrument(skip(client), err(level = "debug", Display))]
     pub async fn with_client(client: &DynamoClient) -> anyhow::Result<Self> {
         client
             .create_table_with_ttl(TABLE_SESSIONS, FIELD_TTL, |table| {
@@ -148,7 +148,11 @@ impl DynamoSessionRepository {
 
 #[async_trait]
 impl SessionRepository for DynamoSessionRepository {
-    #[tracing::instrument(level = "debug", skip(self, new_session), err(Display))]
+    #[tracing::instrument(
+        level = "debug",
+        skip(self, new_session),
+        err(level = "debug", Display)
+    )]
     async fn create_session(&self, new_session: NewSession) -> anyhow::Result<Session> {
         let now = Utc::now();
         let expires_at = now + Duration::seconds(new_session.ttl_secs);
@@ -185,7 +189,7 @@ impl SessionRepository for DynamoSessionRepository {
         Ok(session)
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn get_session(&self, session_id: &str) -> anyhow::Result<Option<Session>> {
         let result = self
             .client
@@ -198,7 +202,7 @@ impl SessionRepository for DynamoSessionRepository {
         deserialize_entity(result.item)
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn list_by_user(&self, user_id: &str) -> anyhow::Result<Vec<Session>> {
         let query = self
             .client
@@ -215,7 +219,11 @@ impl SessionRepository for DynamoSessionRepository {
             .context("Error listing sessions by user")
     }
 
-    #[tracing::instrument(level = "debug", skip(self, new_refresh_hash), err(Display))]
+    #[tracing::instrument(
+        level = "debug",
+        skip(self, new_refresh_hash),
+        err(level = "debug", Display)
+    )]
     async fn rotate_session(
         &self,
         session_id: &str,
@@ -272,7 +280,7 @@ impl SessionRepository for DynamoSessionRepository {
         Ok(())
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn set_active_tenant(&self, session_id: &str, tenant_id: &str) -> anyhow::Result<()> {
         // Touches `activeTenantId` and nothing else: the refresh hash, the grace window and the
         // lifetime must survive a tenant switch untouched, or switching would silently log the
@@ -295,8 +303,8 @@ impl SessionRepository for DynamoSessionRepository {
         Ok(())
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn delete_all_for_user(&self, user_id: &str) -> anyhow::Result<usize> {
         let sessions = self.list_by_user(user_id).await?;
         let count = sessions.len();

@@ -277,7 +277,7 @@ impl TokenIssuer {
 
     /// Signs an access token for the given user/tenant with the given lifetime (from config).
     /// Returns the token string and its `exp` (epoch seconds).
-    #[tracing::instrument(level = "debug", skip(self, request), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self, request), err(level = "debug", Display))]
     pub async fn issue_access_token(
         &self,
         request: &AccessTokenClaims<'_>,
