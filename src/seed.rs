@@ -34,10 +34,12 @@ const FIELD_HISTORY_SK: &str = "historySk";
 /// The code seeded when the caller names none — override with the second CLI argument.
 const DEFAULT_CODE: &str = "limit:ai-credits";
 
-/// Seeds `(tenant, code)` with a multi-month history, a populated ledger and a live overrun.
+/// Seeds `(tenant, code)` with a multi-month history and a populated ledger — a consumable ends on a
+/// live overrun, a gauge on its latest reading.
 ///
-/// `tenant_id` falls back to the configured system tenant, `code` to [`DEFAULT_CODE`]. Any existing
-/// state/ledger/history for the pair is wiped first, so every run reproduces the same dataset.
+/// `tenant_id` falls back to the configured system tenant, `code` to [`DEFAULT_CODE`]; the kind is
+/// taken from the catalogue. Any existing state/ledger/history for the pair is wiped first, so every
+/// run reproduces the same dataset.
 pub async fn seed_limits(
     limits: Arc<dyn LimitRepository>,
     tenants: Arc<dyn TenantRepository>,
@@ -54,31 +56,34 @@ pub async fn seed_limits(
     };
     let code = code_arg.unwrap_or(DEFAULT_CODE).to_owned();
 
-    // Shape the settings from the catalogue definition when it exists, so facets (extra allowance, daily)
-    // match a real limit; otherwise fall back to a full-featured consumable and warn.
+    // Shape the settings from the catalogue definition when it exists, so facets (extra allowance,
+    // daily) match a real limit; an orphan is assumed consumable and warned about.
     let current = config.current().await.context("reading the config")?;
     let def = current.limits.iter().find(|d| d.code == code);
-    if let Some(def) = def {
-        if def.kind != LimitKind::Consumable {
-            bail!("limit '{code}' is a gauge; this seeder fakes consumable ledger/history/overrun");
-        }
-    } else {
+    let kind = def.map(|d| d.kind).unwrap_or(LimitKind::Consumable);
+    if def.is_none() {
         tracing::warn!(
-            "limit '{code}' is not in the config catalogue — seeding it as an orphan; the UI will \
-             show it without a name"
+            "limit '{code}' is not in the config catalogue — seeding it as a consumable orphan; the \
+             UI will show it without a name"
         );
     }
-    let settings = LimitSettings {
-        monthly: Some(100_000),
-        extra_allowance: Some(20_000),
-        daily: def.map(|d| d.daily).unwrap_or(true).then_some(10_000),
-        max: None,
+    let settings = match kind {
+        LimitKind::Gauge => LimitSettings {
+            max: Some(50),
+            ..Default::default()
+        },
+        LimitKind::Consumable => LimitSettings {
+            monthly: Some(100_000),
+            extra_allowance: Some(20_000),
+            daily: def.map(|d| d.daily).unwrap_or(true).then_some(10_000),
+            max: None,
+        },
     };
 
     ensure_tenant_settings(&tenants, &tenant_id, &code, &settings).await?;
 
     // Wipe any existing state/ledger/history for this (tenant, code) so the timeline replays cleanly
-    // and every run produces the same overrun + closed-month history rather than just appending.
+    // and every run produces the same dataset rather than just appending.
     reset_target(&tenant_id, &code).await?;
 
     let mut seeder = Seeder {
@@ -89,7 +94,10 @@ pub async fn seed_limits(
         state: None,
         expected: None,
     };
-    seeder.full_timeline().await?;
+    match kind {
+        LimitKind::Consumable => seeder.full_timeline().await?,
+        LimitKind::Gauge => seeder.gauge_timeline().await?,
+    }
     tracing::info!("seeded a fresh 4-month timeline for {tenant_id} / {code}");
     Ok(())
 }
@@ -267,6 +275,33 @@ impl Seeder {
             &Self::actor(),
         );
         self.commit(outcome).await
+    }
+
+    /// Records one gauge value. Set in a new month, it closes the previous gauge month into history.
+    async fn gauge(&mut self, value: i64, when: DateTime<Utc>) -> anyhow::Result<()> {
+        let outcome = accounting::set_gauge(
+            self.state.clone(),
+            &self.tenant_id,
+            &self.code,
+            value,
+            self.settings.max,
+            when,
+            &generate_id(),
+            &Self::actor(),
+        );
+        self.commit(outcome).await
+    }
+
+    /// Four months of gauge readings ending on the current one, so each earlier month closes into a
+    /// history row (value + bound) and the live value stands at the last.
+    async fn gauge_timeline(&mut self) -> anyhow::Result<()> {
+        let now = Utc::now();
+        let month_ago = |n: u32| now.checked_sub_months(Months::new(n)).unwrap_or(now);
+        self.gauge(40, month_ago(3)).await?;
+        self.gauge(44, month_ago(2)).await?;
+        self.gauge(47, month_ago(1)).await?;
+        self.gauge(48, now).await?;
+        Ok(())
     }
 
     /// Four months of activity ending in a live overrun. Each new month's first booking rolls the
