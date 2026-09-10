@@ -172,7 +172,12 @@ export function LimitsView({
       ) : mode.view === "ledger" ? (
         <LedgerView tenantId={tenantId} code={selected.entry.code} onBack={backToList} />
       ) : (
-        <HistoryView tenantId={tenantId} code={selected.entry.code} onBack={backToList} />
+        <HistoryView
+          tenantId={tenantId}
+          code={selected.entry.code}
+          kind={selected.kind}
+          onBack={backToList}
+        />
       )}
     </section>
   );
@@ -500,9 +505,9 @@ function Bobble({
   return <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${color}`} />;
 }
 
-/** The non-edit actions, always behind a 3-dots menu (edit is the pencil in the name). A consumable
- * offers its ledger and history, and — when writable and it carries a top-up balance — a credit; an
- * orphan offers Delete. Gauges have no transactions, so a defined gauge shows no menu at all. */
+/** The non-edit actions, always behind a 3-dots menu (edit is the pencil in the name). Every defined
+ * limit offers its ledger and history; a consumable that carries a top-up balance also offers a
+ * credit (when writable); an orphan offers Delete. */
 function RowMenu({
   row,
   readOnly,
@@ -519,24 +524,23 @@ function RowMenu({
 
   const actions: MenuAction[] = [];
   if (row.def) {
-    if (row.def.kind === "consumable") {
+    // Both kinds keep a ledger and a month-by-month history (a gauge's is its recorded values).
+    actions.push({
+      label: t("limits.ledger"),
+      icon: ListBulletIcon,
+      onSelect: () => onAction("ledger", code),
+    });
+    actions.push({
+      label: t("limits.history"),
+      icon: ClockIcon,
+      onSelect: () => onAction("history", code),
+    });
+    if (!readOnly && row.def.kind === "consumable" && row.def.customBalance) {
       actions.push({
-        label: t("limits.ledger"),
-        icon: ListBulletIcon,
-        onSelect: () => onAction("ledger", code),
+        label: t("limits.credit"),
+        icon: PlusCircleIcon,
+        onSelect: () => onAction("topup", code),
       });
-      actions.push({
-        label: t("limits.history"),
-        icon: ClockIcon,
-        onSelect: () => onAction("history", code),
-      });
-      if (!readOnly && row.def.customBalance) {
-        actions.push({
-          label: t("limits.credit"),
-          icon: PlusCircleIcon,
-          onSelect: () => onAction("topup", code),
-        });
-      }
     }
   } else if (!readOnly) {
     actions.push({
@@ -874,15 +878,32 @@ function LedgerView({
   );
 }
 
-/** A limit's month-by-month usage history, the most recent {@link HISTORY_MONTHS} months. The card
- * heading names the limit; this renders the table only. */
+/** A two-line table header: the label, and a muted `used / limit` clarifier under it. */
+function UsedLimitHead({ label }: { label: string }) {
+  const { t } = useTranslation();
+  return (
+    <th className={`${th} text-right`}>
+      <div>{label}</div>
+      <div className="text-[10px] font-normal normal-case text-slate-400">
+        {t("limits.monthlyUsed")} / {t("limits.limit")}
+      </div>
+    </th>
+  );
+}
+
+/** A limit's month-by-month history, the most recent {@link HISTORY_MONTHS} months. The card heading
+ * names the limit; this renders the table only. A consumable shows used/limit per bucket and the net
+ * balance (credit minus overrun, red when negative); a gauge shows the value it closed each month at
+ * against its bound. */
 function HistoryView({
   tenantId,
   code,
+  kind,
   onBack,
 }: {
   tenantId: string;
   code: string;
+  kind: LimitKind;
   onBack: () => void;
 }) {
   const { client } = useUmami();
@@ -908,6 +929,8 @@ function HistoryView({
     };
   }, [client, tenantId, code]);
 
+  const rows = months?.slice(0, HISTORY_MONTHS) ?? [];
+
   return (
     <div className="space-y-4">
       {months === null ? (
@@ -920,29 +943,57 @@ function HistoryView({
             <thead>
               <tr className="border-b border-slate-200 dark:border-slate-700">
                 <th className={th}>{t("limits.month")}</th>
-                <th className={th}>{t("limits.monthlyIncluded")}</th>
-                <th className={th}>{t("limits.monthlyUsed")}</th>
-                <th className={th}>{t("limits.forfeited")}</th>
-                <th className={th}>{t("limits.extraAllowanceUsed")}</th>
-                <th className={th}>{t("limits.endingBalance")}</th>
+                {kind === "gauge" ? (
+                  <>
+                    <th className={`${th} text-right`}>{t("limits.value")}</th>
+                    <th className={`${th} text-right`}>{t("limits.ceiling")}</th>
+                  </>
+                ) : (
+                  <>
+                    <UsedLimitHead label={t("limits.monthlyBudget")} />
+                    <UsedLimitHead label={t("limits.extraAllowance")} />
+                    <th className={`${th} text-right`}>{t("limits.balance")}</th>
+                  </>
+                )}
               </tr>
             </thead>
             <tbody>
-              {months.slice(0, HISTORY_MONTHS).map((m) => (
-                <tr
-                  key={m.yearMonth}
-                  className="border-b border-slate-100 dark:border-slate-700/50"
-                >
-                  <td className={`${td} whitespace-nowrap font-mono`}>{m.yearMonth}</td>
-                  <td className={td}>{formatNumber(m.monthlyIncluded)}</td>
-                  <td className={td}>{formatNumber(m.monthlyUsed)}</td>
-                  <td className={td}>{formatNumber(m.monthlyForfeited)}</td>
-                  <td className={td}>
-                    {formatNumber(m.extraAllowanceUsed)} / {formatNumber(m.extraAllowanceLimit)}
-                  </td>
-                  <td className={td}>{formatNumber(m.endingCustomBalance)}</td>
-                </tr>
-              ))}
+              {rows.map((m) => {
+                const net = m.endingCustomBalance - m.overrun;
+                return (
+                  <tr
+                    key={m.yearMonth}
+                    className="border-b border-slate-100 dark:border-slate-700/50"
+                  >
+                    <td className={`${td} whitespace-nowrap font-mono`}>{m.yearMonth}</td>
+                    {kind === "gauge" ? (
+                      <>
+                        <td className={`${td} text-right font-mono`}>
+                          {m.gaugeValue != null ? formatNumber(m.gaugeValue) : "—"}
+                        </td>
+                        <td className={`${td} text-right font-mono`}>
+                          {m.gaugeMax != null ? formatNumber(m.gaugeMax) : "—"}
+                        </td>
+                      </>
+                    ) : (
+                      <>
+                        <td className={`${td} text-right font-mono`}>
+                          {formatNumber(m.monthlyUsed)} / {formatNumber(m.monthlyIncluded)}
+                        </td>
+                        <td className={`${td} text-right font-mono`}>
+                          {formatNumber(m.extraAllowanceUsed)} /{" "}
+                          {formatNumber(m.extraAllowanceLimit)}
+                        </td>
+                        <td
+                          className={`${td} text-right font-mono ${net < 0 ? "text-red-500" : ""}`}
+                        >
+                          {formatNumber(net)}
+                        </td>
+                      </>
+                    )}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

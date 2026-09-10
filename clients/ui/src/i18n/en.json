@@ -199,7 +199,7 @@
     "when": "When",
     "type": "Type",
     "amount": "Amount",
-    "resulting": "Resulting (m · c · o)",
+    "resulting": "Resulting (m · c · e)",
     "source": "Source",
     "txn": "Txn",
     "actor": "Actor",
