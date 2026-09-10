@@ -132,7 +132,8 @@ async fn app() -> anyhow::Result<()> {
     #[cfg(debug_assertions)]
     {
         let args: Vec<String> = env::args().collect();
-        if args.get(1).map(String::as_str) == Some("seed-limits") {
+        let command = args.get(1).map(String::as_str);
+        if command == Some("seed-limits") || command == Some("rollover-limits") {
             // The two positionals are order-free: a limit code always contains ':' (e.g.
             // `limit:seats`), a tenant id never does — so either can come first.
             let mut tenant = None;
@@ -144,15 +145,17 @@ async fn app() -> anyhow::Result<()> {
                     tenant = Some(arg.as_str());
                 }
             }
-            return seed::seed_limits(
+            let (limits, tenants, config, system) = (
                 platform.repos.limits.clone(),
                 platform.repos.tenants.clone(),
                 platform.config.clone(),
                 platform.system_tenant_id.clone(),
-                tenant,
-                code,
-            )
-            .await;
+            );
+            return if command == Some("rollover-limits") {
+                seed::rollover_limits(limits, tenants, config, system, tenant, code).await
+            } else {
+                seed::seed_limits(limits, tenants, config, system, tenant, code).await
+            };
         }
     }
 

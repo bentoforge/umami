@@ -102,6 +102,117 @@ pub async fn seed_limits(
     Ok(())
 }
 
+/// Dev-only: fakes a month-end rollover for `(tenant, code)`. It backdates the live state to last
+/// month and commits the rollover that triggers — the current counters close into a history row
+/// (carrying their overrun), and the month re-opens: reset under `track`/`reject`/`ignore`, or with
+/// the debt drawn back in under `carry`. Shows what a real month change does to a limit in the red.
+///
+/// The closed month is labelled as the *previous* month (a backdate is the only safe fake — a
+/// future-dated live state would misread in the present), so the figures are real but the month
+/// label is shifted by one.
+pub async fn rollover_limits(
+    limits: Arc<dyn LimitRepository>,
+    tenants: Arc<dyn TenantRepository>,
+    config: Arc<dyn ConfigRepository>,
+    system_tenant_id: Option<String>,
+    tenant_arg: Option<&str>,
+    code_arg: Option<&str>,
+) -> anyhow::Result<()> {
+    let tenant_id = match tenant_arg.map(str::to_owned).or(system_tenant_id) {
+        Some(id) => id,
+        None => bail!("no tenant given and UMAMI_SYSTEM_TENANT_ID is unset"),
+    };
+    let code = code_arg.unwrap_or(DEFAULT_CODE).to_owned();
+
+    let current = config.current().await.context("reading the config")?;
+    let policy = current
+        .limits
+        .iter()
+        .find(|def| def.code == code)
+        .map(|def| def.overrun_policy)
+        .unwrap_or_default();
+    let tenant = match tenants
+        .get_tenant(&tenant_id)
+        .await
+        .context("loading tenant")?
+    {
+        Some(tenant) => tenant,
+        None => bail!("no such tenant '{tenant_id}'"),
+    };
+    let settings = tenant.limits.get(&code).cloned().unwrap_or_default();
+
+    let Some(mut state) = limits
+        .load_state(&tenant_id, &code)
+        .await
+        .context("loading state")?
+    else {
+        bail!("'{code}' has no state yet — nothing to roll over (seed it first)");
+    };
+    let expected = Some(state.version);
+    let live_overrun = state.overrun;
+    let live_monthly = state.monthly_remaining;
+
+    // Backdate the stored period to last month so the rollover fires on the current counters as-is.
+    let now = Utc::now();
+    let last_month = accounting::year_month(now.checked_sub_months(Months::new(1)).unwrap_or(now));
+    state.period_year_month = last_month.clone();
+
+    // The seeded data may already hold a history row for the month we are about to close; the
+    // rollover writes history if-not-exists, so drop that row first to avoid the transaction
+    // cancelling (this overwrites last month's demo history with the current counters).
+    let client = DynamoClient::from_env().await?;
+    let _ = client
+        .delete_item(TABLE_LIMIT_HISTORY)
+        .key(FIELD_TENANT_ID, AttributeValue::S(tenant_id.clone()))
+        .key(
+            FIELD_HISTORY_SK,
+            AttributeValue::S(format!("{code}#{last_month}")),
+        )
+        .send()
+        .await
+        .context("clearing the closed month's history row")?;
+
+    let (mut new_state, history, carry) = accounting::rolled_over(
+        Some(state),
+        &tenant_id,
+        &code,
+        &settings,
+        policy,
+        now,
+        &generate_id(),
+    );
+    new_state.version = expected.map(|v| v + 1).unwrap_or(1);
+    let outcome = Outcome {
+        state: new_state.clone(),
+        ledger: None,
+        history: history.clone(),
+        carry: carry.clone(),
+        rejected: false,
+    };
+    match limits
+        .compare_and_swap(&outcome, expected)
+        .await
+        .context("committing the rollover")?
+    {
+        CasOutcome::Committed => {}
+        CasOutcome::Conflict => bail!("the limit changed underneath us — retry"),
+    }
+
+    let closed_overrun = history.map(|row| row.overrun).unwrap_or(0);
+    let carried = carry
+        .map(|c| c.monthly_drawn + c.custom_drawn + c.extra_allowance_drawn)
+        .unwrap_or(0);
+    tracing::info!(
+        "rolled {tenant_id} / {code} over ({policy:?}): before — monthlyRemaining {live_monthly}, \
+         overrun {live_overrun}; closed month {last_month} keeps overrun {closed_overrun} in history; \
+         new month {} opens with monthlyRemaining {}, overrun {} (carry drew {carried})",
+        new_state.period_year_month,
+        new_state.monthly_remaining,
+        new_state.overrun,
+    );
+    Ok(())
+}
+
 /// Deletes every state, ledger and history row for one `(tenant, code)` via a raw client, so the
 /// seeder can start from a clean slate on each run.
 async fn reset_target(tenant_id: &str, code: &str) -> anyhow::Result<()> {
