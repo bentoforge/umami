@@ -4,6 +4,18 @@ Typed TypeScript client SDK for the [umami](../../README.md) micro-IAM service. 
 token **in memory only** and silently refreshes it via the `HttpOnly` cookie on a 401 — the refresh
 token's value is never touched by JS.
 
+When the server turns that refresh down, the session is over: the call rejects with
+`SessionExpiredError` and `onSessionExpired` fires once, which is the signal to show a sign-in
+screen. A 401 the refresh repairs is retried, and a refresh that never reached the server is left
+alone — so a permission gap or a dropped connection never reads as a sign-out.
+
+```ts
+const umami = new UmamiClient({
+  baseUrl: "https://umami.example.com",
+  onSessionExpired: () => showSignIn(),
+});
+```
+
 ```bash
 npm install @bentoforge/umami-iam
 ```
