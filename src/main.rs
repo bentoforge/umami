@@ -133,13 +133,24 @@ async fn app() -> anyhow::Result<()> {
     {
         let args: Vec<String> = env::args().collect();
         if args.get(1).map(String::as_str) == Some("seed-limits") {
+            // The two positionals are order-free: a limit code always contains ':' (e.g.
+            // `limit:seats`), a tenant id never does — so either can come first.
+            let mut tenant = None;
+            let mut code = None;
+            for arg in [args.get(2), args.get(3)].into_iter().flatten() {
+                if arg.contains(':') {
+                    code = Some(arg.as_str());
+                } else {
+                    tenant = Some(arg.as_str());
+                }
+            }
             return seed::seed_limits(
                 platform.repos.limits.clone(),
                 platform.repos.tenants.clone(),
                 platform.config.clone(),
                 platform.system_tenant_id.clone(),
-                args.get(2).map(String::as_str),
-                args.get(3).map(String::as_str),
+                tenant,
+                code,
             )
             .await;
         }
