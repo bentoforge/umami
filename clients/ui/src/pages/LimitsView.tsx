@@ -11,6 +11,7 @@ import {
   ClipboardDocumentIcon,
   ClockIcon,
   ListBulletIcon,
+  MagnifyingGlassIcon,
   PlusCircleIcon,
   TrashIcon,
 } from "@heroicons/react/24/outline";
@@ -781,6 +782,7 @@ function LedgerView({
   const [entries, setEntries] = useState<LedgerEntry[] | null>(null);
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [busy, setBusy] = useState(false);
+  const [explaining, setExplaining] = useState<LedgerEntry | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -822,6 +824,10 @@ function LedgerView({
 
   const muted = "font-mono text-xs text-slate-400 dark:text-slate-500";
 
+  if (explaining) {
+    return <BookingDetail entry={explaining} onBack={() => setExplaining(null)} />;
+  }
+
   return (
     <div className="space-y-4">
       {entries === null ? (
@@ -844,21 +850,32 @@ function LedgerView({
             </thead>
             <tbody>
               {entries.map((e) => {
-                const ids: MenuAction[] = [];
+                const actions: MenuAction[] = [
+                  {
+                    label: t("limits.explain"),
+                    icon: MagnifyingGlassIcon,
+                    onSelect: () => setExplaining(e),
+                  },
+                ];
+                const copies: MenuAction[] = [];
                 if (e.txnId != null) {
-                  ids.push({
+                  copies.push({
                     label: `${t("limits.transaction")}: ${e.txnId}`,
                     icon: ClipboardDocumentIcon,
                     onSelect: () => copy(e.txnId as string),
                   });
                 }
                 if (e.actorUserId != null) {
-                  ids.push({
+                  copies.push({
                     label: `${t("limits.user")}: ${e.actorUserId}`,
                     icon: ClipboardDocumentIcon,
                     onSelect: () => copy(e.actorUserId as string),
                   });
                 }
+                if (copies[0]) {
+                  copies[0].dividerBefore = true;
+                }
+                actions.push(...copies);
                 return (
                   <tr key={e.id} className="border-b border-slate-100 dark:border-slate-700/50">
                     <td className={`${td} whitespace-nowrap`}>{formatDateTime(e.timestamp)}</td>
@@ -881,9 +898,7 @@ function LedgerView({
                       </span>
                     </td>
                     <td className={`${td} text-right`}>
-                      {ids.length > 0 && (
-                        <DropdownMenu actions={ids} label={t("common.moreActions")} />
-                      )}
+                      <DropdownMenu actions={actions} label={t("common.moreActions")} />
                     </td>
                   </tr>
                 );
@@ -933,6 +948,109 @@ function LedgerAmount({ entry }: { entry: LedgerEntry }) {
     return <span className="text-red-600 dark:text-red-400">−{value}</span>;
   }
   return <span>{value}</span>;
+}
+
+/** Colour for a signed figure: any negative red, a positive movement green, everything else muted. */
+function figureClass(value: number, isDelta: boolean): string {
+  if (value < 0) {
+    return "text-red-600 dark:text-red-400";
+  }
+  if (isDelta && value > 0) {
+    return "text-green-600 dark:text-green-400";
+  }
+  return "text-slate-500 dark:text-slate-400";
+}
+
+/** One `label | value` meta row of the booking detail; the value spans the three number columns. */
+function MetaRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <tr>
+      <td className={`${td} whitespace-nowrap align-top text-slate-500`}>{label}</td>
+      <td className={td} colSpan={3}>
+        {children}
+      </td>
+    </tr>
+  );
+}
+
+/** An accounting-style breakdown of a single ledger entry: its meta, then each internal account's
+ * before → delta → after, in the draw cascade's order. `before` is reconstructed as `after − delta`
+ * from the recorded movement (exact for a consume/carry/top-up). */
+function BookingDetail({ entry, onBack }: { entry: LedgerEntry; onBack: () => void }) {
+  const { t } = useTranslation();
+  const num = "text-right font-mono tabular-nums";
+
+  const accounts = [
+    { label: t("limits.monthlyBudget"), after: entry.resultingMonthly, delta: -entry.monthlyDrawn },
+    {
+      label: t("limits.balance"),
+      after: entry.resultingCustom,
+      delta: entry.customAdded - entry.customDrawn,
+    },
+    {
+      label: t("limits.extraAllowance"),
+      after: entry.resultingExtraAllowance,
+      delta: -entry.extraAllowanceDrawn,
+    },
+    { label: t("limits.overrun"), after: entry.resultingOverrun, delta: entry.overrun },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="overflow-x-auto">
+        <table className="w-full border-collapse text-sm">
+          <tbody>
+            <MetaRow label={t("limits.when")}>{formatDateTime(entry.timestamp)}</MetaRow>
+            <MetaRow label={t("limits.type")}>
+              {t(`limits.ledgerType.${entry.type}`, { defaultValue: entry.type })}
+              {entry.source != null && (
+                <span className="ml-1 text-slate-400 dark:text-slate-500">({entry.source})</span>
+              )}
+            </MetaRow>
+            {entry.txnId != null && (
+              <MetaRow label={t("limits.transaction")}>
+                <span className="font-mono text-xs">{entry.txnId}</span>
+              </MetaRow>
+            )}
+            {entry.actorUserId != null && (
+              <MetaRow label={t("limits.user")}>
+                <span className="font-mono text-xs">{entry.actorUserId}</span>
+              </MetaRow>
+            )}
+            <MetaRow label={t("limits.delta")}>
+              <span className="font-mono">
+                <LedgerAmount entry={entry} />
+              </span>
+            </MetaRow>
+          </tbody>
+          <tbody className="border-t border-slate-200 dark:border-slate-700">
+            <tr className="text-[10px] uppercase tracking-wide text-slate-400">
+              <td className={td} />
+              <td className={`${td} text-right`}>{t("limits.before")}</td>
+              <td className={`${td} text-right`}>{t("limits.delta")}</td>
+              <td className={`${td} text-right`}>{t("limits.after")}</td>
+            </tr>
+            {accounts.map((a) => (
+              <tr key={a.label} className="border-b border-slate-100 dark:border-slate-700/50">
+                <td className={`${td} whitespace-nowrap`}>{a.label}</td>
+                <td className={`${td} ${num} ${figureClass(a.after - a.delta, false)}`}>
+                  {formatNumber(a.after - a.delta)}
+                </td>
+                <td className={`${td} ${num} ${figureClass(a.delta, true)}`}>
+                  {a.delta > 0 ? "+" : ""}
+                  {formatNumber(a.delta)}
+                </td>
+                <td className={`${td} ${num} ${figureClass(a.after, false)}`}>
+                  {formatNumber(a.after)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <BackButton onClick={onBack} />
+    </div>
+  );
 }
 
 /** A two-line table header: the label, and a muted `used / limit` clarifier under it. */
