@@ -508,9 +508,9 @@ function Bobble({
   return <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${color}`} />;
 }
 
-/** The non-edit actions, always behind a 3-dots menu (edit is the pencil in the name). Every defined
- * limit offers its ledger and history; a consumable that carries a top-up balance also offers a
- * credit (when writable); an orphan offers Delete. */
+/** The non-edit actions, always behind a 3-dots menu (edit is the pencil in the name). A consumable
+ * offers its ledger and history, and — when writable and it carries a top-up balance — a credit; a
+ * gauge is only set, so it offers just its history; an orphan offers Delete. */
 function RowMenu({
   row,
   readOnly,
@@ -527,12 +527,15 @@ function RowMenu({
 
   const actions: MenuAction[] = [];
   if (row.def) {
-    // Both kinds keep a ledger and a month-by-month history (a gauge's is its recorded values).
-    actions.push({
-      label: t("limits.ledger"),
-      icon: ListBulletIcon,
-      onSelect: () => onAction("ledger", code),
-    });
+    // A consumable is booked, so it has a transaction ledger; a gauge is only set, so it does not —
+    // both keep a month-by-month history.
+    if (row.def.kind === "consumable") {
+      actions.push({
+        label: t("limits.ledger"),
+        icon: ListBulletIcon,
+        onSelect: () => onAction("ledger", code),
+      });
+    }
     actions.push({
       label: t("limits.history"),
       icon: ClockIcon,
@@ -542,6 +545,7 @@ function RowMenu({
       actions.push({
         label: t("limits.credit"),
         icon: PlusCircleIcon,
+        dividerBefore: true,
         onSelect: () => onAction("topup", code),
       });
     }

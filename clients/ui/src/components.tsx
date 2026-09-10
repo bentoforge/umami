@@ -348,6 +348,9 @@ export type MenuAction = {
   label: string;
   onSelect: () => void;
   danger?: boolean;
+  /** Draw a separator line above this action, to fence it off from the group before it. (A
+   * destructive tail is fenced off automatically; this is for grouping non-destructive actions.) */
+  dividerBefore?: boolean;
   /** Heroicon (24/outline) shown before the label. */
   icon?: ComponentType<{ className?: string }>;
 };
@@ -440,7 +443,7 @@ export function DropdownMenu({
         >
           {actions.map((action, index) => (
             <Fragment key={action.label}>
-              {index === separatorBefore && (
+              {index > 0 && (index === separatorBefore || action.dividerBefore) && (
                 <hr className="my-1 border-0 h-px bg-slate-200 dark:bg-slate-700" />
               )}
               <button
