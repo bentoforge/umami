@@ -14,12 +14,14 @@ use crate::limits::{HistoryRow, LedgerEntry, LimitState, ledger_type};
 use chrono::{DateTime, Datelike, SecondsFormat, Utc};
 
 /// Optional actor/context for a ledger entry — caller-provided, never validated against umami users.
-/// Only two opaque ids, each length-capped at ingress; no names or free-text, so nothing
-/// GDPR-sensitive lands in the ledger.
+/// Three opaque ids, each length-capped at ingress; no names or free-text, so nothing
+/// GDPR-sensitive lands in the ledger. `source` names the component/client that made the call and,
+/// with `txn_id`, pins down exactly which operation a ledger entry belongs to.
 #[derive(Debug, Clone, Default)]
 pub struct Actor {
     pub user_id: Option<String>,
     pub txn_id: Option<String>,
+    pub source: Option<String>,
 }
 
 /// The result of one booking operation: the state to persist, the ledger entry it produced, and —
@@ -140,6 +142,7 @@ fn ledger_base(
         resulting_overrun: state.overrun,
         actor_user_id: actor.user_id.clone(),
         txn_id: actor.txn_id.clone(),
+        source: actor.source.clone(),
     }
 }
 
@@ -669,6 +672,7 @@ mod tests {
         let actor = Actor {
             user_id: Some("u-42".to_owned()),
             txn_id: Some("req-999".to_owned()),
+            source: Some("chat-web".to_owned()),
         };
         let out = apply_consume(
             None,
@@ -683,6 +687,7 @@ mod tests {
         );
         assert_eq!(out.ledger.actor_user_id.as_deref(), Some("u-42"));
         assert_eq!(out.ledger.txn_id.as_deref(), Some("req-999"));
+        assert_eq!(out.ledger.source.as_deref(), Some("chat-web"));
     }
 
     #[test]

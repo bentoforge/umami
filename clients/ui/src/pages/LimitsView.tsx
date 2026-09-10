@@ -825,6 +825,7 @@ function LedgerView({
                   <th className={th}>{t("limits.type")}</th>
                   <th className={th}>{t("limits.amount")}</th>
                   <th className={th}>{t("limits.resulting")}</th>
+                  <th className={th}>{t("limits.source")}</th>
                   <th className={th}>{t("limits.txn")}</th>
                   <th className={th}>{t("limits.actor")}</th>
                 </tr>
@@ -837,6 +838,9 @@ function LedgerView({
                     <td className={td}>{e.gaugeValue != null ? e.gaugeValue : e.amount}</td>
                     <td className={`${td} whitespace-nowrap font-mono text-xs`}>
                       {e.resultingMonthly} · {e.resultingCustom} · {e.resultingExtraAllowance}
+                    </td>
+                    <td className={`${td} font-mono text-xs text-slate-400 dark:text-slate-500`}>
+                      {e.source ?? "—"}
                     </td>
                     <td className={`${td} font-mono text-xs text-slate-400 dark:text-slate-500`}>
                       {e.txnId ?? "—"}

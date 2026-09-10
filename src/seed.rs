@@ -205,12 +205,13 @@ struct Seeder {
 }
 
 impl Seeder {
-    /// A representative actor for a seeded ledger entry — a fixed user id and a fresh txn id, so the
-    /// ledger's id columns are populated.
+    /// A representative actor for a seeded ledger entry — a fixed user id and source plus a fresh txn
+    /// id, so the ledger's id columns are populated.
     fn actor() -> Actor {
         Actor {
             user_id: Some("seed-user".to_owned()),
             txn_id: Some(generate_id()),
+            source: Some("seed-script".to_owned()),
         }
     }
 

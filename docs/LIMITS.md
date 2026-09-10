@@ -192,11 +192,13 @@ customAdded                                  (topup)
 monthlyForfeited, extraAllowanceForfeited           (reset)
 resultingMonthly, resultingCustom, resultingExtraAllowance
 // Actor/Kontext — optional, caller-provided, KEINE umami-Validierung:
-actorUserId, txnId
+actorUserId, txnId, source
 ```
 
-Nur zwei **opake Ids** (`actorUserId`, `txnId`), je am Ingress auf **64 Zeichen** begrenzt — keine
-Namen, kein Freitext, damit nichts GDPR-Sensibles im Ledger landet.
+Nur **opake Ids** (`actorUserId`, `txnId`, `source`), je am Ingress auf **64 Zeichen** begrenzt —
+keine Namen, kein Freitext, damit nichts GDPR-Sensibles im Ledger landet. `source` benennt die
+aufrufende Komponente/den Client; zusammen mit `txnId` ist damit exakt geklärt, worum ein
+Ledger-Eintrag geht.
 
 ### `limit-history` — Hash `tenantId`, Range `limitCode#YYYY-MM`
 
@@ -380,7 +382,7 @@ Alles unter `/tenants/{id}/limits/...` (`tenantId` im Pfad — opake ID, kein PI
 **Maschine (Produktdienste), `book:limits`:**
 
 - `POST /tenants/{id}/limits/{code}/check` `{amount}` → `{allowed, remaining:{monthly,custom,extraAllowance,total}}`; Gauge: `{value,max,watermark}`. Mutationsfrei.
-- `POST /tenants/{id}/limits/{code}/consume` `{amount, actorUserId?, txnId?}` (Ids je ≤ 64 Zeichen) → bucht, liefert Bucket-Breakdown + neue Stände (429 je Policy).
+- `POST /tenants/{id}/limits/{code}/consume` `{amount, actorUserId?, txnId?, source?}` (Ids je ≤ 64 Zeichen) → bucht, liefert Bucket-Breakdown + neue Stände (429 je Policy).
 - `POST /tenants/{id}/limits/{code}/report` `{value}` (Gauge) → setzt Wert, liefert Watermark-Status.
 
 **Admin/UI, `manage:limits`:**
@@ -440,7 +442,7 @@ den *Dienst*.
   Rollover in-memory, Overrun book-to-zero, Topup, Gauge-`set`), dünnes CAS-Repo, bounded
   OCC-Schleife, `check`/`consume`/`report`/`topup`. Permissions `book:limits`/`manage:limits`.
 - L3 Ledger + History: `limit-ledger` (append-only, Bucket-Breakdown + optionale Actor-Felder
-  `actorUserId`/`txnId` aus dem Request, je ≤ 64 Zeichen), `limit-history`
+  `actorUserId`/`txnId`/`source` aus dem Request, je ≤ 64 Zeichen), `limit-history`
   (Monatsabschluss am Rollover, idempotent). `compare_and_swap` committet State + Ledger + History
   als **ein `TransactWriteItems`** (Version-Guard + History-if-not-exists) — kein Drift. Reads:
   `GET .../ledger`, `GET .../history` (self-service `view:limits` / cross-tenant `manage:limits`).

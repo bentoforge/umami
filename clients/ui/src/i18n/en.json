@@ -200,6 +200,7 @@
     "type": "Type",
     "amount": "Amount",
     "resulting": "Resulting (m · c · o)",
+    "source": "Source",
     "txn": "Txn",
     "actor": "Actor",
     "noHistory": "No history yet.",

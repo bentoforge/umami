@@ -338,6 +338,7 @@ fn settings_actor(caller: &AuthUser) -> Actor {
     Actor {
         user_id: caller.user_id().ok().map(str::to_owned),
         txn_id: None,
+        source: None,
     }
 }
 
@@ -378,9 +379,11 @@ async fn reconcile_limit_state(
 
 // ── Booking (check / consume / report / top-up) ──────────────────────────────────
 
-/// Optional actor/context on a booking body — two opaque ids, caller-provided and carried onto the
+/// Optional actor/context on a booking body — opaque ids, caller-provided and carried onto the
 /// ledger entry verbatim (never validated against umami users), each capped at
-/// [`ACTOR_ID_MAX_LEN`] at ingress. No names or free-text, so nothing GDPR-sensitive is stored.
+/// [`ACTOR_ID_MAX_LEN`] at ingress. `source` names the calling component/client; with `txnId` it
+/// identifies exactly which call an entry belongs to. No names or free-text, so nothing
+/// GDPR-sensitive is stored.
 #[derive(Deserialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 struct ActorFields {
@@ -388,16 +391,20 @@ struct ActorFields {
     actor_user_id: Option<String>,
     #[serde(default)]
     txn_id: Option<String>,
+    #[serde(default)]
+    source: Option<String>,
 }
 
 impl ActorFields {
-    /// Validates the id lengths (a 400 when either is too long), then builds the [`Actor`].
+    /// Validates the id lengths (a 400 when any is too long), then builds the [`Actor`].
     fn into_actor(self) -> anyhow::Result<Actor> {
         check_actor_id_len("actorUserId", self.actor_user_id.as_deref())?;
         check_actor_id_len("txnId", self.txn_id.as_deref())?;
+        check_actor_id_len("source", self.source.as_deref())?;
         Ok(Actor {
             user_id: self.actor_user_id,
             txn_id: self.txn_id,
+            source: self.source,
         })
     }
 }
@@ -1665,6 +1672,7 @@ mod tests {
                 actor: ActorFields {
                     actor_user_id: Some("u-7".to_owned()),
                     txn_id: Some("req-1".to_owned()),
+                    source: Some("chat-web".to_owned()),
                 },
             },
             Arc::new(tenants),
@@ -2024,20 +2032,27 @@ mod tests {
         let ok = ActorFields {
             actor_user_id: Some("u".repeat(ACTOR_ID_MAX_LEN)),
             txn_id: Some("t".repeat(ACTOR_ID_MAX_LEN)),
+            source: Some("s".repeat(ACTOR_ID_MAX_LEN)),
         };
         assert!(ok.into_actor().is_ok());
 
         let long_user = ActorFields {
             actor_user_id: Some("u".repeat(ACTOR_ID_MAX_LEN + 1)),
-            txn_id: None,
+            ..Default::default()
         };
         assert!(long_user.into_actor().is_err());
 
         let long_txn = ActorFields {
-            actor_user_id: None,
             txn_id: Some("t".repeat(ACTOR_ID_MAX_LEN + 1)),
+            ..Default::default()
         };
         assert!(long_txn.into_actor().is_err());
+
+        let long_source = ActorFields {
+            source: Some("s".repeat(ACTOR_ID_MAX_LEN + 1)),
+            ..Default::default()
+        };
+        assert!(long_source.into_actor().is_err());
     }
 
     fn history_row(code: &str, year_month: &str) -> HistoryRow {

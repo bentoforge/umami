@@ -168,6 +168,10 @@ pub struct LedgerEntry {
     /// Optional caller transaction id — opaque pass-through, capped at ingress.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub txn_id: Option<String>,
+    /// Optional calling component/client — opaque pass-through, capped at ingress. With `txn_id` it
+    /// pins down which call produced the entry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 /// A closed month's aggregates, written once at the rollover that ends it (idempotent). Everything

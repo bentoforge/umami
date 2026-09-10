@@ -200,6 +200,7 @@
     "type": "Typ",
     "amount": "Menge",
     "resulting": "Ergebnis (m · c · o)",
+    "source": "Quelle",
     "txn": "Txn",
     "actor": "Akteur",
     "noHistory": "Noch kein Verlauf.",
