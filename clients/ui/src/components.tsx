@@ -439,7 +439,7 @@ export function DropdownMenu({
         <div
           ref={menuRef}
           style={{ position: "fixed", top: pos.top, right: pos.right }}
-          className="z-50 w-max min-w-48 max-w-[min(20rem,calc(100vw-1rem))] rounded-2xl bg-white dark:bg-slate-800 p-1.5 shadow-lg ring-1 ring-black/5 dark:ring-white/10"
+          className="z-50 w-max min-w-48 max-w-[min(24rem,calc(100vw-1rem))] rounded-2xl bg-white dark:bg-slate-800 p-1.5 shadow-lg ring-1 ring-black/5 dark:ring-white/10"
         >
           {actions.map((action, index) => (
             <Fragment key={action.label}>
@@ -448,18 +448,19 @@ export function DropdownMenu({
               )}
               <button
                 type="button"
+                title={action.label}
                 onClick={() => {
                   setPos(null);
                   action.onSelect();
                 }}
-                className={`flex w-full items-center gap-2 text-left rounded-lg px-3 py-2 text-sm ${
+                className={`flex w-full min-w-0 items-center gap-2 text-left rounded-lg px-3 py-2 text-sm ${
                   action.danger
                     ? "text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950"
                     : "text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700"
                 }`}
               >
                 {action.icon && <action.icon className="h-4 w-4 shrink-0" />}
-                {action.label}
+                <span className="truncate">{action.label}</span>
               </button>
             </Fragment>
           ))}
