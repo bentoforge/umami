@@ -116,7 +116,7 @@ pub struct DynamoLimitRepository {
 }
 
 impl DynamoLimitRepository {
-    #[tracing::instrument(skip(client), err(Display))]
+    #[tracing::instrument(skip(client), err(level = "debug", Display))]
     pub async fn with_client(client: &DynamoClient) -> anyhow::Result<Self> {
         client
             .create_table(TABLE_LIMIT_STATE, |table| {
@@ -165,7 +165,7 @@ fn history_sort_key(row: &HistoryRow) -> String {
 
 #[async_trait]
 impl LimitRepository for DynamoLimitRepository {
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn load_state(&self, tenant_id: &str, code: &str) -> anyhow::Result<Option<LimitState>> {
         // Strongly consistent: the booking path read-modify-writes this row under a version guard,
         // so a stale read must never be the basis of a write.
@@ -182,7 +182,7 @@ impl LimitRepository for DynamoLimitRepository {
         deserialize_entity(result.item)
     }
 
-    #[tracing::instrument(level = "debug", skip(self, outcome), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self, outcome), err(level = "debug", Display))]
     async fn compare_and_swap(
         &self,
         outcome: &Outcome,
@@ -212,31 +212,22 @@ impl LimitRepository for DynamoLimitRepository {
             .build()
             .context("Error building limit-state transaction put")?;
 
-        // Ledger: append (storage sort key added).
-        let mut ledger = ItemBuilder::from_entity(&outcome.ledger)?;
-        ledger.add_str(FIELD_LEDGER_SK, ledger_sort_key(&outcome.ledger));
-        let ledger_put = Put::builder()
-            .table_name(self.client.effective_name(TABLE_LIMIT_LEDGER))
-            .set_item(Some(ledger.build()))
-            .build()
-            .context("Error building limit-ledger transaction put")?;
+        let mut items = vec![TransactWriteItem::builder().put(state_put).build()];
 
-        let mut items = vec![
-            TransactWriteItem::builder().put(state_put).build(),
-            TransactWriteItem::builder().put(ledger_put).build(),
-        ];
-
-        // Carry: a second ledger entry a `carry`-policy rollover produced, booking the closed
-        // month's overrun into this one — appended in the same atomic transaction.
-        if let Some(carry) = &outcome.carry {
-            let mut entry = ItemBuilder::from_entity(carry)?;
-            entry.add_str(FIELD_LEDGER_SK, ledger_sort_key(carry));
-            let carry_put = Put::builder()
+        // Ledger: the operation's entry, plus a `carry`-policy rollover's — each appended (with its
+        // storage sort key) in the same atomic transaction. A gauge set records neither.
+        for entry in [outcome.ledger.as_ref(), outcome.carry.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            let mut item = ItemBuilder::from_entity(entry)?;
+            item.add_str(FIELD_LEDGER_SK, ledger_sort_key(entry));
+            let put = Put::builder()
                 .table_name(self.client.effective_name(TABLE_LIMIT_LEDGER))
-                .set_item(Some(entry.build()))
+                .set_item(Some(item.build()))
                 .build()
-                .context("Error building carry limit-ledger transaction put")?;
-            items.push(TransactWriteItem::builder().put(carry_put).build());
+                .context("Error building limit-ledger transaction put")?;
+            items.push(TransactWriteItem::builder().put(put).build());
         }
 
         // History: written once per closed month (idempotent), only on a rollover.
@@ -279,7 +270,7 @@ impl LimitRepository for DynamoLimitRepository {
         }
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn read_ledger(
         &self,
         tenant_id: &str,
@@ -328,7 +319,7 @@ impl LimitRepository for DynamoLimitRepository {
         Ok((entries, next))
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn read_history(&self, tenant_id: &str, code: &str) -> anyhow::Result<Vec<HistoryRow>> {
         let request = self
             .client
@@ -352,7 +343,7 @@ impl LimitRepository for DynamoLimitRepository {
         Ok(rows)
     }
 
-    #[tracing::instrument(level = "debug", skip(self), err(Display))]
+    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
     async fn read_month_history(
         &self,
         tenant_id: &str,

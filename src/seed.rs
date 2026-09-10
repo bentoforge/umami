@@ -287,8 +287,6 @@ impl Seeder {
             value,
             self.settings.max,
             when,
-            &generate_id(),
-            &Self::actor(),
         );
         self.commit(outcome).await
     }

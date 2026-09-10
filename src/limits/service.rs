@@ -413,8 +413,15 @@ async fn reconcile_limit_state(
     // rolled over — skip the write entirely, so re-saving an unchanged limit leaves no all-zero
     // `settings` ledger entry. Any advisory warnings (e.g. a gauge value now above its max) still
     // come back.
-    let (rolled, _, _) =
-        accounting::rolled_over(Some(state.clone()), tenant_id, code, settings, policy, now, "");
+    let (rolled, _, _) = accounting::rolled_over(
+        Some(state.clone()),
+        tenant_id,
+        code,
+        settings,
+        policy,
+        now,
+        "",
+    );
     let (preview, warnings) = accounting::apply_settings_change(
         Some(state),
         tenant_id,
@@ -489,17 +496,15 @@ struct AmountRequest {
     actor: ActorFields,
 }
 
-/// A gauge value to record, plus optional actor/context.
+/// A gauge value to record. A gauge writes no ledger, so it carries no actor/context.
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct ValueRequest {
     value: i64,
-    #[serde(flatten)]
-    actor: ActorFields,
 }
 
 /// How a consume drew across the buckets.
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 struct Breakdown {
     monthly_drawn: i64,
@@ -865,7 +870,12 @@ async fn consume_limit(
         );
     }
     Ok(ConsumeResponse {
-        breakdown: Breakdown::of(&outcome.ledger),
+        // A consume always records a ledger entry; the default is an unreachable safety net.
+        breakdown: outcome
+            .ledger
+            .as_ref()
+            .map(Breakdown::of)
+            .unwrap_or_default(),
         remaining: Remaining::of(&outcome.state),
     })
 }
@@ -920,15 +930,13 @@ async fn report_gauge(
     }
     let settings = tenant_limit_settings(&tenants, &tenant_id, &code).await?;
     let value = request.value;
-    let actor = request.actor.into_actor()?;
     let now = Utc::now();
-    let entry_id = generate_id();
     let max = settings.max;
+    // A gauge records no ledger entry, so it needs no actor/context — the request's actor fields are
+    // ignored.
     let (outcome, ()) = commit_state(&limits, &tenant_id, &code, |existing| {
         (
-            accounting::set_gauge(
-                existing, &tenant_id, &code, value, max, now, &entry_id, &actor,
-            ),
+            accounting::set_gauge(existing, &tenant_id, &code, value, max, now),
             (),
         )
     })
@@ -1629,10 +1637,7 @@ mod tests {
         let response = report_gauge(
             "t-1".to_owned(),
             "limit:seats".to_owned(),
-            ValueRequest {
-                value: 95,
-                actor: ActorFields::default(),
-            },
+            ValueRequest { value: 95 },
             Arc::new(tenants),
             consumable_config().await,
             Arc::new(limits),
@@ -1729,10 +1734,12 @@ mod tests {
         limits
             .expect_compare_and_swap()
             .withf(|outcome, _| {
-                outcome.ledger.entry_type == crate::limits::ledger_type::CONSUME
-                    && outcome.ledger.monthly_drawn == 50
-                    && outcome.ledger.actor_user_id.as_deref() == Some("u-7")
-                    && outcome.ledger.txn_id.as_deref() == Some("req-1")
+                outcome.ledger.as_ref().is_some_and(|ledger| {
+                    ledger.entry_type == crate::limits::ledger_type::CONSUME
+                        && ledger.monthly_drawn == 50
+                        && ledger.actor_user_id.as_deref() == Some("u-7")
+                        && ledger.txn_id.as_deref() == Some("req-1")
+                })
             })
             .returning(|_, _| Box::pin(async { Ok(CasOutcome::Committed) }));
 

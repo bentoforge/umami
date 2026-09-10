@@ -2,8 +2,8 @@
 //!
 //! Every rule lives here: the monthly rollover (and the history row it closes), the consume cascade,
 //! the overrun policy, the top-up, the gauge set — each producing the [`Outcome`] the repository
-//! then commits atomically (state + ledger + optional history). The service runs the retry loop
-//! around these functions. Keeping the arithmetic free of the store is what makes it exhaustively
+//! then commits atomically (state + optional ledger + optional history). The service runs the retry
+//! loop around these functions. Keeping the arithmetic free of the store is what makes it exhaustively
 //! testable — the tests below carry the weight, not an integration harness.
 //!
 //! Impurity is pushed to the edge: the caller supplies `now` and a pre-generated `entry_id`, so a
@@ -24,15 +24,16 @@ pub struct Actor {
     pub source: Option<String>,
 }
 
-/// The result of one booking operation: the state to persist, the ledger entry it produced, and —
-/// when the operation crossed a month boundary — the closed month's history row. `rejected` is set
-/// only by a `reject`-policy `consume` that could not be covered: the service turns it into a 429
-/// and nothing is written. `carry` is the extra ledger entry a `carry`-policy rollover produces when
-/// it books the previous month's overrun into this one — written atomically alongside `ledger`.
+/// The result of one booking operation: the state to persist, the ledger entry it produced (a gauge
+/// set records no ledger, so `None`) and — when the operation crossed a month boundary — the closed
+/// month's history row. `rejected` is set only by a `reject`-policy `consume` that could not be
+/// covered: the service turns it into a 429 and nothing is written. `carry` is the extra ledger
+/// entry a `carry`-policy rollover produces when it books the previous month's overrun into this one
+/// — written atomically alongside `ledger`.
 #[derive(Debug, Clone)]
 pub struct Outcome {
     pub state: LimitState,
-    pub ledger: LedgerEntry,
+    pub ledger: Option<LedgerEntry>,
     pub history: Option<HistoryRow>,
     pub carry: Option<LedgerEntry>,
     pub rejected: bool,
@@ -177,7 +178,6 @@ fn ledger_base(
         extra_allowance_drawn: 0,
         overrun: 0,
         custom_added: 0,
-        gauge_value: None,
         resulting_monthly: state.monthly_remaining,
         resulting_custom: state.custom_balance,
         resulting_extra_allowance: state.extra_allowance_remaining,
@@ -243,7 +243,7 @@ pub fn apply_consume(
         let ledger = ledger_base(&state, entry_id, now, ledger_type::CONSUME, amount, actor);
         return Outcome {
             state,
-            ledger,
+            ledger: Some(ledger),
             history,
             carry,
             rejected: true,
@@ -276,7 +276,7 @@ pub fn apply_consume(
 
     Outcome {
         state,
-        ledger,
+        ledger: Some(ledger),
         history,
         carry,
         rejected: false,
@@ -310,7 +310,7 @@ pub fn apply_topup(
 
     Outcome {
         state,
-        ledger,
+        ledger: Some(ledger),
         history,
         carry,
         rejected: false,
@@ -318,10 +318,10 @@ pub fn apply_topup(
 }
 
 /// Sets a gauge's current value for `now`'s month. A gauge is never booked — only set — so the
-/// monthly/extra-allowance counters are untouched. When the value is the first one set in a new
-/// month, the value that stood at the previous gauge month's close is captured into a history row
-/// (`max` is the bound in force now, a best effort — a gauge keeps no per-period snapshot).
-#[allow(clippy::too_many_arguments)]
+/// monthly/extra-allowance counters are untouched and no ledger entry is written. When the value is
+/// the first one set in a new month, the value that stood at the previous gauge month's close is
+/// captured into a history row (`max` is the bound in force now, a best effort — a gauge keeps no
+/// per-period snapshot).
 pub fn set_gauge(
     existing: Option<LimitState>,
     tenant_id: &str,
@@ -329,8 +329,6 @@ pub fn set_gauge(
     value: i64,
     max: Option<i64>,
     now: DateTime<Utc>,
-    entry_id: &str,
-    actor: &Actor,
 ) -> Outcome {
     let month = year_month(now);
     let mut state = existing
@@ -358,12 +356,10 @@ pub fn set_gauge(
     state.gauge_value = Some(value);
     state.gauge_month = Some(month);
 
-    let mut ledger = ledger_base(&state, entry_id, now, ledger_type::GAUGE_SET, value, actor);
-    ledger.gauge_value = Some(value);
-
+    // A gauge set records no ledger entry — only the current value and, on a rollover, a history row.
     Outcome {
         state,
-        ledger,
+        ledger: None,
         history,
         carry: None,
         rejected: false,
@@ -444,7 +440,7 @@ pub fn apply_settings_change(
     (
         Outcome {
             state,
-            ledger,
+            ledger: Some(ledger),
             history,
             carry,
             rejected: false,
@@ -460,6 +456,11 @@ mod tests {
 
     fn at(year: i32, month: u32, day: u32) -> DateTime<Utc> {
         Utc.with_ymd_and_hms(year, month, day, 12, 0, 0).unwrap()
+    }
+
+    /// The ledger entry a booking produced (every test that inspects it produces one).
+    fn led(out: &Outcome) -> &LedgerEntry {
+        out.ledger.as_ref().expect("a ledger entry was produced")
     }
 
     fn settings(monthly: Option<i64>, extra_allowance: Option<i64>) -> LimitSettings {
@@ -496,10 +497,10 @@ mod tests {
         assert_eq!(out.state.period_year_month, "2026-09");
         assert_eq!(out.state.monthly_remaining, 700);
         assert_eq!(out.state.extra_allowance_remaining, 200);
-        assert_eq!(out.ledger.entry_type, ledger_type::CONSUME);
-        assert_eq!(out.ledger.monthly_drawn, 300);
-        assert_eq!(out.ledger.overrun, 0);
-        assert_eq!(out.ledger.resulting_monthly, 700);
+        assert_eq!(led(&out).entry_type, ledger_type::CONSUME);
+        assert_eq!(led(&out).monthly_drawn, 300);
+        assert_eq!(led(&out).overrun, 0);
+        assert_eq!(led(&out).resulting_monthly, 700);
         assert!(out.history.is_none());
     }
 
@@ -515,10 +516,10 @@ mod tests {
             320,
             at(2026, 9, 7),
         );
-        assert_eq!(out.ledger.monthly_drawn, 100);
-        assert_eq!(out.ledger.custom_drawn, 50);
-        assert_eq!(out.ledger.extra_allowance_drawn, 170);
-        assert_eq!(out.ledger.overrun, 0);
+        assert_eq!(led(&out).monthly_drawn, 100);
+        assert_eq!(led(&out).custom_drawn, 50);
+        assert_eq!(led(&out).extra_allowance_drawn, 170);
+        assert_eq!(led(&out).overrun, 0);
         assert_eq!(out.state.monthly_remaining, 0);
         assert_eq!(out.state.custom_balance, 0);
         assert_eq!(out.state.extra_allowance_remaining, 30);
@@ -527,8 +528,8 @@ mod tests {
     #[test]
     fn an_overrun_books_to_zero_and_is_recorded() {
         let out = consume(None, &settings(Some(100), None), 250, at(2026, 9, 7));
-        assert_eq!(out.ledger.monthly_drawn, 100);
-        assert_eq!(out.ledger.overrun, 150);
+        assert_eq!(led(&out).monthly_drawn, 100);
+        assert_eq!(led(&out).overrun, 150);
         assert_eq!(out.state.available(), 0);
     }
 
@@ -558,7 +559,7 @@ mod tests {
         let out = consume_p(None, &cfg, 250, at(2026, 9, 7), OverrunPolicy::Track);
         assert!(!out.rejected);
         assert_eq!(out.state.monthly_remaining, 0);
-        assert_eq!(out.ledger.overrun, 150);
+        assert_eq!(led(&out).overrun, 150);
         assert_eq!(out.state.overrun, 150);
         // A second overrun in the same month accumulates.
         let out = consume_p(
@@ -583,7 +584,7 @@ mod tests {
         assert!(!out.rejected);
         assert_eq!(out.state.monthly_remaining, 0);
         // The excess is still on the ledger entry, but not summed into the period counter.
-        assert_eq!(out.ledger.overrun, 150);
+        assert_eq!(led(&out).overrun, 150);
         assert_eq!(out.state.overrun, 0);
     }
 
@@ -653,9 +654,9 @@ mod tests {
             OverrunPolicy::Track,
         );
         assert_eq!(out.state.custom_balance, 250);
-        assert_eq!(out.ledger.entry_type, ledger_type::TOPUP);
-        assert_eq!(out.ledger.custom_added, 250);
-        assert_eq!(out.ledger.resulting_custom, 250);
+        assert_eq!(led(&out).entry_type, ledger_type::TOPUP);
+        assert_eq!(led(&out).custom_added, 250);
+        assert_eq!(led(&out).resulting_custom, 250);
     }
 
     #[test]
@@ -680,7 +681,7 @@ mod tests {
         );
         assert_eq!(out.state.overrun, 40);
         assert_eq!(out.state.custom_balance, 0);
-        assert_eq!(out.ledger.resulting_overrun, 40);
+        assert_eq!(led(&out).resulting_overrun, 40);
         // A larger top-up clears the debt and the remainder becomes balance.
         let out = apply_topup(
             Some(owing(100)),
@@ -815,37 +816,19 @@ mod tests {
 
     #[test]
     fn a_gauge_records_a_value_without_touching_the_counters() {
-        let out = set_gauge(
-            None,
-            "t1",
-            "limit:seats",
-            42,
-            Some(50),
-            at(2026, 9, 7),
-            "entry-1",
-            &Actor::default(),
-        );
+        let out = set_gauge(None, "t1", "limit:seats", 42, Some(50), at(2026, 9, 7));
         assert_eq!(out.state.gauge_value, Some(42));
         assert_eq!(out.state.gauge_month, Some("2026-09".to_owned()));
         assert_eq!(out.state.monthly_remaining, 0);
-        assert_eq!(out.ledger.entry_type, ledger_type::GAUGE_SET);
-        assert_eq!(out.ledger.gauge_value, Some(42));
+        // A gauge writes no ledger entry.
+        assert!(out.ledger.is_none());
         assert!(out.history.is_none());
     }
 
     #[test]
     fn a_gauge_set_in_a_new_month_closes_the_previous_one_into_history() {
         // A value stood in August; setting one in September closes August.
-        let august = set_gauge(
-            None,
-            "t1",
-            "limit:seats",
-            40,
-            Some(50),
-            at(2026, 8, 20),
-            "entry-a",
-            &Actor::default(),
-        );
+        let august = set_gauge(None, "t1", "limit:seats", 40, Some(50), at(2026, 8, 20));
         let september = set_gauge(
             Some(august.state),
             "t1",
@@ -853,8 +836,6 @@ mod tests {
             45,
             Some(50),
             at(2026, 9, 3),
-            "entry-b",
-            &Actor::default(),
         );
         let history = september.history.expect("August closed into history");
         assert_eq!(history.year_month, "2026-08");
@@ -881,9 +862,9 @@ mod tests {
             &actor,
             OverrunPolicy::Track,
         );
-        assert_eq!(out.ledger.actor_user_id.as_deref(), Some("u-42"));
-        assert_eq!(out.ledger.txn_id.as_deref(), Some("req-999"));
-        assert_eq!(out.ledger.source.as_deref(), Some("chat-web"));
+        assert_eq!(led(&out).actor_user_id.as_deref(), Some("u-42"));
+        assert_eq!(led(&out).txn_id.as_deref(), Some("req-999"));
+        assert_eq!(led(&out).source.as_deref(), Some("chat-web"));
     }
 
     #[test]
@@ -983,7 +964,7 @@ mod tests {
         assert_eq!(out.state.monthly_remaining, 1200);
         assert_eq!(out.state.custom_balance, 500);
         assert!(warnings.is_empty());
-        assert_eq!(out.ledger.entry_type, ledger_type::SETTINGS);
+        assert_eq!(led(&out).entry_type, ledger_type::SETTINGS);
     }
 
     #[test]

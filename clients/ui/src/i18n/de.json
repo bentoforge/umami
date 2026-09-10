@@ -210,8 +210,7 @@
       "consume": "Verbrauch",
       "topup": "Gutschrift",
       "settings": "Einstellung",
-      "carry": "Übertrag",
-      "gaugeSet": "Wert gesetzt"
+      "carry": "Übertrag"
     },
     "noHistory": "Noch kein Verlauf.",
     "noLedger": "Noch keine Buchungen."

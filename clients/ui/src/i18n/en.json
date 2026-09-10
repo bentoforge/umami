@@ -210,8 +210,7 @@
       "consume": "Consumption",
       "topup": "Credit",
       "settings": "Settings",
-      "carry": "Carry-over",
-      "gaugeSet": "Gauge set"
+      "carry": "Carry-over"
     },
     "noHistory": "No history yet.",
     "noLedger": "No transactions yet."

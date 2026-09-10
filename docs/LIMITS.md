@@ -184,13 +184,12 @@ so auch bei Mitte-Monat-Settings-Änderung wohldefiniert.
 Append-only, jede Bewegung mit Bucket-Aufschlüsselung. Optional TTL.
 
 ```
-type: consume | topup | reset | gaugeSet | settings | carry
+type: consume | topup | settings | carry        // ein Gauge-`set` schreibt KEINEN Ledger-Eintrag
 amount
-monthlyDrawn, customDrawn, extraAllowanceDrawn     (consume; Reihenfolge = Kaskade)
-overrun                                      (consume, falls über alle Buckets hinaus)
+monthlyDrawn, customDrawn, extraAllowanceDrawn     (consume/carry; Reihenfolge = Kaskade)
+overrun                                      (consume/carry, falls über alle Buckets hinaus)
 customAdded                                  (topup)
-monthlyForfeited, extraAllowanceForfeited           (reset)
-resultingMonthly, resultingCustom, resultingExtraAllowance
+resultingMonthly, resultingCustom, resultingExtraAllowance, resultingOverrun
 // Actor/Kontext — optional, caller-provided, KEINE umami-Validierung:
 actorUserId, txnId, source
 ```

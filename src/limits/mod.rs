@@ -107,8 +107,6 @@ pub mod ledger_type {
     pub const CONSUME: &str = "consume";
     /// A top-up of the persistent custom balance.
     pub const TOPUP: &str = "topup";
-    /// A gauge value set.
-    pub const GAUGE_SET: &str = "gaugeSet";
     /// A per-tenant settings change reconciled against the live counters.
     pub const SETTINGS: &str = "settings";
     /// A prior month's overrun carried into this month (`carry` policy), drawn across the buckets.
@@ -151,9 +149,6 @@ pub struct LedgerEntry {
     /// Top-up: added to the custom balance.
     #[serde(default)]
     pub custom_added: i64,
-    /// Gauge: the value set.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub gauge_value: Option<i64>,
     /// The monthly-remaining after the movement.
     pub resulting_monthly: i64,
     /// The custom balance after the movement.

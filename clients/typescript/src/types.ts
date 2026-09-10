@@ -899,11 +899,11 @@ export interface LedgerEntry {
   extraAllowanceDrawn: number;
   overrun: number;
   customAdded: number;
-  /** Present only for a gauge report. */
-  gaugeValue?: number;
   resultingMonthly: number;
   resultingCustom: number;
   resultingExtraAllowance: number;
+  /** The overrun debt after the movement. */
+  resultingOverrun: number;
   /** Opaque caller-provided ids, each capped at 64 characters at ingress. `source` is the calling
    * component/client; with `txnId` it identifies exactly which call produced the entry. */
   actorUserId?: string;
