@@ -27,12 +27,14 @@ pub struct Actor {
 /// The result of one booking operation: the state to persist, the ledger entry it produced, and —
 /// when the operation crossed a month boundary — the closed month's history row. `rejected` is set
 /// only by a `reject`-policy `consume` that could not be covered: the service turns it into a 429
-/// and nothing is written.
+/// and nothing is written. `carry` is the extra ledger entry a `carry`-policy rollover produces when
+/// it books the previous month's overrun into this one — written atomically alongside `ledger`.
 #[derive(Debug, Clone)]
 pub struct Outcome {
     pub state: LimitState,
     pub ledger: LedgerEntry,
     pub history: Option<HistoryRow>,
+    pub carry: Option<LedgerEntry>,
     pub rejected: bool,
 }
 
@@ -64,22 +66,27 @@ fn refresh_daily(
     state
 }
 
-/// The state as it applies to `now`'s month, plus the history row if a stale month was closed.
+/// The state as it applies to `now`'s month, plus the history row if a stale month was closed and —
+/// under the `carry` policy — the `carry` ledger entry that books the closed month's overrun into
+/// the new one.
 ///
 /// If the stored period is stale — a real prior month — its aggregates become a [`HistoryRow`] and
-/// the monthly/extra-allowance counters reset from `settings`, while the persistent custom balance and the
-/// gauge value carry over. With no state yet, a fresh row and no history. Pure: the caller decides
-/// whether to persist (a read projects and discards, a write commits).
+/// the monthly/extra-allowance counters reset from `settings`, while the persistent custom balance
+/// and the gauge value carry over. With no state yet, a fresh row, no history, no carry. Pure: the
+/// caller decides whether to persist (a read projects and discards, a write commits). `carry_entry_id`
+/// is used only when a `carry` entry is actually produced.
 pub fn rolled_over(
     existing: Option<LimitState>,
     tenant_id: &str,
     code: &str,
     settings: &LimitSettings,
+    policy: OverrunPolicy,
     now: DateTime<Utc>,
-) -> (LimitState, Option<HistoryRow>) {
+    carry_entry_id: &str,
+) -> (LimitState, Option<HistoryRow>, Option<LedgerEntry>) {
     let month = year_month(now);
-    let (state, history) = match existing {
-        Some(state) if state.period_year_month == month => (state, None),
+    let (state, history, carry) = match existing {
+        Some(state) if state.period_year_month == month => (state, None, None),
         Some(state) => {
             let history = HistoryRow {
                 tenant_id: state.tenant_id.clone(),
@@ -96,9 +103,10 @@ pub fn rolled_over(
                 gauge_value: None,
                 gauge_max: None,
             };
+            let carried = state.overrun;
             let monthly = settings.monthly.unwrap_or(0);
             let extra_allowance = settings.extra_allowance.unwrap_or(0);
-            let new_state = LimitState {
+            let mut new_state = LimitState {
                 period_year_month: month,
                 monthly_remaining: monthly,
                 extra_allowance_remaining: extra_allowance,
@@ -109,11 +117,43 @@ pub fn rolled_over(
                 // rollover; the daily throttle is refreshed below on its own (daily) schedule.
                 ..state
             };
-            (new_state, Some(history))
+            // `carry`: the closed month's overrun becomes the new month's opening debt, drawn like a
+            // first usage across custom → monthly → extra allowance. Whatever is left over stays as
+            // overrun and rolls again next month — one pass, no recursion.
+            let carry = if policy == OverrunPolicy::Carry && carried > 0 {
+                let mut debt = carried;
+                let custom_drawn = draw_pay(&mut new_state.custom_balance, debt);
+                debt -= custom_drawn;
+                let monthly_drawn = draw_pay(&mut new_state.monthly_remaining, debt);
+                debt -= monthly_drawn;
+                let extra_drawn = draw_pay(&mut new_state.extra_allowance_remaining, debt);
+                debt -= extra_drawn;
+                new_state.overrun = debt;
+                let mut ledger = ledger_base(
+                    &new_state,
+                    carry_entry_id,
+                    now,
+                    ledger_type::CARRY,
+                    carried,
+                    &Actor::default(),
+                );
+                ledger.monthly_drawn = monthly_drawn;
+                ledger.custom_drawn = custom_drawn;
+                ledger.extra_allowance_drawn = extra_drawn;
+                ledger.overrun = debt;
+                Some(ledger)
+            } else {
+                None
+            };
+            (new_state, Some(history), carry)
         }
-        None => (LimitState::fresh(tenant_id, code, &month, settings), None),
+        None => (
+            LimitState::fresh(tenant_id, code, &month, settings),
+            None,
+            None,
+        ),
     };
-    (refresh_daily(state, settings, now), history)
+    (refresh_daily(state, settings, now), history, carry)
 }
 
 /// A ledger entry pre-filled with identity, timestamp, actor and the post-movement balances.
@@ -192,16 +232,20 @@ pub fn apply_consume(
     actor: &Actor,
     policy: OverrunPolicy,
 ) -> Outcome {
-    let (mut state, history) = rolled_over(existing, tenant_id, code, settings, now);
+    let carry_id = format!("{entry_id}-carry");
+    let (mut state, history, carry) =
+        rolled_over(existing, tenant_id, code, settings, policy, now, &carry_id);
     let want = amount.max(0);
 
     // Reject: a booking that cannot be fully covered changes nothing — the service returns a 429.
+    // (`reject` never carries, so `carry` is `None` here.)
     if policy == OverrunPolicy::Reject && want > state.available() {
         let ledger = ledger_base(&state, entry_id, now, ledger_type::CONSUME, amount, actor);
         return Outcome {
             state,
             ledger,
             history,
+            carry,
             rejected: true,
         };
     }
@@ -234,6 +278,7 @@ pub fn apply_consume(
         state,
         ledger,
         history,
+        carry,
         rejected: false,
     }
 }
@@ -250,8 +295,11 @@ pub fn apply_topup(
     now: DateTime<Utc>,
     entry_id: &str,
     actor: &Actor,
+    policy: OverrunPolicy,
 ) -> Outcome {
-    let (mut state, history) = rolled_over(existing, tenant_id, code, settings, now);
+    let carry_id = format!("{entry_id}-carry");
+    let (mut state, history, carry) =
+        rolled_over(existing, tenant_id, code, settings, policy, now, &carry_id);
     let added = amount.max(0);
     state.custom_balance += added;
     // Fresh credit retires prior overrun first (bookkeeping): the debt drops, the rest stays balance.
@@ -264,6 +312,7 @@ pub fn apply_topup(
         state,
         ledger,
         history,
+        carry,
         rejected: false,
     }
 }
@@ -316,6 +365,7 @@ pub fn set_gauge(
         state,
         ledger,
         history,
+        carry: None,
         rejected: false,
     }
 }
@@ -338,8 +388,11 @@ pub fn apply_settings_change(
     now: DateTime<Utc>,
     entry_id: &str,
     actor: &Actor,
+    policy: OverrunPolicy,
 ) -> (Outcome, Vec<String>) {
-    let (mut state, history) = rolled_over(existing, tenant_id, code, settings, now);
+    let carry_id = format!("{entry_id}-carry");
+    let (mut state, history, carry) =
+        rolled_over(existing, tenant_id, code, settings, policy, now, &carry_id);
     let mut warnings = Vec::new();
 
     // Monthly: what is already used stays used. A rise grows the remaining; a fall below usage caps
@@ -393,6 +446,7 @@ pub fn apply_settings_change(
             state,
             ledger,
             history,
+            carry,
             rejected: false,
         },
         warnings,
@@ -596,6 +650,7 @@ mod tests {
             at(2026, 9, 7),
             "entry-1",
             &Actor::default(),
+            OverrunPolicy::Track,
         );
         assert_eq!(out.state.custom_balance, 250);
         assert_eq!(out.ledger.entry_type, ledger_type::TOPUP);
@@ -621,6 +676,7 @@ mod tests {
             at(2026, 9, 7),
             "e1",
             &Actor::default(),
+            OverrunPolicy::Track,
         );
         assert_eq!(out.state.overrun, 40);
         assert_eq!(out.state.custom_balance, 0);
@@ -635,9 +691,90 @@ mod tests {
             at(2026, 9, 7),
             "e2",
             &Actor::default(),
+            OverrunPolicy::Track,
         );
         assert_eq!(out.state.overrun, 0);
         assert_eq!(out.state.custom_balance, 150);
+    }
+
+    #[test]
+    fn carry_books_a_prior_month_overrun_into_the_next() {
+        // September closed 150 in overrun; October opens with 1000 monthly + 200 extra, no balance.
+        let mut prior = LimitState::fresh("t1", "limit:ai", "2026-09", &settings(Some(1000), None));
+        prior.monthly_remaining = 0;
+        prior.overrun = 150;
+
+        // The first October booking rolls over: the 150 is drawn (custom 0 → monthly) as a `carry`.
+        let out = apply_consume(
+            Some(prior),
+            "t1",
+            "limit:ai",
+            &settings(Some(1000), Some(200)),
+            50,
+            at(2026, 10, 2),
+            "oct-1",
+            &Actor::default(),
+            OverrunPolicy::Carry,
+        );
+        let carry = out.carry.expect("a carry entry was produced");
+        assert_eq!(carry.entry_type, ledger_type::CARRY);
+        assert_eq!(carry.amount, 150);
+        assert_eq!(carry.monthly_drawn, 150);
+        assert_eq!(carry.overrun, 0);
+        // History records September's overrun; the closed month is untouched by the carry.
+        assert_eq!(out.history.expect("September closed").overrun, 150);
+        // October: 1000 − 150 carry − 50 consume = 800 monthly left, extra untouched, no overrun.
+        assert_eq!(out.state.monthly_remaining, 800);
+        assert_eq!(out.state.extra_allowance_remaining, 200);
+        assert_eq!(out.state.overrun, 0);
+    }
+
+    #[test]
+    fn carry_beyond_the_new_budget_rolls_again() {
+        // A 1500 overrun against only 1000 + 200 available: 300 stays as overrun and carries on.
+        let mut prior = LimitState::fresh("t1", "limit:ai", "2026-09", &settings(Some(1000), None));
+        prior.overrun = 1500;
+        let out = apply_topup(
+            Some(prior),
+            "t1",
+            "limit:ai",
+            &settings(Some(1000), Some(200)),
+            0,
+            at(2026, 10, 2),
+            "oct-1",
+            &Actor::default(),
+            OverrunPolicy::Carry,
+        );
+        let carry = out.carry.expect("a carry entry was produced");
+        assert_eq!(carry.monthly_drawn, 1000);
+        assert_eq!(carry.extra_allowance_drawn, 200);
+        assert_eq!(carry.overrun, 300);
+        // Everything spendable is drawn to zero; the residual debt rides on.
+        assert_eq!(out.state.monthly_remaining, 0);
+        assert_eq!(out.state.extra_allowance_remaining, 0);
+        assert_eq!(out.state.overrun, 300);
+    }
+
+    #[test]
+    fn track_does_not_carry_the_overrun_forward() {
+        // The same setup under `track`: the overrun closes into history and the new month opens clean.
+        let mut prior = LimitState::fresh("t1", "limit:ai", "2026-09", &settings(Some(1000), None));
+        prior.overrun = 150;
+        let out = apply_consume(
+            Some(prior),
+            "t1",
+            "limit:ai",
+            &settings(Some(1000), None),
+            50,
+            at(2026, 10, 2),
+            "oct-1",
+            &Actor::default(),
+            OverrunPolicy::Track,
+        );
+        assert!(out.carry.is_none());
+        assert_eq!(out.history.expect("September closed").overrun, 150);
+        assert_eq!(out.state.monthly_remaining, 950);
+        assert_eq!(out.state.overrun, 0);
     }
 
     #[test]
@@ -655,6 +792,7 @@ mod tests {
             at(2026, 9, 7),
             "e1",
             &Actor::default(),
+            OverrunPolicy::Track,
         );
         assert_eq!(out.state.monthly_remaining, 0);
         assert_eq!(out.state.overrun, 300);
@@ -669,6 +807,7 @@ mod tests {
             at(2026, 9, 7),
             "e2",
             &Actor::default(),
+            OverrunPolicy::Track,
         );
         assert_eq!(out.state.overrun, 0);
         assert_eq!(out.state.monthly_remaining, 200);
@@ -832,6 +971,7 @@ mod tests {
             at(2026, 9, 7),
             "e1",
             &Actor::default(),
+            OverrunPolicy::Track,
         )
     }
 
@@ -880,6 +1020,7 @@ mod tests {
             at(2026, 9, 7),
             "e1",
             &Actor::default(),
+            OverrunPolicy::Track,
         );
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains("gauge"), "{:?}", warnings);
@@ -894,12 +1035,14 @@ mod tests {
             &settings(Some(1000), Some(100)),
         );
         prior.monthly_remaining = 5;
-        let (view, _history) = rolled_over(
+        let (view, _history, _carry) = rolled_over(
             Some(prior),
             "t1",
             "limit:ai",
             &settings(Some(1000), Some(100)),
+            OverrunPolicy::Track,
             at(2026, 10, 1),
+            "e-carry",
         );
         assert_eq!(view.period_year_month, "2026-10");
         assert_eq!(view.monthly_remaining, 1000);

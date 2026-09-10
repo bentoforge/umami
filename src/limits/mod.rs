@@ -111,6 +111,8 @@ pub mod ledger_type {
     pub const GAUGE_SET: &str = "gaugeSet";
     /// A per-tenant settings change reconciled against the live counters.
     pub const SETTINGS: &str = "settings";
+    /// A prior month's overrun carried into this month (`carry` policy), drawn across the buckets.
+    pub const CARRY: &str = "carry";
 }
 
 /// One append-only transaction in a limit's ledger — what came in, what went out, and how much from

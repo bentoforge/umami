@@ -473,6 +473,11 @@ pub enum OverrunPolicy {
     /// Book to zero and drop the uncovered excess (still recorded on the ledger entry, but not summed
     /// into the period counter) — a soft, best-effort throttle.
     Ignore,
+    /// Like `track`, but the overrun does not expire at month end: it is carried into the next month
+    /// as a `carry` booking that draws it down across custom balance → monthly → extra allowance,
+    /// like a first usage. Whatever still cannot be covered stays as that month's overrun and carries
+    /// again — a running tab, not a monthly write-off.
+    Carry,
 }
 
 /// A limit: a per-tenant quota. The definition lives here; the per-tenant values on the tenant

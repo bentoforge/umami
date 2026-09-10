@@ -291,7 +291,7 @@ export interface CatalogueEntry {
 export type LimitKind = "consumable" | "gauge";
 
 /** What `consume` does when a booking exceeds everything available. */
-export type OverrunPolicy = "track" | "reject" | "ignore";
+export type OverrunPolicy = "track" | "reject" | "ignore" | "carry";
 
 /** One limit definition with its labels resolved into the caller's language, plus the facets and
  * watermarks that shape its per-tenant editor. Arrives in {@link Catalogue.limits}. */

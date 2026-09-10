@@ -273,6 +273,7 @@ impl Seeder {
             when,
             &generate_id(),
             &Self::actor(),
+            OverrunPolicy::Track,
         );
         self.commit(outcome).await
     }

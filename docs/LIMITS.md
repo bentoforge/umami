@@ -184,7 +184,7 @@ so auch bei Mitte-Monat-Settings-Änderung wohldefiniert.
 Append-only, jede Bewegung mit Bucket-Aufschlüsselung. Optional TTL.
 
 ```
-type: consume | topup | reset | gaugeSet | settings
+type: consume | topup | reset | gaugeSet | settings | carry
 amount
 monthlyDrawn, customDrawn, extraAllowanceDrawn     (consume; Reihenfolge = Kaskade)
 overrun                                      (consume, falls über alle Buckets hinaus)
@@ -247,6 +247,12 @@ Reicht die Summe nicht, entscheidet die Policy des Limits, was mit dem Überstan
   Prepaid-Gating, wo `consume` als Reserve-then-use genutzt wird.
 - **`ignore`**: auf 0 buchen, Überstand fallen lassen (nur im Ledger-Eintrag, kein Zähler) — weiches
   Best-effort-Throttling.
+- **`carry`**: wie `track`, aber der `overrun` verfällt **nicht** am Monatsende — er wird in den
+  Folgemonat übernommen. Beim Rollover bucht ein eigener `carry`-Ledger-Eintrag den Überstand wie
+  eine erste Nutzung ab: **custom balance → monthly → extraAllowance**. Was auch das nicht deckt,
+  bleibt der `overrun` des neuen Monats und rollt weiter — ein laufender Deckel, kein monatlicher
+  Reset. Ein einziger Durchlauf je Rollover, keine Rekursion; atomar mit dem State/History-Write
+  (`compare_and_swap` schreibt State + Buchung + `carry` + History in *einer* Transaktion).
 
 Keine negativen Buckets — der Überstand lebt im Zähler, nicht als Minus-Guthaben. Nur bei
 `Consumable` erlaubt (Gauge-Validierung lehnt eine Nicht-Default-Policy ab).

@@ -242,8 +242,23 @@ async fn list_limits(
         // what is actually left without needing the booking permission.
         let state = match limits.load_state(&tenant_id, &code).await? {
             Some(state) => {
-                let (view, _closed) =
-                    accounting::rolled_over(Some(state), &tenant_id, &code, &settings, now);
+                // The projection reflects a pending `carry` in the displayed balances; the carry
+                // ledger itself is discarded (it is written on the next actual booking).
+                let policy = config
+                    .limits
+                    .iter()
+                    .find(|def| def.code == code)
+                    .map(|def| def.overrun_policy)
+                    .unwrap_or_default();
+                let (view, _closed, _carry) = accounting::rolled_over(
+                    Some(state),
+                    &tenant_id,
+                    &code,
+                    &settings,
+                    policy,
+                    now,
+                    "",
+                );
                 Some(LimitStateView::of(&view))
             }
             None => None,
@@ -276,6 +291,12 @@ async fn set_limit_settings(
     if !clearing {
         config.validate_limit_settings(&code, &settings)?;
     }
+    let policy = config
+        .limits
+        .iter()
+        .find(|def| def.code == code)
+        .map(|def| def.overrun_policy)
+        .unwrap_or_default();
 
     // A value change against an existing state row may re-book overrun (a cut below usage adds debt;
     // a rise retires it). That is a real ledger movement, so unless the caller confirmed it, preview
@@ -285,8 +306,15 @@ async fn set_limit_settings(
         && let Some(state) = limits.load_state(&tenant_id, &code).await?
     {
         let now = Utc::now();
-        let (rolled, _) =
-            accounting::rolled_over(Some(state.clone()), &tenant_id, &code, &settings, now);
+        let (rolled, _, _) = accounting::rolled_over(
+            Some(state.clone()),
+            &tenant_id,
+            &code,
+            &settings,
+            policy,
+            now,
+            "",
+        );
         let (outcome, warnings) = accounting::apply_settings_change(
             Some(state),
             &tenant_id,
@@ -295,6 +323,7 @@ async fn set_limit_settings(
             now,
             &generate_id(),
             &settings_actor(&caller),
+            policy,
         );
         if outcome.state.overrun != rolled.overrun {
             return Ok(SettingsResponse {
@@ -323,7 +352,7 @@ async fn set_limit_settings(
     let warnings = if clearing {
         Vec::new()
     } else {
-        reconcile_limit_state(&limits, &tenant_id, &code, &settings, &caller).await?
+        reconcile_limit_state(&limits, &tenant_id, &code, &settings, &caller, policy).await?
     };
     Ok(SettingsResponse {
         status: "saved",
@@ -361,6 +390,7 @@ async fn reconcile_limit_state(
     code: &str,
     settings: &LimitSettings,
     caller: &AuthUser,
+    policy: OverrunPolicy,
 ) -> anyhow::Result<Vec<String>> {
     if limits.load_state(tenant_id, code).await?.is_none() {
         return Ok(Vec::new());
@@ -370,7 +400,7 @@ async fn reconcile_limit_state(
     let entry_id = generate_id();
     let (_outcome, warnings) = commit_state(limits, tenant_id, code, |existing| {
         accounting::apply_settings_change(
-            existing, tenant_id, code, settings, now, &entry_id, &actor,
+            existing, tenant_id, code, settings, now, &entry_id, &actor, policy,
         )
     })
     .await?;
@@ -751,12 +781,19 @@ async fn check_limit(
     if request.amount < 0 {
         client_bail!("amount must not be negative");
     }
-    let (settings, _policy) = consumable_settings(&tenant_id, &code, &tenants, &config).await?;
-    // Read-only: project the current month/day in memory (rolling a stale period over) without a
-    // write.
+    let (settings, policy) = consumable_settings(&tenant_id, &code, &tenants, &config).await?;
+    // Read-only: project the current month/day in memory (rolling a stale period over, carry
+    // reflected in the balances) without a write.
     let existing = limits.load_state(&tenant_id, &code).await?;
-    let (view, _closed) =
-        accounting::rolled_over(existing, &tenant_id, &code, &settings, Utc::now());
+    let (view, _closed, _carry) = accounting::rolled_over(
+        existing,
+        &tenant_id,
+        &code,
+        &settings,
+        policy,
+        Utc::now(),
+        "",
+    );
     // The daily throttle is an independent gate on top of the spendable buckets.
     let daily_ok = settings.daily.is_none() || view.daily_remaining >= request.amount;
     Ok(CheckResponse {
@@ -817,6 +854,7 @@ async fn topup_limit(
     if def.kind != LimitKind::Consumable || !def.custom_balance {
         client_bail!("Limit '{code}' has no top-up balance");
     }
+    let policy = def.overrun_policy;
     let settings = tenant_limit_settings(&tenants, &tenant_id, &code).await?;
     let amount = request.amount;
     let actor = request.actor.into_actor()?;
@@ -825,7 +863,7 @@ async fn topup_limit(
     let (outcome, ()) = commit_state(&limits, &tenant_id, &code, |existing| {
         (
             accounting::apply_topup(
-                existing, &tenant_id, &code, &settings, amount, now, &entry_id, &actor,
+                existing, &tenant_id, &code, &settings, amount, now, &entry_id, &actor, policy,
             ),
             (),
         )

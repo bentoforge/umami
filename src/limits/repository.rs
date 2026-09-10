@@ -226,6 +226,19 @@ impl LimitRepository for DynamoLimitRepository {
             TransactWriteItem::builder().put(ledger_put).build(),
         ];
 
+        // Carry: a second ledger entry a `carry`-policy rollover produced, booking the closed
+        // month's overrun into this one — appended in the same atomic transaction.
+        if let Some(carry) = &outcome.carry {
+            let mut entry = ItemBuilder::from_entity(carry)?;
+            entry.add_str(FIELD_LEDGER_SK, ledger_sort_key(carry));
+            let carry_put = Put::builder()
+                .table_name(self.client.effective_name(TABLE_LIMIT_LEDGER))
+                .set_item(Some(entry.build()))
+                .build()
+                .context("Error building carry limit-ledger transaction put")?;
+            items.push(TransactWriteItem::builder().put(carry_put).build());
+        }
+
         // History: written once per closed month (idempotent), only on a rollover.
         if let Some(history) = &outcome.history {
             let mut row = ItemBuilder::from_entity(history)?;
