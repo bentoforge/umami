@@ -782,7 +782,10 @@ function LedgerView({
   const [entries, setEntries] = useState<LedgerEntry[] | null>(null);
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [busy, setBusy] = useState(false);
-  const [explaining, setExplaining] = useState<LedgerEntry | null>(null);
+  const [explaining, setExplaining] = useState<{
+    entry: LedgerEntry;
+    prev?: LedgerEntry;
+  } | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -825,7 +828,13 @@ function LedgerView({
   const muted = "font-mono text-xs text-slate-400 dark:text-slate-500";
 
   if (explaining) {
-    return <BookingDetail entry={explaining} onBack={() => setExplaining(null)} />;
+    return (
+      <BookingDetail
+        entry={explaining.entry}
+        prev={explaining.prev}
+        onBack={() => setExplaining(null)}
+      />
+    );
   }
 
   return (
@@ -849,12 +858,13 @@ function LedgerView({
               </tr>
             </thead>
             <tbody>
-              {entries.map((e) => {
+              {entries.map((e, index) => {
                 const actions: MenuAction[] = [
                   {
                     label: t("limits.explain"),
+                    // The older neighbour's resulting balances are this entry's "before".
+                    onSelect: () => setExplaining({ entry: e, prev: entries[index + 1] }),
                     icon: MagnifyingGlassIcon,
-                    onSelect: () => setExplaining(e),
                   },
                 ];
                 const copies: MenuAction[] = [];
@@ -892,10 +902,7 @@ function LedgerView({
                     </td>
                     <td className={`${td} whitespace-nowrap ${muted}`}>
                       {formatNumber(e.resultingMonthly)} · {formatNumber(e.resultingCustom)} ·{" "}
-                      {formatNumber(e.resultingExtraAllowance)} ·{" "}
-                      <span className={e.resultingOverrun > 0 ? "text-amber-500" : undefined}>
-                        {formatNumber(e.resultingOverrun)}
-                      </span>
+                      {formatNumber(e.resultingExtraAllowance)} · {formatNumber(e.resultingOverrun)}
                     </td>
                     <td className={`${td} text-right`}>
                       <DropdownMenu actions={actions} label={t("common.moreActions")} />
@@ -950,17 +957,6 @@ function LedgerAmount({ entry }: { entry: LedgerEntry }) {
   return <span>{value}</span>;
 }
 
-/** Colour for a signed figure: any negative red, a positive movement green, everything else muted. */
-function figureClass(value: number, isDelta: boolean): string {
-  if (value < 0) {
-    return "text-red-600 dark:text-red-400";
-  }
-  if (isDelta && value > 0) {
-    return "text-green-600 dark:text-green-400";
-  }
-  return "text-slate-500 dark:text-slate-400";
-}
-
 /** One `label | value` meta row of the booking detail; the value spans the three number columns. */
 function MetaRow({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -974,25 +970,35 @@ function MetaRow({ label, children }: { label: string; children: ReactNode }) {
 }
 
 /** An accounting-style breakdown of a single ledger entry: its meta, then each internal account's
- * before → delta → after, in the draw cascade's order. `before` is reconstructed as `after − delta`
- * from the recorded movement (exact for a consume/carry/top-up). */
-function BookingDetail({ entry, onBack }: { entry: LedgerEntry; onBack: () => void }) {
+ * before → delta → after, in the draw cascade's order. `before` is the previous (older) entry's
+ * resulting balance — the states chain, so this is exact for every entry type; it shows "—" when the
+ * previous entry is not loaded (the oldest on screen). */
+function BookingDetail({
+  entry,
+  prev,
+  onBack,
+}: {
+  entry: LedgerEntry;
+  prev?: LedgerEntry;
+  onBack: () => void;
+}) {
   const { t } = useTranslation();
-  const num = "text-right font-mono tabular-nums";
+  const num = "text-right font-mono tabular-nums text-slate-600 dark:text-slate-300";
+  const dash = <span className="text-slate-400 dark:text-slate-500">—</span>;
 
   const accounts = [
-    { label: t("limits.monthlyBudget"), after: entry.resultingMonthly, delta: -entry.monthlyDrawn },
     {
-      label: t("limits.balance"),
-      after: entry.resultingCustom,
-      delta: entry.customAdded - entry.customDrawn,
+      label: t("limits.monthlyBudget"),
+      after: entry.resultingMonthly,
+      before: prev?.resultingMonthly,
     },
+    { label: t("limits.balance"), after: entry.resultingCustom, before: prev?.resultingCustom },
     {
       label: t("limits.extraAllowance"),
       after: entry.resultingExtraAllowance,
-      delta: -entry.extraAllowanceDrawn,
+      before: prev?.resultingExtraAllowance,
     },
-    { label: t("limits.overrun"), after: entry.resultingOverrun, delta: entry.overrun },
+    { label: t("limits.overrun"), after: entry.resultingOverrun, before: prev?.resultingOverrun },
   ];
 
   return (
@@ -1030,21 +1036,21 @@ function BookingDetail({ entry, onBack }: { entry: LedgerEntry; onBack: () => vo
               <td className={`${td} text-right`}>{t("limits.delta")}</td>
               <td className={`${td} text-right`}>{t("limits.after")}</td>
             </tr>
-            {accounts.map((a) => (
-              <tr key={a.label} className="border-b border-slate-100 dark:border-slate-700/50">
-                <td className={`${td} whitespace-nowrap`}>{a.label}</td>
-                <td className={`${td} ${num} ${figureClass(a.after - a.delta, false)}`}>
-                  {formatNumber(a.after - a.delta)}
-                </td>
-                <td className={`${td} ${num} ${figureClass(a.delta, true)}`}>
-                  {a.delta > 0 ? "+" : ""}
-                  {formatNumber(a.delta)}
-                </td>
-                <td className={`${td} ${num} ${figureClass(a.after, false)}`}>
-                  {formatNumber(a.after)}
-                </td>
-              </tr>
-            ))}
+            {accounts.map((a) => {
+              const delta = a.before != null ? a.after - a.before : null;
+              return (
+                <tr key={a.label} className="border-b border-slate-100 dark:border-slate-700/50">
+                  <td className={`${td} whitespace-nowrap`}>{a.label}</td>
+                  <td className={`${td} ${num}`}>
+                    {a.before != null ? formatNumber(a.before) : dash}
+                  </td>
+                  <td className={`${td} ${num}`}>
+                    {delta != null ? `${delta > 0 ? "+" : ""}${formatNumber(delta)}` : dash}
+                  </td>
+                  <td className={`${td} ${num}`}>{formatNumber(a.after)}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
