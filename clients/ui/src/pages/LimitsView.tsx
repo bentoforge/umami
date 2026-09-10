@@ -874,8 +874,8 @@ function LedgerView({
                       <LedgerAmount entry={e} />
                     </td>
                     <td className={`${td} whitespace-nowrap ${muted}`}>
-                      {formatNumber(e.resultingMonthly)} · {formatNumber(e.resultingExtraAllowance)}{" "}
-                      · {formatNumber(e.resultingCustom)} ·{" "}
+                      {formatNumber(e.resultingMonthly)} · {formatNumber(e.resultingCustom)} ·{" "}
+                      {formatNumber(e.resultingExtraAllowance)} ·{" "}
                       <span className={e.resultingOverrun > 0 ? "text-amber-500" : undefined}>
                         {formatNumber(e.resultingOverrun)}
                       </span>
@@ -907,7 +907,7 @@ function LedgerView({
           <p className="mt-2 text-xs text-slate-400 dark:text-slate-500">
             *{" "}
             {t("limits.standFootnote", {
-              accounts: `${t("limits.monthlyBudget")} · ${t("limits.extraAllowance")} · ${t("limits.balance")} · ${t("limits.overrun")}`,
+              accounts: `${t("limits.monthlyBudget")} · ${t("limits.balance")} · ${t("limits.extraAllowance")} · ${t("limits.overrun")}`,
             })}
           </p>
         </div>
