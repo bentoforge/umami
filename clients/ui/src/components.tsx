@@ -87,6 +87,13 @@ export function formatDateTime(value: string | number | Date): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${time}`;
 }
 
+/** Locale-aware integer formatting — thousands grouping per the active language (de: `1.000`, en:
+ * `1,000`). Reads the current i18n language at call time, like {@link formatDateTime}, so a language
+ * switch reformats on the next render. */
+export function formatNumber(value: number): string {
+  return new Intl.NumberFormat(i18n.language).format(value);
+}
+
 /** Renders audit entries as a severity-dotted list (message + timestamp). */
 export function AuditList({ entries }: { entries: AuditEntry[] }) {
   const dot: Record<string, string> = {

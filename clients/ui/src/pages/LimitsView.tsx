@@ -22,6 +22,7 @@ import {
   errMsg,
   Field,
   formatDateTime,
+  formatNumber,
   Loader,
   type MenuAction,
 } from "../components";
@@ -430,10 +431,10 @@ function LimitRow({
               </span>
             </td>
             <td className={`${cell} text-right font-mono`}>
-              {line.ceiling != null ? `${line.ceiling}${unit}` : ""}
+              {line.ceiling != null ? `${formatNumber(line.ceiling)}${unit}` : ""}
             </td>
             <td className={`${cell} text-right font-mono font-medium`}>
-              {line.value}
+              {formatNumber(line.value)}
               {unit}
             </td>
             {i === 0 && (
@@ -835,9 +836,12 @@ function LedgerView({
                   <tr key={e.id} className="border-b border-slate-100 dark:border-slate-700/50">
                     <td className={`${td} whitespace-nowrap`}>{formatDateTime(e.timestamp)}</td>
                     <td className={td}>{e.type}</td>
-                    <td className={td}>{e.gaugeValue != null ? e.gaugeValue : e.amount}</td>
+                    <td className={td}>
+                      {formatNumber(e.gaugeValue != null ? e.gaugeValue : e.amount)}
+                    </td>
                     <td className={`${td} whitespace-nowrap font-mono text-xs`}>
-                      {e.resultingMonthly} · {e.resultingCustom} · {e.resultingExtraAllowance}
+                      {formatNumber(e.resultingMonthly)} · {formatNumber(e.resultingCustom)} ·{" "}
+                      {formatNumber(e.resultingExtraAllowance)}
                     </td>
                     <td className={`${td} font-mono text-xs text-slate-400 dark:text-slate-500`}>
                       {e.source ?? "—"}
@@ -930,13 +934,13 @@ function HistoryView({
                   className="border-b border-slate-100 dark:border-slate-700/50"
                 >
                   <td className={`${td} whitespace-nowrap font-mono`}>{m.yearMonth}</td>
-                  <td className={td}>{m.monthlyIncluded}</td>
-                  <td className={td}>{m.monthlyUsed}</td>
-                  <td className={td}>{m.monthlyForfeited}</td>
+                  <td className={td}>{formatNumber(m.monthlyIncluded)}</td>
+                  <td className={td}>{formatNumber(m.monthlyUsed)}</td>
+                  <td className={td}>{formatNumber(m.monthlyForfeited)}</td>
                   <td className={td}>
-                    {m.extraAllowanceUsed} / {m.extraAllowanceLimit}
+                    {formatNumber(m.extraAllowanceUsed)} / {formatNumber(m.extraAllowanceLimit)}
                   </td>
-                  <td className={td}>{m.endingCustomBalance}</td>
+                  <td className={td}>{formatNumber(m.endingCustomBalance)}</td>
                 </tr>
               ))}
             </tbody>
