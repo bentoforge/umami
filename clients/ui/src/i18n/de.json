@@ -199,6 +199,7 @@
     "when": "Wann",
     "type": "Typ",
     "amount": "Menge",
+    "standFootnote": "Gibt die Werte der intern geführten Konten ({{accounts}}) nach der Buchung aus.",
     "transaction": "Transaktion",
     "user": "Benutzer",
     "resulting": "Ergebnis (m · c · e)",

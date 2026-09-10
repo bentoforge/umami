@@ -199,6 +199,7 @@
     "when": "When",
     "type": "Type",
     "amount": "Amount",
+    "standFootnote": "The internal account balances ({{accounts}}) after the booking.",
     "transaction": "Transaction",
     "user": "User",
     "resulting": "Resulting (m · c · e)",

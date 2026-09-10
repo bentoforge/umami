@@ -836,7 +836,9 @@ function LedgerView({
                 <th className={th}>{t("limits.when")}</th>
                 <th className={th}>{t("limits.type")}</th>
                 <th className={`${th} text-right`}>{t("limits.amount")}</th>
-                <th className={th}>{t("limits.current")}</th>
+                <th className={th}>
+                  {t("limits.current")} <span className="text-slate-400">*</span>
+                </th>
                 <th className={th} />
               </tr>
             </thead>
@@ -902,6 +904,12 @@ function LedgerView({
               )}
             </tbody>
           </table>
+          <p className="mt-2 text-xs text-slate-400 dark:text-slate-500">
+            *{" "}
+            {t("limits.standFootnote", {
+              accounts: `${t("limits.monthlyBudget")} · ${t("limits.extraAllowance")} · ${t("limits.balance")} · ${t("limits.overrun")}`,
+            })}
+          </p>
         </div>
       )}
       <BackButton onClick={onBack} />
