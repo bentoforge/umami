@@ -899,6 +899,14 @@ export interface LedgerEntry {
   extraAllowanceDrawn: number;
   overrun: number;
   customAdded: number;
+  /** Signed net change per account (`resulting − before`), server-computed so the client can read
+   * `before = resulting − delta` off a single entry without chaining across the ledger. Captures
+   * moves the unsigned cascade fields cannot — a `settings` reconcile, or allowance retiring overrun
+   * on a `topup`. All `0` on a `reset`. */
+  deltaMonthly: number;
+  deltaCustom: number;
+  deltaExtraAllowance: number;
+  deltaOverrun: number;
   resultingMonthly: number;
   resultingCustom: number;
   resultingExtraAllowance: number;

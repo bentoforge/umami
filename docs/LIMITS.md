@@ -189,10 +189,17 @@ amount
 monthlyDrawn, customDrawn, extraAllowanceDrawn     (consume/carry; Reihenfolge = Kaskade)
 overrun                                      (consume/carry, falls über alle Buckets hinaus)
 customAdded                                  (topup)
+deltaMonthly, deltaCustom, deltaExtraAllowance, deltaOverrun   // signierte Netto-Änderung je Konto
 resultingMonthly, resultingCustom, resultingExtraAllowance, resultingOverrun
 // Actor/Kontext — optional, caller-provided, KEINE umami-Validierung:
 actorUserId, txnId, source
 ```
+
+Die `delta*`-Felder sind die **server-seitig** gerechnete, **signierte** Netto-Änderung je internem
+Konto (`resulting − vorher`), damit das FE `vorher = nachher − delta` direkt am Eintrag abliest,
+ohne über den Ledger zu ketten. Anders als die vorzeichenlosen Kaskadenfelder (`*Drawn`) erfassen sie
+auch Bewegungen, die aus jenen nicht rekonstruierbar sind — eine `settings`-Änderung des Budgets oder
+ein `topup`, der bestehenden `overrun` tilgt. Beim `reset` sind alle `delta*` = 0.
 
 Nur **opake Ids** (`actorUserId`, `txnId`, `source`), je am Ingress auf **64 Zeichen** begrenzt —
 keine Namen, kein Freitext, damit nichts GDPR-Sensibles im Ledger landet. `source` benennt die

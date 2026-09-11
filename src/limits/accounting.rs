@@ -123,6 +123,8 @@ pub fn rolled_over(
             // across custom → monthly → extra allowance, and whatever is left over stays as overrun
             // and rolls again next month (one pass, no recursion). Otherwise it is a `reset` marker
             // — no draw — so the ledger shows where the month turned and the new balances begin.
+            // The freshly-reset counters as the rollover entry finds them — its `before`.
+            let before = new_state.clone();
             let rollover = if policy == OverrunPolicy::Carry && carried > 0 {
                 let mut debt = carried;
                 let custom_drawn = draw_pay(&mut new_state.custom_balance, debt);
@@ -133,6 +135,7 @@ pub fn rolled_over(
                 debt -= extra_drawn;
                 new_state.overrun = debt;
                 let mut ledger = ledger_base(
+                    &before,
                     &new_state,
                     rollover_entry_id,
                     now,
@@ -147,6 +150,7 @@ pub fn rolled_over(
                 ledger
             } else {
                 ledger_base(
+                    &before,
                     &new_state,
                     rollover_entry_id,
                     now,
@@ -166,9 +170,15 @@ pub fn rolled_over(
     (refresh_daily(state, settings, now), history, rollover)
 }
 
-/// A ledger entry pre-filled with identity, timestamp, actor and the post-movement balances.
+/// A ledger entry pre-filled with identity, timestamp, actor, the post-movement balances and the
+/// signed per-account deltas. `before` is the state as this operation found it (after any rollover,
+/// before its own draw); `after` is the resulting state. Storing `after - before` per account is what
+/// lets the client read `before → delta → after` off a single entry without chaining across the
+/// ledger — and, being signed, it captures net moves the unsigned cascade fields cannot (a `settings`
+/// reconcile, or allowance retiring overrun on a `topup`).
 fn ledger_base(
-    state: &LimitState,
+    before: &LimitState,
+    after: &LimitState,
     id: &str,
     now: DateTime<Utc>,
     entry_type: &str,
@@ -176,8 +186,8 @@ fn ledger_base(
     actor: &Actor,
 ) -> LedgerEntry {
     LedgerEntry {
-        tenant_id: state.tenant_id.clone(),
-        code: state.code.clone(),
+        tenant_id: after.tenant_id.clone(),
+        code: after.code.clone(),
         id: id.to_owned(),
         timestamp: now.to_rfc3339_opts(SecondsFormat::Millis, true),
         entry_type: entry_type.to_owned(),
@@ -187,10 +197,14 @@ fn ledger_base(
         extra_allowance_drawn: 0,
         overrun: 0,
         custom_added: 0,
-        resulting_monthly: state.monthly_remaining,
-        resulting_custom: state.custom_balance,
-        resulting_extra_allowance: state.extra_allowance_remaining,
-        resulting_overrun: state.overrun,
+        delta_monthly: after.monthly_remaining - before.monthly_remaining,
+        delta_custom: after.custom_balance - before.custom_balance,
+        delta_extra_allowance: after.extra_allowance_remaining - before.extra_allowance_remaining,
+        delta_overrun: after.overrun - before.overrun,
+        resulting_monthly: after.monthly_remaining,
+        resulting_custom: after.custom_balance,
+        resulting_extra_allowance: after.extra_allowance_remaining,
+        resulting_overrun: after.overrun,
         actor_user_id: actor.user_id.clone(),
         txn_id: actor.txn_id.clone(),
         source: actor.source.clone(),
@@ -252,11 +266,22 @@ pub fn apply_consume(
         &rollover_id,
     );
     let want = amount.max(0);
+    // The post-rollover counters as this consume finds them — its `before`, snapshotted before the
+    // cascade draws mutate them.
+    let before = state.clone();
 
     // Reject: a booking that cannot be fully covered changes nothing — the service returns a 429.
     // (`reject` never carries, so `carry` is `None` here.)
     if policy == OverrunPolicy::Reject && want > state.available() {
-        let ledger = ledger_base(&state, entry_id, now, ledger_type::CONSUME, amount, actor);
+        let ledger = ledger_base(
+            &before,
+            &state,
+            entry_id,
+            now,
+            ledger_type::CONSUME,
+            amount,
+            actor,
+        );
         return Outcome {
             state,
             ledger: Some(ledger),
@@ -284,7 +309,15 @@ pub fn apply_consume(
         state.daily_remaining = (state.daily_remaining - drawn).max(0);
     }
 
-    let mut ledger = ledger_base(&state, entry_id, now, ledger_type::CONSUME, amount, actor);
+    let mut ledger = ledger_base(
+        &before,
+        &state,
+        entry_id,
+        now,
+        ledger_type::CONSUME,
+        amount,
+        actor,
+    );
     ledger.monthly_drawn = monthly_drawn;
     ledger.custom_drawn = custom_drawn;
     ledger.extra_allowance_drawn = extra_allowance_drawn;
@@ -324,11 +357,21 @@ pub fn apply_topup(
         &rollover_id,
     );
     let added = amount.max(0);
+    // The post-rollover counters as this top-up finds them — its `before`.
+    let before = state.clone();
     state.custom_balance += added;
     // Fresh credit retires prior overrun first (bookkeeping): the debt drops, the rest stays balance.
     settle_overrun(&mut state);
 
-    let mut ledger = ledger_base(&state, entry_id, now, ledger_type::TOPUP, amount, actor);
+    let mut ledger = ledger_base(
+        &before,
+        &state,
+        entry_id,
+        now,
+        ledger_type::TOPUP,
+        amount,
+        actor,
+    );
     ledger.custom_added = added;
 
     Outcome {
@@ -420,6 +463,8 @@ pub fn apply_settings_change(
         &rollover_id,
     );
     let mut warnings = Vec::new();
+    // The post-rollover counters as this reconcile finds them — its `before`.
+    let before = state.clone();
 
     // Monthly: what is already used stays used. A rise grows the remaining; a fall below usage caps
     // it at zero and books the shortfall as overrun (an honest debt, not a silently-dropped value).
@@ -465,7 +510,15 @@ pub fn apply_settings_change(
         warnings.push(format!("gauge value {value} now exceeds the max {max}"));
     }
 
-    let ledger = ledger_base(&state, entry_id, now, ledger_type::SETTINGS, 0, actor);
+    let ledger = ledger_base(
+        &before,
+        &state,
+        entry_id,
+        now,
+        ledger_type::SETTINGS,
+        0,
+        actor,
+    );
 
     (
         Outcome {
@@ -712,6 +765,11 @@ mod tests {
         assert_eq!(out.state.overrun, 40);
         assert_eq!(out.state.custom_balance, 0);
         assert_eq!(led(&out).resulting_overrun, 40);
+        // The credit landed entirely on the debt: balance net-unchanged, overrun down by the 60 paid.
+        // This is the move the unsigned cascade fields cannot express, so the signed deltas carry it.
+        assert_eq!(led(&out).custom_added, 60);
+        assert_eq!(led(&out).delta_custom, 0);
+        assert_eq!(led(&out).delta_overrun, -60);
         // A larger top-up clears the debt and the remainder becomes balance.
         let out = apply_topup(
             Some(owing(100)),
@@ -752,6 +810,10 @@ mod tests {
         assert_eq!(carry.amount, 150);
         assert_eq!(carry.monthly_drawn, 150);
         assert_eq!(carry.overrun, 0);
+        // The new month opens fresh (1000) and the carried 150 is drawn from it: monthly delta -150.
+        assert_eq!(carry.resulting_monthly, 850);
+        assert_eq!(carry.delta_monthly, -150);
+        assert_eq!(carry.delta_overrun, 0);
         // History records September's overrun; the closed month is untouched by the carry.
         assert_eq!(out.history.expect("September closed").overrun, 150);
         // October: 1000 − 150 carry − 50 consume = 800 monthly left, extra untouched, no overrun.
@@ -1001,6 +1063,10 @@ mod tests {
         assert_eq!(out.state.custom_balance, 500);
         assert!(warnings.is_empty());
         assert_eq!(led(&out).entry_type, ledger_type::SETTINGS);
+        // A budget raise moves the monthly-remaining up by 500 — a `settings` entry writes no cascade
+        // field, so only the signed delta records it (700 -> 1200).
+        assert_eq!(led(&out).delta_monthly, 500);
+        assert_eq!(led(&out).resulting_monthly, 1200);
     }
 
     #[test]

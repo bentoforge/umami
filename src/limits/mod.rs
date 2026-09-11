@@ -151,6 +151,23 @@ pub struct LedgerEntry {
     /// Top-up: added to the custom balance.
     #[serde(default)]
     pub custom_added: i64,
+    /// The net change to the monthly-remaining (`resulting_monthly - before`), so the client reads
+    /// `before = resulting_monthly - delta_monthly` off a single entry without chaining across the
+    /// ledger. Server-computed and signed: it captures moves the unsigned cascade fields cannot — a
+    /// `settings` reconcile raising the budget, or allowance retiring overrun on a `topup`. `0` on a
+    /// `reset`.
+    #[serde(default)]
+    pub delta_monthly: i64,
+    /// The net change to the custom balance (`resulting_custom - before`).
+    #[serde(default)]
+    pub delta_custom: i64,
+    /// The net change to the extra-allowance-remaining (`resulting_extra_allowance - before`).
+    #[serde(default)]
+    pub delta_extra_allowance: i64,
+    /// The net change to the overrun debt (`resulting_overrun - before`) — negative when fresh
+    /// allowance retired part of it.
+    #[serde(default)]
+    pub delta_overrun: i64,
     /// The monthly-remaining after the movement.
     pub resulting_monthly: i64,
     /// The custom balance after the movement.
