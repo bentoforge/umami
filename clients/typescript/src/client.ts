@@ -846,12 +846,7 @@ export class UmamiClient {
   /** For a billing tool: the closed-month aggregates (notably `extraAllowanceUsed` and `overrun`)
    * for one month. With a `code`, the single limit's row; without one, every limit's row for the
    * month. Requires `manage:limits`. */
-  getBilling(
-    tenantId: string,
-    year: number,
-    month: number,
-    code?: string,
-  ): Promise<BillingResult> {
+  getBilling(tenantId: string, year: number, month: number, code?: string): Promise<BillingResult> {
     const qs = `?year=${year}&month=${month}`;
     const path = code
       ? `/tenants/${enc(tenantId)}/limits/${enc(code)}/billing${qs}`
