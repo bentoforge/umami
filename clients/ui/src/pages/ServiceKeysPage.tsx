@@ -10,12 +10,16 @@ import { card, ghostButton, input, primaryButton, td, th } from "../ui";
 /** Top-aligned cell: `td` bakes in `align-middle`, which a trailing `align-top` won't override. */
 const tdTop = td.replace("align-middle", "align-top");
 
-/** Own-tenant screen: manage service keys (M2M machine principals). Personal access tokens live in
- * the profile; this page is for tenant-owned keys exchanged at `POST /auth/token`. */
+/** Current-tenant screen: manage service keys (M2M machine principals). Personal access tokens live
+ * in the profile; this page is for tenant-owned keys exchanged at `POST /auth/token`. */
 export function ServiceKeysPage() {
-  const { client, me } = useUmami();
+  const { client, me, activeTenantId } = useUmami();
   const { t } = useTranslation();
-  const tenantId = me?.user.tenantId ?? "";
+  // The tenant the token is scoped to, not the one the user belongs to. The server checks the path
+  // id against the token's `tenant` claim, and switching tenants moves that claim while
+  // `me.user.tenantId` stays on the user's home tenant — reading it here answers 403 on every call
+  // this id feeds once someone has switched.
+  const tenantId = activeTenantId ?? me?.user.tenantId ?? "";
   const [keys, setKeys] = useState<ApiKeyView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [freshSecret, setFreshSecret] = useState<string | null>(null);
