@@ -301,8 +301,10 @@ export class UmamiClient {
       body: JSON.stringify(body),
     });
   }
-  /** Re-scope the access token to another tenant (requires `switch:tenant`). Access-token only —
-   * a later silent refresh returns to the home tenant. Returns the active tenant id. */
+  /** Re-scope the **session** to another tenant (requires `switch:tenant`). Durable, not a one-off
+   * token: every later refresh follows the switch and it survives a reload, so there is no "acting
+   * as" state to keep here. Switching back is a switch to the home tenant — and so is losing the
+   * permission, which the server re-checks on every refresh. Returns the active tenant id. */
   async switchTenant(tenantId: string): Promise<string> {
     const data = await this.request<TokenResponse>("/auth/switch-tenant", {
       method: "POST",
