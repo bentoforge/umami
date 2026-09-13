@@ -215,7 +215,8 @@ not administering the deployment.
   "logoLight": "data:image/svg+xml;base64,…",  // or "https://cdn.example.com/logo-light.svg"
   "logoDark":  "data:image/svg+xml;base64,…",  // shown in dark mode
   "favicon":   "data:image/png;base64,…",
-  "title":     "Example" }                       // browser tab AND the logo's alt text
+  "title":     "Example" }                       // browser tab, the logo's alt text, and the
+//                                                 authenticator-app entry ("Example: <user>")
 //   Each theme resolves logo{Light,Dark} → logo → the other variant → built-in default, so a
 //   deployment with one logo for both themes sets only `logo`.
 //   served at /app/logo/light, /app/logo/dark, /app/favicon; the UI picks the logo by theme.

@@ -67,6 +67,7 @@ pub fn routes(platform: &Platform) -> BoxedFilter<(impl warp::Reply + use<>,)> {
         totp_setup_route(
             platform.repos.users.clone(),
             platform.mfa.clone(),
+            platform.config.clone(),
             platform.authenticator.clone()
         ),
         totp_verify_route(

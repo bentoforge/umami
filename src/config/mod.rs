@@ -621,9 +621,10 @@ pub struct BrandingConfig {
     /// Favicon — a `data:` URI or an `http(s)` URL. Empty → the built-in default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub favicon: Option<String>,
-    /// What this deployment calls itself: the browser tab title, and the alt text of the logo —
-    /// what a screen reader announces and what stands in when the image fails to load. Served at
-    /// `/app/branding.json` and applied by the SPA at runtime. Empty → `"umami"`.
+    /// What this deployment calls itself: the browser tab title, the alt text of the logo — what a
+    /// screen reader announces and what stands in when the image fails to load — and the issuer an
+    /// authenticator app files a TOTP enrolment under. Served at `/app/branding.json` and applied
+    /// by the SPA at runtime. Empty → `"umami"`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     /// A legal/imprint line shown at the foot of every screen — the login page and every page

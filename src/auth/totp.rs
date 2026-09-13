@@ -9,6 +9,7 @@ use crate::audit::repository::{AuditRepository, record_best_effort};
 use crate::audit::{AuditSeverity, NewAuditEntry};
 use crate::auth::secretbox::SecretBox;
 use crate::bail_i18n;
+use crate::config::repository::ConfigRepository;
 use crate::constants::{MANAGE_PASSWORDS_PERMISSION, MAX_TEXT_BODY_SIZE};
 use crate::users::User;
 use crate::users::repository::UserRepository;
@@ -28,8 +29,8 @@ const REQUIRE_PASSWORDS: &[&str] = &[MANAGE_PASSWORDS_PERMISSION];
 use wasabi::client_bail;
 use wasabi::web::warp::{client_ip, into_response, with_body_as_json, with_cloneable};
 
-/// Issuer label shown in authenticator apps.
-const TOTP_ISSUER: &str = "umami";
+/// Issuer label for deployments that have not named themselves in `branding.title`.
+const DEFAULT_TOTP_ISSUER: &str = "umami";
 
 /// A code submitted to verify/disable TOTP.
 #[derive(Deserialize, Debug)]
@@ -75,35 +76,59 @@ pub fn verify_encrypted_totp(
     code: &str,
 ) -> anyhow::Result<bool> {
     let raw = secret_box.decrypt(encrypted_secret)?;
-    let totp = make_totp(raw, account)?;
+    let totp = make_totp(raw, account, DEFAULT_TOTP_ISSUER)?;
     totp.check_current(code)
         .map_err(|err| anyhow!("Failed to check TOTP code: {err}"))
 }
 
 /// Builds a [`TOTP`] from raw secret bytes for the given account (6 digits, 30s, ±1 step skew).
-fn make_totp(secret_bytes: Vec<u8>, account: &str) -> anyhow::Result<TOTP> {
+///
+/// The issuer is a label: it names the entry in the authenticator app and never enters code
+/// generation, so a code checks the same whatever it says. Only enrolment, which hands out the
+/// `otpauth://` URL, has a reason to read the deployment's own name; the checking paths pass the
+/// default rather than a config read per code.
+fn make_totp(secret_bytes: Vec<u8>, account: &str, issuer: &str) -> anyhow::Result<TOTP> {
     TOTP::new(
         Algorithm::SHA1,
         6,
         1,
         30,
         secret_bytes,
-        Some(TOTP_ISSUER.to_owned()),
+        Some(issuer.to_owned()),
         account.to_owned(),
     )
     .map_err(|err| anyhow!("Failed to build TOTP: {err}"))
+}
+
+/// The name an authenticator app files the account under: what this deployment calls itself
+/// (`branding.title`), or `umami` when it calls itself nothing.
+///
+/// A colon is what separates issuer from account in the `otpauth://` label, so it cannot appear in
+/// either half — `TOTP::new` rejects one outright. Operators write the title for a browser tab,
+/// where a colon is ordinary punctuation, so drop it rather than fail an enrolment over it.
+async fn totp_issuer(config: &Arc<dyn ConfigRepository>) -> String {
+    config
+        .current()
+        .await
+        .ok()
+        .and_then(|current| current.branding.title.clone())
+        .map(|title| title.replace(':', " ").trim().to_owned())
+        .filter(|title| !title.is_empty())
+        .unwrap_or_else(|| DEFAULT_TOTP_ISSUER.to_owned())
 }
 
 /// `POST /auth/mfa/totp/setup` — generate + store a pending TOTP secret.
 pub fn totp_setup_route(
     users: Arc<dyn UserRepository>,
     secret_box: Arc<SecretBox>,
+    config: Arc<dyn ConfigRepository>,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
     warp::path!("auth" / "mfa" / "totp" / "setup")
         .and(warp::post())
         .and(with_cloneable(users))
         .and(with_cloneable(secret_box))
+        .and(with_cloneable(config))
         .and(with_user_with_any_permission(
             authenticator,
             REQUIRE_PASSWORDS,
@@ -160,9 +185,10 @@ pub fn totp_disable_route(
 async fn handle_totp_setup_route(
     users: Arc<dyn UserRepository>,
     secret_box: Arc<SecretBox>,
+    config: Arc<dyn ConfigRepository>,
     caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(totp_setup(users, secret_box, caller).await)
+    into_response(totp_setup(users, secret_box, config, caller).await)
 }
 
 #[tracing::instrument(level = "debug", name = "POST /auth/mfa/totp/verify", skip_all)]
@@ -200,6 +226,7 @@ async fn load_caller(users: &Arc<dyn UserRepository>, caller: &AuthUser) -> anyh
 async fn totp_setup(
     users: Arc<dyn UserRepository>,
     secret_box: Arc<SecretBox>,
+    config: Arc<dyn ConfigRepository>,
     caller: AuthUser,
 ) -> anyhow::Result<SetupResponse> {
     let mut user = load_caller(&users, &caller).await?;
@@ -209,7 +236,8 @@ async fn totp_setup(
         .to_bytes()
         .map_err(|err| anyhow!("Failed to generate TOTP secret: {err}"))?;
     let base32 = secret.to_encoded().to_string();
-    let otpauth_url = make_totp(raw.clone(), &user.username)?.get_url();
+    let otpauth_url =
+        make_totp(raw.clone(), &user.username, &totp_issuer(&config).await)?.get_url();
     let qr = qr_svg(&otpauth_url)?;
 
     user.totp_pending = Some(secret_box.encrypt(&raw)?);
@@ -238,7 +266,7 @@ async fn totp_verify(
     };
 
     let raw = secret_box.decrypt(pending)?;
-    let totp = make_totp(raw, &user.username)?;
+    let totp = make_totp(raw, &user.username, DEFAULT_TOTP_ISSUER)?;
     if !totp
         .check_current(&request.code)
         .map_err(|err| anyhow!("Failed to check TOTP code: {err}"))?
@@ -286,7 +314,7 @@ async fn totp_disable(
     };
 
     let raw = secret_box.decrypt(active)?;
-    let totp = make_totp(raw, &user.username)?;
+    let totp = make_totp(raw, &user.username, DEFAULT_TOTP_ISSUER)?;
     if !totp
         .check_current(&request.code)
         .map_err(|err| anyhow!("Failed to check TOTP code: {err}"))?
@@ -318,4 +346,48 @@ async fn totp_disable(
     .await;
 
     Ok(MfaStatusResponse { enabled: false })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+    use crate::config::repository::StaticConfigRepository;
+
+    /// Seeds a config repository whose branding title is `title`.
+    async fn config_titled(title: Option<&str>) -> Arc<dyn ConfigRepository> {
+        let mut cfg = Config::default();
+        cfg.branding.title = title.map(str::to_owned);
+        let repo = StaticConfigRepository::with_default();
+        repo.save(cfg, 1).await.expect("seed branding title");
+        Arc::new(repo)
+    }
+
+    #[tokio::test]
+    async fn issuer_is_the_deployment_name() {
+        let config = config_titled(Some("Acme Portal")).await;
+        assert_eq!(totp_issuer(&config).await, "Acme Portal");
+    }
+
+    #[tokio::test]
+    async fn unnamed_deployment_falls_back_to_umami() {
+        assert_eq!(totp_issuer(&config_titled(None).await).await, "umami");
+        assert_eq!(totp_issuer(&config_titled(Some("  ")).await).await, "umami");
+    }
+
+    #[tokio::test]
+    async fn a_colon_in_the_title_does_not_break_enrolment() {
+        let config = config_titled(Some("Acme: Portal")).await;
+        let issuer = totp_issuer(&config).await;
+        assert_eq!(issuer, "Acme  Portal");
+
+        let secret = Secret::generate_secret().to_bytes().expect("secret bytes");
+        let url = make_totp(secret, "jane", &issuer)
+            .expect("issuer accepted")
+            .get_url();
+        assert!(
+            url.contains("otpauth://totp/Acme%20%20Portal:jane"),
+            "{url}"
+        );
+    }
 }
