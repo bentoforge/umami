@@ -94,8 +94,46 @@ async fn detect(aws: &Aws) -> anyhow::Result<(Arc<dyn ConfigRepository>, Selecti
     ))
 }
 
-/// Minimum time the S3 config bytes stay cached before a refresh is attempted.
-const CONFIG_CACHE_TTL: Duration = Duration::from_secs(900);
+/// Minimum time the S3 config bytes stay cached before a refresh is attempted, when
+/// [`CACHE_TTL_VARIABLE`] says nothing.
+///
+/// This is the propagation delay of a config edit across instances, and the config holds the
+/// permission rules: for this long after a save, every other instance still authorizes against the
+/// previous document. An edit that takes a permission away is therefore not in effect fleet-wide
+/// until the TTL has passed — which is why this is seconds rather than minutes.
+///
+/// It is not the price of a download. Past the TTL the cache re-reads only the object's ETag
+/// (`HeadObject`) and keeps the bytes it has unless they changed, and it does so lazily, on the
+/// next read — so one instance costs at most one HEAD per TTL, not a poll.
+const DEFAULT_CONFIG_CACHE_TTL: Duration = Duration::from_secs(60);
+
+/// Overrides [`DEFAULT_CONFIG_CACHE_TTL`], in whole seconds.
+const CACHE_TTL_VARIABLE: &str = "UMAMI_CONFIG_S3_CACHE_TTL_SECS";
+
+/// Below this, the ETag probe stops being a background cost and moves onto the request path:
+/// [`ConfigRepository::current`] is read by every permission check, so a TTL this short makes an S3
+/// round trip part of authorizing a request. Warned about rather than refused — it is a reasonable
+/// thing to ask for while testing a config change.
+const CACHE_TTL_ON_REQUEST_PATH: Duration = Duration::from_secs(5);
+
+/// The configured cache TTL, or [`DEFAULT_CONFIG_CACHE_TTL`].
+fn cache_ttl_from_env() -> anyhow::Result<Duration> {
+    parse_cache_ttl(env::var(CACHE_TTL_VARIABLE).ok().as_deref())
+}
+
+/// Parses [`CACHE_TTL_VARIABLE`]. A value that is not a whole number of seconds fails the boot: it
+/// was set on purpose, and silently serving a config an operator believes is refreshing every few
+/// seconds is the failure this knob exists to prevent. Empty reads as unset, so a templated
+/// variable from an unset deployment value does not fail a boot.
+fn parse_cache_ttl(raw: Option<&str>) -> anyhow::Result<Duration> {
+    let Some(value) = raw.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(DEFAULT_CONFIG_CACHE_TTL);
+    };
+    let seconds = value.parse::<u64>().with_context(|| {
+        format!("{CACHE_TTL_VARIABLE}='{value}' must be a whole number of seconds")
+    })?;
+    Ok(Duration::from_secs(seconds))
+}
 
 /// Default S3 object key for the config document.
 const DEFAULT_CONFIG_KEY: &str = "umami/config.json";
@@ -133,6 +171,15 @@ pub trait ConfigRepository: Send + Sync {
     /// Returns the current config (cached; may refresh internally).
     async fn current(&self) -> anyhow::Result<Arc<Config>>;
 
+    /// Returns the stored config, read **past** any cache.
+    ///
+    /// For the one caller that hands its result straight back to [`Self::save`]: an editor loading
+    /// the document to edit it. A cached read there shows a `version` that may already be
+    /// superseded, and the editor then spends a full round of edits before the save refuses them
+    /// with a `409` it could not have avoided. Every other reader wants [`Self::current`] — this
+    /// one costs an S3 round trip, and the config is read while authorizing each request.
+    async fn authoritative(&self) -> anyhow::Result<Config>;
+
     /// Publishes the whole document if the stored one is still at `expected_version`, and returns it
     /// as saved, with the version bumped. A mismatch is a `409`.
     ///
@@ -163,6 +210,11 @@ impl StaticConfigRepository {
 impl ConfigRepository for StaticConfigRepository {
     async fn current(&self) -> anyhow::Result<Arc<Config>> {
         Ok(self.config.read().await.clone())
+    }
+
+    /// The same read — this store *is* the stored document, so there is no cache to look past.
+    async fn authoritative(&self) -> anyhow::Result<Config> {
+        Ok((**self.config.read().await).clone())
     }
 
     async fn save(&self, config: Config, expected_version: u64) -> anyhow::Result<Config> {
@@ -247,7 +299,22 @@ impl S3ConfigRepository {
             tracing::warn!("config.json absent — seeded default at s3://{effective}/{key}");
         }
 
-        let cached = client.cached_object(bucket, &key, CONFIG_CACHE_TTL);
+        let cache_ttl = cache_ttl_from_env()?;
+        if cache_ttl < CACHE_TTL_ON_REQUEST_PATH {
+            tracing::warn!(
+                "{CACHE_TTL_VARIABLE}={}s puts an S3 ETag probe on the request path — the config \
+                 is read while authorizing every request. Intended for tracking a config change \
+                 down; raise it again afterwards.",
+                cache_ttl.as_secs()
+            );
+        }
+        tracing::info!(
+            "config cache TTL {}s — a config edit reaches other instances after at most that long \
+             ({CACHE_TTL_VARIABLE} to change it)",
+            cache_ttl.as_secs()
+        );
+
+        let cached = client.cached_object(bucket, &key, cache_ttl);
 
         Ok(Self {
             cached,
@@ -256,21 +323,6 @@ impl S3ConfigRepository {
             key,
             writing: Mutex::new(()),
         })
-    }
-
-    /// The stored document, read **past** the cache.
-    ///
-    /// Same fallback as [`ConfigRepository::current`] — deliberately, because a save has to be
-    /// checked against the version an editor was shown, and an unparseable document is shown as the
-    /// built-in default. Refusing instead would look safer and would lock out the very repair the
-    /// fallback exists to allow.
-    async fn authoritative(&self) -> anyhow::Result<Config> {
-        let bytes = self
-            .cached
-            .fetch()
-            .await
-            .context("Failed to fetch config.json from S3")?;
-        Ok(parse_or_default(&bytes))
     }
 }
 
@@ -304,10 +356,26 @@ impl ConfigRepository for S3ConfigRepository {
         Ok(Arc::new(parse_or_default(&bytes)))
     }
 
+    /// Same fallback as [`ConfigRepository::current`] — deliberately, because a save has to be
+    /// checked against the version an editor was shown, and an unparseable document is shown as the
+    /// built-in default. Refusing instead would look safer and would lock out the very repair the
+    /// fallback exists to allow.
+    ///
+    /// Refreshes this instance's cache on the way, so the editor's own load is also what unsticks
+    /// the instance it happened to reach.
+    async fn authoritative(&self) -> anyhow::Result<Config> {
+        let bytes = self
+            .cached
+            .fetch()
+            .await
+            .context("Failed to fetch config.json from S3")?;
+        Ok(parse_or_default(&bytes))
+    }
+
     async fn save(&self, config: Config, expected_version: u64) -> anyhow::Result<Config> {
         let _writing = self.writing.lock().await;
 
-        // Uncached, every time. `current()` may be serving a document up to CONFIG_CACHE_TTL old,
+        // Uncached, every time. `current()` may be serving a document up to the cache TTL old,
         // and a guard that compares against that lets a second editor pass it with a version that
         // was already superseded — overwriting the first edit with no error anywhere.
         let stored = self.authoritative().await?;
@@ -379,6 +447,46 @@ mod tests {
         // The same body a second time is now stale, and must not go through.
         assert!(store.save(Config::default(), seeded).await.is_err());
         assert_eq!(store.current().await.expect("stored").version, seeded + 1);
+    }
+
+    #[test]
+    fn an_unset_cache_ttl_is_the_default() {
+        assert_eq!(
+            parse_cache_ttl(None).expect("default"),
+            DEFAULT_CONFIG_CACHE_TTL
+        );
+        // A templated variable from an unset deployment value arrives as empty, not as absent, and
+        // must not fail the boot.
+        assert_eq!(
+            parse_cache_ttl(Some("  ")).expect("default"),
+            DEFAULT_CONFIG_CACHE_TTL
+        );
+    }
+
+    #[test]
+    fn a_cache_ttl_is_read_as_whole_seconds() {
+        assert_eq!(
+            parse_cache_ttl(Some(" 30 ")).expect("parsed"),
+            Duration::from_secs(30)
+        );
+    }
+
+    #[test]
+    fn a_cache_ttl_that_is_not_seconds_fails_the_boot() {
+        // Rather than falling back to the default: an operator who wrote "30s" or "5m" believes
+        // the config refreshes at that rate, and a fallback would leave them with the old window
+        // and no sign of it.
+        for value in ["30s", "5m", "-1", "0.5"] {
+            assert!(
+                parse_cache_ttl(Some(value)).is_err(),
+                "{value} should be refused"
+            );
+        }
+        let message = format!(
+            "{:#}",
+            parse_cache_ttl(Some("5m")).expect_err("not seconds")
+        );
+        assert!(message.contains(CACHE_TTL_VARIABLE), "{message}");
     }
 
     #[test]

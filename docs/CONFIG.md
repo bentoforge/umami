@@ -29,11 +29,10 @@ document is still at that version — otherwise `409`, reload and re-apply. The 
 written at once, so without that check the second of two overlapping edits would silently discard
 the first.
 
-The check is made **against S3, not against the cache**. Reads are cached for 15 minutes, and a
-version from a cached read is exactly what a superseded editor would match against: with two service
-instances (or one, inside the TTL), both would pass the guard and the later write would win with no
-error anywhere. So a save always re-reads the object first, and the read-compare-write is serialized
-per instance.
+The check is made **against S3, not against the cache**. A version from a cached read is exactly
+what a superseded editor would match against: with two service instances (or one, inside the TTL),
+both would pass the guard and the later write would win with no error anywhere. So a save always
+re-reads the object first, and the read-compare-write is serialized per instance.
 
 **One window is left open.** Between that fresh read and the `PutObject` there is a round trip, and
 S3 has no conditional write here, so two instances saving in the same handful of milliseconds can
@@ -46,12 +45,43 @@ version. Enabling it is best-effort, so a missing grant does not fail the boot �
 and there a lost edit is final. Config edits are rare, deliberate admin actions, which is why this
 is documented rather than worked around.
 
+### How long an edit takes to reach the other instances
+
+Reads are cached in memory, **60 seconds** by default. That number is not about download cost: past
+the TTL the cache re-reads only the object's ETag and keeps the bytes it already has unless they
+changed, lazily on the next read — so an instance costs at most one `HeadObject` per TTL, and a
+`GetObject` only when somebody actually saved.
+
+What it *is* about is that the config holds the **permission rules, APIs and audiences**. Behind a
+load balancer, for up to one TTL after a save, the instances that have not refreshed still authorize
+against the previous document — so an edit that takes a permission away is not in effect fleet-wide
+until then, and an editor who loaded the config from a not-yet-refreshed instance gets a `409` on
+save (correctly: the stored version really had moved on). The TTL is the bound on both.
+
+`UMAMI_CONFIG_S3_CACHE_TTL_SECS` moves it: a shorter TTL propagates edits sooner and costs
+proportionally more HEAD requests per instance, which stays negligible right up until it approaches
+per-request frequency. `0` removes the cache altogether and puts an S3 round trip inside every
+permission check — umami logs a `WARN` below 5 seconds for that reason. A value that is not a whole
+number of seconds (`30s`, `5m`) fails the boot rather than falling back to the default, so a
+deployment cannot believe it refreshes faster than it does.
+
+The instance that performed the save refreshes its own cache immediately; the TTL only applies to
+the others.
+
+**`GET /config` is exempt.** The editor's own load reads past the cache, because its result comes
+back as the `version` of the next `PUT` — a cached read there hands an editor a version another
+instance may already have moved past, and the `409` then arrives after a full round of edits, over a
+conflict the editor was never shown. It is `manage:config`-guarded and rare, so the S3 round trip
+costs nothing that matters, and it refreshes that instance's cache on the way. The two other reads
+under `/config` (`/catalogue`, `/custom-fields`) render every admin form and stay cached.
+
 Relevant environment variables:
 
 | Env | Effect |
 |-----|--------|
 | `S3_BUCKET_SUFFIX` | When set, persist config in S3 (bucket `config.<suffix>`); unset ⇒ in-memory default (non-persistent). |
 | `UMAMI_CONFIG_S3_KEY` | Optional object key for the config document (default `umami/config.json`). |
+| `UMAMI_CONFIG_S3_CACHE_TTL_SECS` | How long a read stays cached, in whole seconds (default `60`). This is the delay before a config edit — permission rules included — reaches the other instances. |
 | `UMAMI_SYSTEM_TENANT_ID` | Tenant whose members get the `is:system-tenant` marker (⇒ `manage:tenants` + `switch:tenant`). |
 | `UMAMI_AUTO_INIT=true` | Bootstrap a first tenant + owner when zero tenants exist. |
 | `UMAMI_UI_DIR` | Directory of the built management SPA to serve under `/app` (default `clients/ui/dist`; absent index.html ⇒ API-only). |

@@ -262,7 +262,12 @@ async fn handle_catalogue_route(
 }
 
 async fn get_config(config: Arc<dyn ConfigRepository>) -> anyhow::Result<Config> {
-    Ok((*config.current().await?).clone())
+    // Past the cache, unlike every other read. What this returns comes back as the `version` of the
+    // next `PUT /config`, so a cached read here is an editor being handed a version that another
+    // instance has already moved past — and a `409` after a round of edits, on a document that was
+    // never in conflict with anything the editor could see. Admin-guarded and rare, so the S3 round
+    // trip is not on any path that matters.
+    config.authoritative().await
 }
 
 async fn catalogue(
@@ -365,6 +370,48 @@ mod tests {
             .await
             .expect("saved");
         Arc::new(repository)
+    }
+
+    /// A store whose cached read is deliberately stale, so a caller taking the wrong one is
+    /// visible. Models the instance that has not refreshed yet: `current` still serves the version
+    /// it last saw, `authoritative` serves what is stored.
+    struct StaleCache {
+        cached_version: u64,
+        stored_version: u64,
+    }
+
+    #[async_trait::async_trait]
+    impl ConfigRepository for StaleCache {
+        async fn current(&self) -> anyhow::Result<Arc<Config>> {
+            Ok(Arc::new(Config {
+                version: self.cached_version,
+                ..Config::default()
+            }))
+        }
+
+        async fn authoritative(&self) -> anyhow::Result<Config> {
+            Ok(Config {
+                version: self.stored_version,
+                ..Config::default()
+            })
+        }
+
+        async fn save(&self, _config: Config, _expected_version: u64) -> anyhow::Result<Config> {
+            unreachable!("the read path is what is under test")
+        }
+    }
+
+    #[tokio::test]
+    async fn the_editor_is_handed_the_stored_version_not_a_cached_one() {
+        // Otherwise the editor loads 7, edits, and is refused with a `409` naming 8 — a conflict it
+        // was never shown and could not have avoided.
+        let loaded = get_config(Arc::new(StaleCache {
+            cached_version: 7,
+            stored_version: 8,
+        }))
+        .await
+        .expect("loaded");
+        assert_eq!(loaded.version, 8);
     }
 
     #[tokio::test]

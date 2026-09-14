@@ -226,8 +226,9 @@ the **system config document** (behavior — roles, features, APIs, security pol
 
 | Variable | Purpose |
 |---|---|
-| `UMAMI_CONFIG_KEY` | S3 object key for the config document (default `umami/config.json`). |
-| `UMAMI_CONFIG_VERSIONS_KEEP` / `_EXPIRE_DAYS` | Optional noncurrent-version retention for the config bucket. |
+| `UMAMI_CONFIG_S3_KEY` | S3 object key for the config document (default `umami/config.json`). |
+| `UMAMI_CONFIG_S3_VERSIONS_KEEP` / `_EXPIRE_DAYS` | Optional noncurrent-version retention for the config bucket. |
+| `UMAMI_CONFIG_S3_CACHE_TTL_SECS` | How long a config read stays cached (default `60`), i.e. how long a saved edit takes to reach the other instances. See [docs/CONFIG.md](docs/CONFIG.md). |
 | `UMAMI_SYSTEM_TENANT_ID` | Members of this tenant get `is:system-tenant` ⇒ cross-tenant admin. Unset ⇒ those routes are locked. |
 | `UMAMI_AUTO_INIT` | On an empty deployment, bootstrap a system tenant + owner (one-time password logged once). |
 | `UMAMI_ROOT_USERNAME` | Bootstrap owner username (default `root`). |
