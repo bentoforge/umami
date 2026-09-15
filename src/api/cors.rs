@@ -8,6 +8,7 @@ use std::env;
 use warp::Filter;
 use warp::filters::BoxedFilter;
 use warp::http::StatusCode;
+use wasabi::web::warp::recover_api_errors;
 
 /// Mounts `route` (the token exchange) with a public, credential-free CORS policy: it answers the
 /// preflight itself and sends a **literal** `Access-Control-Allow-Origin: *`.
@@ -25,8 +26,16 @@ use warp::http::StatusCode;
 /// a redeploy while adding no security, since the per-key origin list already exists and is editable
 /// through the API.
 ///
-/// Two implementation details are deliberate:
+/// Three implementation details are deliberate:
 ///
+/// - **The recovery sits inside the header.** An `ApiError` rejection — an invalid key, a denied
+///   origin, a tripped rate limit — becomes a response only when something recovers it, and the
+///   outermost recovery runs after this wrapper, so the response it produces would carry no
+///   `Access-Control-Allow-Origin` at all. The browser then refuses to let the page read its own
+///   401 and reports a network error instead: an embedded widget can no longer tell "this key is
+///   wrong" from "the identity provider is down", and neither can whoever integrated it.
+///   Recovering here keeps the error readable. Rejections that are not `ApiError`s — a path that
+///   simply is not ours — pass through untouched, so the rest of the routing still sees them.
 /// - **A literal `*`, not warp's `allow_any_origin()`.** That helper *reflects* the request's
 ///   `Origin` back, which (a) would permit credentialed requests the moment someone adds
 ///   `allow_credentials(true)`, and (b) makes the response origin-dependent without emitting
@@ -43,7 +52,9 @@ where
         .and(warp::options())
         .map(exchange_preflight_reply);
 
-    preflight.or(route.map(with_wildcard_origin)).boxed()
+    preflight
+        .or(recover_api_errors(route).map(with_wildcard_origin))
+        .boxed()
 }
 
 /// The preflight answer for the token exchange: what a browser must see before it sends the POST.
@@ -314,6 +325,52 @@ mod tests {
             Some(&HeaderValue::from_static("https://app.example.com")),
             "a 401 the browser cannot read is indistinguishable from an outage"
         );
+    }
+
+    /// The one an embedded widget actually hits: a key that does not verify.
+    ///
+    /// Without the CORS headers on this response the page sees `TypeError: Failed to fetch` and has
+    /// nothing to show its integrator — the status and the message are exactly what says whether the
+    /// key, the origin or the MAC is the problem.
+    #[tokio::test]
+    async fn a_refused_exchange_is_still_readable_by_the_page() {
+        let failing = warp::path!("auth" / "token")
+            .and(warp::post())
+            .and_then(|| async {
+                Err::<&str, warp::Rejection>(warp::reject::custom(
+                    wasabi::web::error::ApiError::new(StatusCode::UNAUTHORIZED, "Invalid API key."),
+                ))
+            })
+            .boxed();
+        let route = with_public_exchange_cors(failing);
+
+        let response = warp::test::request()
+            .method("POST")
+            .path("/auth/token")
+            .header("origin", "https://some-shop.example")
+            .header("content-type", "application/json")
+            .reply(&route)
+            .await;
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            response.headers().get("access-control-allow-origin"),
+            Some(&HeaderValue::from_static("*")),
+            "a 401 the browser cannot read is indistinguishable from an outage"
+        );
+        assert!(String::from_utf8_lossy(response.body()).contains("Invalid API key."));
+    }
+
+    /// The recovery must not swallow the routing: everything else is mounted *after* this branch.
+    #[tokio::test]
+    async fn a_path_that_is_not_the_exchange_falls_through() {
+        let others = warp::path!("tenants").map(|| "tenants");
+        let route = with_public_exchange_cors(stub_exchange()).or(others);
+
+        let response = warp::test::request().path("/tenants").reply(&route).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(String::from_utf8_lossy(response.body()), "tenants");
     }
 
     /// Mounting order is the whole point: composed the way `serve` does it, the exchange must carry
