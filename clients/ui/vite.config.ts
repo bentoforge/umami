@@ -29,6 +29,12 @@ export default defineConfig({
   base: "/app/",
   plugins: [react()],
   server: {
+    // Fixed, and a hard failure when it is taken. umami's `CORS_ALLOWED_ORIGINS` names this dev
+    // server by origin, so a silent move to the next free port turns every call into a 403 that
+    // reads like a broken login rather than a busy port — and on a laptop with several of these
+    // running, the next port up is exactly what vite would pick.
+    port: 5173,
+    strictPort: true,
     proxy: Object.fromEntries(
       [...apiPaths, ...brandingPaths].map((path) => [path, { target, changeOrigin: false }]),
     ),
