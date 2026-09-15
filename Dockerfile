@@ -10,7 +10,10 @@ COPY clients/ui ./clients/ui
 RUN cd clients/ui && npm ci && npm run build
 
 # ── Stage 2: build the Rust binary (release) ───────────────────────────────────
-FROM rust:1.98 AS builder
+# Pinned to the same Debian release as the runtime stage below: a binary built against a newer glibc
+# than it runs on fails at exec with a version error, and the loose `rust:1.98` tag decides that for
+# us whenever Docker Hub retags. Bump both lines together.
+FROM rust:1.98.1-trixie AS builder
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
