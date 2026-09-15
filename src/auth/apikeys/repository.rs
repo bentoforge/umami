@@ -89,6 +89,10 @@ pub struct ApiKey {
     /// policy (see [`KeyRateLimit`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rate_limit: Option<KeyRateLimit>,
+    /// Optional per-key lifetime for the tokens this key mints, in seconds. `None` = the global
+    /// `security.accessTtlSecs`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access_ttl_secs: Option<u64>,
     /// Optional expiry.
     pub expires_at: Option<DateTime<Utc>>,
     /// Last successful exchange.
@@ -113,6 +117,8 @@ pub struct NewApiKey {
     pub allowed_origins: Vec<String>,
     /// Optional per-key rate-limit override (`None` = use the global `tokenExchange` policy).
     pub rate_limit: Option<KeyRateLimit>,
+    /// Optional per-key token lifetime in seconds (`None` = the global `security.accessTtlSecs`).
+    pub access_ttl_secs: Option<u64>,
     pub expires_at: Option<DateTime<Utc>>,
 }
 
@@ -201,6 +207,7 @@ impl ApiKeyRepository for DynamoApiKeyRepository {
             status: ApiKeyStatus::Active,
             allowed_origins: new_key.allowed_origins,
             rate_limit: new_key.rate_limit,
+            access_ttl_secs: new_key.access_ttl_secs,
             expires_at: new_key.expires_at,
             last_used_at: None,
             created: Utc::now(),

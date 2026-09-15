@@ -89,6 +89,10 @@ hourBucket = floor(unixSeconds / 3600)
 - umami recomputes the MAC for the current hour and **±1 hour** (clock-skew / boundary tolerance),
   constant-time compares, and on a match issues the JWT as usual. The message binds the `keyId`, so
   a MAC for one key can't be replayed against another.
+- The hour is fixed, deliberately: it is the one number a client has to agree on without being told,
+  and widening it would widen the replay window for every key at once. A MAC rendered into a page is
+  therefore good for one to two hours — long enough for a visit. What has to outlive the visit is
+  the *token*, not the proof that fetched it (`accessTtlSecs` below).
 - Prefer **HMAC-SHA256** (the modern default).
 - **Where it shines:** backend / native clients — the secret never transits (safe against proxy/log
   capture). **Tradeoff:** a captured MAC is **replayable within its ~±1 h window**; TLS plus the
@@ -104,6 +108,13 @@ rate-limited. Least code on the "dumb server" (hold key → POST over TLS → re
 
 ## Entity / endpoint additions
 
+- `api-keys` carries an optional `accessTtlSecs`: the lifetime of the tokens this key mints
+  (60 … 86400, default `security.accessTtlSecs`). A service-key setting only — a PAT is created
+  self-service and takes the global value. It exists for clients that have **no way to renew**: an
+  embedded widget holds its token for the length of a visit with no session behind it, so raising
+  the lifetime for that one key is cheaper than giving the browser a refresh path. The cost is that
+  revocation bites at the next exchange, so the lifetime is also how long a deleted key keeps
+  working — which is why the ceiling is a day.
 - `api-keys` carries optional `allowedOrigins: [String]` (Modes 1/2) and `allowSecretLogin: bool`
   (default **false**): whether the raw-secret exchange (Mode 1) is accepted at all. When off, the
   key is **HMAC-only** (Mode 2) — a raw-secret exchange is refused even with the correct secret.

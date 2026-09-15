@@ -481,6 +481,8 @@ export interface ApiKeyView {
   allowedOrigins: string[];
   /** Per-key override of the global `tokenExchange` policy; absent ⇒ the global one applies. */
   rateLimit?: KeyRateLimit | null;
+  /** Lifetime of the tokens this key mints, in seconds; absent ⇒ `security.accessTtlSecs`. */
+  accessTtlSecs?: number | null;
   expiresAt?: string | null;
   lastUsedAt?: string | null;
   created: string;
@@ -505,6 +507,10 @@ export interface CreateApiKeyRequest {
   allowedOrigins?: string[];
   /** Per-key override of the global `tokenExchange` policy. */
   rateLimit?: KeyRateLimit;
+  /** Lifetime of the tokens this key mints, in seconds (60 … 86400). Omitted ⇒ the global
+   * `security.accessTtlSecs`. Raise it for a client that cannot renew — an embedded widget holds
+   * its token for a visit — and note that revocation only bites at the next exchange. */
+  accessTtlSecs?: number;
   expiresAt?: string;
 }
 

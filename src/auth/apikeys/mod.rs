@@ -60,6 +60,15 @@ use wasabi::{client_bail, status_bail};
 /// Prefix identifying an umami API key (helps secret scanners detect leaks).
 const KEY_PREFIX: &str = "umk_";
 
+/// Bounds for a per-key token lifetime, in seconds.
+///
+/// Revocation bites at the next exchange, so a key's `accessTtlSecs` is also how long a deleted
+/// key keeps working. The ceiling is what keeps that answer inside a working day.
+const MIN_ACCESS_TTL_SECS: u64 = 60;
+
+/// Longest token lifetime a key may ask for, in seconds. See [`MIN_ACCESS_TTL_SECS`].
+const MAX_ACCESS_TTL_SECS: u64 = 86_400;
+
 /// Length of the embedded key id (a `generate_id()` value).
 const KEY_ID_LEN: usize = 32;
 
@@ -110,6 +119,22 @@ fn verify_key_hmac(secret_hash_b64: &str, key_id: &str, presented_mac: &str) -> 
         }
     }
     false
+}
+
+/// Checks an optional per-key duration against its bounds, so a typo is refused at creation rather
+/// than discovered as a key that cannot be signed for.
+fn bounded_secs(
+    value: Option<u64>,
+    min: u64,
+    max: u64,
+    field: &str,
+) -> anyhow::Result<Option<u64>> {
+    if let Some(secs) = value
+        && !(min..=max).contains(&secs)
+    {
+        client_bail!("'{field}' must be between {min} and {max} seconds");
+    }
+    Ok(value)
 }
 
 // ── Request/response types ───────────────────────────────────────────────────
@@ -173,6 +198,8 @@ struct CreateApiKeyRequest {
     allowed_origins: Option<Vec<String>>,
     /// Optional per-key override of the global `tokenExchange` rate-limit policy.
     rate_limit: Option<KeyRateLimit>,
+    /// Lifetime of the tokens this key mints, in seconds (default `security.accessTtlSecs`).
+    access_ttl_secs: Option<u64>,
     expires_at: Option<DateTime<Utc>>,
 }
 
@@ -211,6 +238,8 @@ struct ApiKeyView {
     allowed_origins: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     rate_limit: Option<KeyRateLimit>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    access_ttl_secs: Option<u64>,
     expires_at: Option<DateTime<Utc>>,
     last_used_at: Option<DateTime<Utc>>,
     created: DateTime<Utc>,
@@ -229,6 +258,7 @@ impl From<ApiKey> for ApiKeyView {
             status: key.status,
             allowed_origins: key.allowed_origins,
             rate_limit: key.rate_limit,
+            access_ttl_secs: key.access_ttl_secs,
             expires_at: key.expires_at,
             last_used_at: key.last_used_at,
             created: key.created,
@@ -679,7 +709,11 @@ async fn exchange(
     // audience; the requested audience is still bounded by the key's scopes + the API's eligibility.
     let api_code = request.api.as_deref().unwrap_or("umami").to_owned();
 
-    let access_ttl_secs = config.security.access_ttl_secs as i64;
+    // A key may outlive the global default: a widget rendered into a shop page has no session to
+    // renew from, so the token has to cover the visit rather than the click that started it.
+    let access_ttl_secs = key
+        .access_ttl_secs
+        .unwrap_or(config.security.access_ttl_secs) as i64;
 
     let is_system = |tenant: &str| system_tenant_id.as_deref() == Some(tenant);
 
@@ -854,6 +888,13 @@ async fn create_api_key(
         }
     }
 
+    let access_ttl_secs = bounded_secs(
+        request.access_ttl_secs,
+        MIN_ACCESS_TTL_SECS,
+        MAX_ACCESS_TTL_SECS,
+        "accessTtlSecs",
+    )?;
+
     let secret = generate_refresh_secret();
     let key_id = generate_id();
     let api_key = format!("{KEY_PREFIX}{key_id}_{secret}");
@@ -869,6 +910,7 @@ async fn create_api_key(
         allow_secret_login: request.allow_secret_login.unwrap_or(false),
         allowed_origins: request.allowed_origins.unwrap_or_default(),
         rate_limit: request.rate_limit,
+        access_ttl_secs,
         expires_at: request.expires_at,
     })
     .await
@@ -947,6 +989,9 @@ async fn create_my_pat(
         allowed_origins: Vec::new(),
         // PATs use the global per-key exchange policy; no per-key override at self-service creation.
         rate_limit: None,
+        // Nor the token lifetime: raising it is a tenant decision about a machine principal, not
+        // something a user grants themselves.
+        access_ttl_secs: None,
         expires_at: request.expires_at,
     })
     .await
@@ -1016,6 +1061,18 @@ mod tests {
             "key-1",
             &client_mac(secret, "key-1", bucket)
         ));
+        // Both neighbours verify too — a client on the far side of an hour boundary, or with a slow
+        // clock, is not a client with the wrong secret.
+        assert!(verify_key_hmac(
+            &stored,
+            "key-1",
+            &client_mac(secret, "key-1", bucket - 1)
+        ));
+        assert!(verify_key_hmac(
+            &stored,
+            "key-1",
+            &client_mac(secret, "key-1", bucket + 1)
+        ));
         // A stale/far bucket (outside ±1) is rejected.
         assert!(!verify_key_hmac(
             &stored,
@@ -1035,5 +1092,24 @@ mod tests {
             &client_mac("wrong", "key-1", bucket)
         ));
         assert!(!verify_key_hmac(&stored, "key-1", "!!not-base64!!"));
+    }
+
+    #[test]
+    fn creation_refuses_a_lifetime_outside_the_bounds() {
+        let bounds = |secs| {
+            bounded_secs(
+                secs,
+                MIN_ACCESS_TTL_SECS,
+                MAX_ACCESS_TTL_SECS,
+                "accessTtlSecs",
+            )
+        };
+
+        assert!(bounds(Some(8 * 3600)).is_ok());
+        assert!(bounds(None).is_ok());
+        // A typo (a zero, or hours where seconds belong) is refused where it is cheap to fix, rather
+        // than becoming a key whose tokens die on arrival.
+        assert!(bounds(Some(0)).is_err());
+        assert!(bounds(Some(MAX_ACCESS_TTL_SECS + 1)).is_err());
     }
 }
