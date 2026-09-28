@@ -2,8 +2,11 @@
 //!
 //! Backed by DynamoDB via [`repository::AuditRepository`]. Each entry has a unique `id` (table PK)
 //! and is queryable by `user` or `tenant` (each a GSI, sorted by `timestamp`). A numeric `ttl`
-//! epoch is written on every entry so DynamoDB can expire old rows — **TTL is enabled on the table
-//! out-of-band (Terraform), not via wasabi's `create_table`** (same approach as backups).
+//! epoch is written on every entry so DynamoDB can expire old rows, and the table's TTL is turned
+//! on by `create_table_with_ttl` at boot — not out-of-band. Terraform manages these tables for
+//! durability only and ignores `ttl` on them; what it grants is `DescribeTimeToLive` and
+//! `UpdateTimeToLive` so this call can do its work. The call never fails a boot, so without those
+//! permissions the rows keep their `ttl` attribute and simply never expire.
 
 pub mod repository;
 pub mod service;

@@ -8,8 +8,9 @@
 //!   trips its threshold.
 //!
 //! Every item carries a numeric `ttl` epoch so DynamoDB self-cleans expired rows (same pattern as
-//! the `sessions`/`audit-log` tables; enabling the table TTL is done out-of-band). The trait exposes
-//! only DB-agnostic primitives, so the store can be swapped for another backend later.
+//! the `sessions`/`audit-log` tables, and the table TTL is enabled at boot like theirs). The
+//! trait exposes only DB-agnostic primitives, so the store can be swapped for another backend
+//! later.
 //!
 //! # Why only blocks are indexed
 //! `BlocksByPolicyIndex` (hash `policy`, range `blockedAt`) exists for exactly one caller: the admin

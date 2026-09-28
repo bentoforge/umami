@@ -2,8 +2,8 @@
 //!
 //! `audit-log` (PK `id`) with two GSIs — `ByUserIndex` (hash `user`, range `timestamp`) and
 //! `ByTenantIndex` (hash `tenant`, range `timestamp`) — so events are listable per user or per
-//! tenant, newest first. A numeric `ttl` epoch is written per row; enabling the DynamoDB TTL that
-//! actually deletes expired rows is done out-of-band (Terraform).
+//! tenant, newest first. A numeric `ttl` epoch is written per row, and `create_table_with_ttl`
+//! enables the table TTL at boot, so DynamoDB is what actually deletes an expired row.
 
 use crate::audit::{AuditEntry, NewAuditEntry};
 use anyhow::Context;

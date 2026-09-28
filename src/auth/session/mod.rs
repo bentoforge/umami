@@ -3,7 +3,8 @@
 //! One `sessions` row per active login (device/browser). The refresh cookie carries
 //! `"<sessionId>.<refreshSecret>"`; only the SHA-256 hash of the secret is stored, and refresh
 //! rotates the secret. `expiresAt` bounds the session in code; a numeric `ttl` attribute is
-//! written so a DynamoDB TTL can self-clean expired rows once enabled out-of-band.
+//! written, and `create_table_with_ttl` enables the table TTL at boot, so DynamoDB self-cleans
+//! expired rows.
 
 pub mod repository;
 
@@ -58,7 +59,7 @@ pub struct Session {
     pub last_seen: DateTime<Utc>,
     /// Absolute expiry; refresh past this fails.
     pub expires_at: DateTime<Utc>,
-    /// Epoch-seconds mirror of `expires_at` for a DynamoDB TTL (enabled out-of-band).
+    /// Epoch-seconds mirror of `expires_at` for the table's DynamoDB TTL.
     pub ttl: i64,
 }
 
