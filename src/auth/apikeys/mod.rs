@@ -24,11 +24,13 @@ use crate::auth::ratelimit::{
 use crate::auth::session::{generate_refresh_secret, hash_refresh_secret, verify_refresh_secret};
 use crate::auth::tokens::TokenIssuer;
 use crate::bail_i18n;
+use crate::config::Config;
 use crate::config::VolumeRateLimit;
 use crate::config::repository::ConfigRepository;
 use crate::constants::{
-    MANAGE_PERSONAL_TOKENS_PERMISSION, MANAGE_SERVICE_KEYS_PERMISSION, MANAGE_USERS_PERMISSION,
-    MAX_TEXT_BODY_SIZE,
+    EXCHANGE_ANY_TENANT_PERMISSION, MANAGE_PERSONAL_TOKENS_PERMISSION,
+    MANAGE_SERVICE_KEYS_PERMISSION, MANAGE_USERS_PERMISSION, MAX_TEXT_BODY_SIZE,
+    SYSTEM_TENANT_MARKER, SYSTEM_TENANT_MEMBER_MARKER, UMAMI_API_CODE,
 };
 use crate::tenants::repository::TenantRepository;
 use crate::users::repository::UserRepository;
@@ -164,6 +166,13 @@ struct ExchangeRequest {
     /// page. Passing that user's language here puts it in the token, and every service down the
     /// line answers in it without a second channel. Absent = the deployment default.
     locale: Option<String>,
+    /// The tenant the minted token acts in. Absent = the key's own tenant.
+    ///
+    /// A deployment-wide service (an importer, a sync job) lives in the system tenant but writes
+    /// into customer tenants. Rather than holding one key per customer, its system-tenant key asks
+    /// for a token scoped to the tenant it is about to work in — see
+    /// [`EXCHANGE_ANY_TENANT_PERMISSION`] for who may.
+    tenant_id: Option<String>,
 }
 
 /// Exchange response: the short-lived access token.
@@ -721,6 +730,16 @@ async fn exchange(
     // intersected with the key's optional restriction); a service key acts as itself (its `scope:*`).
     let (access_token, _exp) = match &key.user_id {
         Some(user_id) => {
+            if request
+                .tenant_id
+                .as_deref()
+                .is_some_and(|target| target != key.tenant_id)
+            {
+                status_bail!(
+                    StatusCode::FORBIDDEN,
+                    "A personal access token acts in its user's tenant; 'tenantId' is for system service keys"
+                );
+            }
             // Personal access token — load the user fresh so deactivation/lock stops new tokens.
             let user = match users.get_user(user_id).await? {
                 Some(user) if !user.locked => user,
@@ -770,32 +789,72 @@ async fn exchange(
         }
         None => {
             // Service key — acts as itself; subjects are the key's `scope:*`.
-            let features = tenant_features(&tenants, &key.tenant_id).await?;
-            mint_for_api(
+            let acting_tenant = match request.tenant_id.as_deref() {
+                Some(target) if target != key.tenant_id => {
+                    if !is_system(&key.tenant_id)
+                        || !may_exchange_for_any_tenant(&config, &key.scopes)
+                    {
+                        status_bail!(
+                            StatusCode::FORBIDDEN,
+                            "This key may not mint tokens for another tenant"
+                        );
+                    }
+                    match tenants.get_tenant(target).await? {
+                        Some(tenant) => Some(tenant),
+                        None => status_bail!(StatusCode::NOT_FOUND, "No such tenant"),
+                    }
+                }
+                _ => None,
+            };
+            let tenant_id = acting_tenant
+                .as_ref()
+                .map_or(key.tenant_id.as_str(), |tenant| tenant.tenant_id.as_str());
+            let features = match &acting_tenant {
+                Some(tenant) => tenant.features.clone(),
+                None => tenant_features(&tenants, &key.tenant_id).await?,
+            };
+            let minted = mint_for_api(
                 &tokens,
                 &config,
                 MintParams {
                     contacts: contacts.as_ref(),
                     api_code: &api_code,
                     subject: &key.key_id,
-                    tenant_id: &key.tenant_id,
+                    tenant_id,
                     token_version: 0,
                     subjects: &key.scopes,
                     features: &features,
-                    // A key never switches tenants, so acting-in and membership coincide.
+                    // Acting-in follows the target tenant, membership stays with the key's home —
+                    // the same split a switched user session gets.
                     // A pure machine key has no user to inherit from.
                     locale: &crate::i18n::resolve(&config, request.locale.as_deref(), None),
-                    system_tenant: is_system(&key.tenant_id),
+                    system_tenant: is_system(tenant_id),
                     system_tenant_member: is_system(&key.tenant_id),
                     passkey: false,
                     totp: false,
                     user: None,
-                    tenant: None,
+                    tenant: acting_tenant.as_ref(),
                     kind: Some("api_key"),
                     access_ttl_secs,
                 },
             )
-            .await?
+            .await?;
+            if let Some(tenant) = &acting_tenant {
+                record_best_effort(
+                    &audit,
+                    NewAuditEntry::new(
+                        AuditSeverity::Neutral,
+                        Some(tenant.tenant_id.clone()),
+                        None,
+                        format!(
+                            "System service key '{}' exchanged for tenant '{}' (API '{api_code}')",
+                            key.key_id, tenant.tenant_id
+                        ),
+                    ),
+                )
+                .await;
+            }
+            minted
         }
     };
 
@@ -847,6 +906,22 @@ pub(crate) fn effective_token_policy(
 }
 
 /// Resolves a tenant's authorization feature set for the broker (empty when the tenant is gone).
+/// Whether a system-tenant service key holding `scopes` may mint for another tenant: resolved
+/// against the umami API's rules, with the subject set such a key has at home.
+fn may_exchange_for_any_tenant(config: &Config, scopes: &[String]) -> bool {
+    let Some(api) = config.find_api(UMAMI_API_CODE) else {
+        return false;
+    };
+    let mut subjects = scopes.to_vec();
+    subjects.push(SYSTEM_TENANT_MARKER.to_owned());
+    subjects.push(SYSTEM_TENANT_MEMBER_MARKER.to_owned());
+    api.resolve(&subjects).is_some_and(|permissions| {
+        permissions
+            .iter()
+            .any(|permission| permission == EXCHANGE_ANY_TENANT_PERMISSION)
+    })
+}
+
 async fn tenant_features(
     tenants: &Arc<dyn TenantRepository>,
     tenant_id: &str,
@@ -1092,6 +1167,48 @@ mod tests {
             &client_mac("wrong", "key-1", bucket)
         ));
         assert!(!verify_key_hmac(&stored, "key-1", "!!not-base64!!"));
+    }
+
+    fn with_umami_rule(when: &str, grant: &str) -> Config {
+        let mut config = Config::default();
+        let umami = config
+            .apis
+            .iter_mut()
+            .find(|api| api.code == UMAMI_API_CODE)
+            .unwrap();
+        umami.permissions.push(crate::config::PermissionRule {
+            when: when.to_owned(),
+            grant: vec![grant.to_owned()],
+        });
+        config
+    }
+
+    #[test]
+    fn no_key_may_exchange_for_another_tenant_by_default() {
+        // System-tenant membership grants `switch:tenant`, but that must not carry over to machine
+        // keys: without an explicit rule, cross-tenant exchange stays closed.
+        let config = Config::default();
+        assert!(!may_exchange_for_any_tenant(&config, &[]));
+        assert!(!may_exchange_for_any_tenant(
+            &config,
+            &["scope:importer".to_owned()]
+        ));
+    }
+
+    #[test]
+    fn a_rule_opts_in_exactly_the_scoped_keys() {
+        let config = with_umami_rule(
+            "scope:importer + is:system-tenant-member",
+            EXCHANGE_ANY_TENANT_PERMISSION,
+        );
+        assert!(may_exchange_for_any_tenant(
+            &config,
+            &["scope:importer".to_owned()]
+        ));
+        assert!(!may_exchange_for_any_tenant(
+            &config,
+            &["scope:other".to_owned()]
+        ));
     }
 
     #[test]

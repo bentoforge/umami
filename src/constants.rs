@@ -62,6 +62,14 @@ pub const MANAGE_TENANTS_PERMISSION: &str = "manage:tenants";
 /// `is:system-tenant`.
 pub const SWITCH_TENANT_PERMISSION: &str = "switch:tenant";
 
+/// Exchange a service key for a token acting in **another** tenant (`POST /auth/token` with
+/// `tenantId`). Only honoured for system-tenant service keys, and resolved against the umami API's
+/// permission rules like [`SWITCH_TENANT_PERMISSION`] — but granted by nothing in the built-in
+/// default config: `switch:tenant` follows system-tenant membership, so reusing it would hand every
+/// system-tenant machine key the run of every tenant. A deployment opts a key in by writing the
+/// rule, e.g. `{ "when": "scope:importer + is:system-tenant-member", "grant": ["exchange:any-tenant"] }`.
+pub const EXCHANGE_ANY_TENANT_PERMISSION: &str = "exchange:any-tenant";
+
 /// Manage a tenant's limits: set per-tenant settings, top up custom balance, read the ledger and
 /// history. Cross-tenant admin, like [`MANAGE_TENANTS_PERMISSION`]. See `docs/LIMITS.md`.
 pub const MANAGE_LIMITS_PERMISSION: &str = "manage:limits";
