@@ -168,6 +168,16 @@ pub const TOTP_MARKER: &str = "is:totp";
 /// can gate on "2FA present" regardless of the specific method.
 pub const TWO_FACTOR_MARKER: &str = "is:2fa";
 
+/// Added when the token was exchanged from a **personal access token**. A PAT carries its user's
+/// power without a second factor, so a rule that would otherwise demand `is:2fa` can admit it
+/// explicitly — `is:2fa, is:pat` — or only in its signed form, see [`HMAC_PAT_MARKER`].
+pub const PAT_MARKER: &str = "is:pat";
+
+/// Added (on top of [`PAT_MARKER`]) when the PAT was exchanged with the signed (HMAC) form, i.e.
+/// the secret never crossed the wire. Lets a rule enforce that for powerful PATs:
+/// `is:2fa, is:hmac-pat`.
+pub const HMAC_PAT_MARKER: &str = "is:hmac-pat";
+
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 
 /// The one role umami itself assigns: the auto-init root user carries it, and the built-in default

@@ -403,6 +403,7 @@ async fn mint_access_token(
                 == Some(user.tenant_id.as_str()),
             passkey: strength.passkey,
             totp: strength.totp,
+            pat: None,
             user: Some(user),
             tenant: tenant.as_ref(),
             kind: None,

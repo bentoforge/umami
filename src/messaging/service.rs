@@ -510,6 +510,7 @@ async fn resolve(query: ResolveQuery, deps: ResolveDeps) -> anyhow::Result<Value
                 system_tenant_member: false,
                 passkey: false,
                 totp: false,
+                pat: None,
                 user: Some(&user),
                 tenant: tenant.as_ref(),
                 kind: Some("messaging"),

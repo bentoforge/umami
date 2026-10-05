@@ -42,32 +42,38 @@ Mapping the real use-cases:
 Both kinds share the key format, the `api-keys` table, and the single exchange endpoint below; only
 `sub` + permission resolution differ.
 
-### Acting in another tenant (system service keys)
+### Acting in another tenant (`tenantId`)
 
-A deployment-wide service — an importer, a sync job — lives in the system tenant but works inside
-customer tenants. Instead of one key per customer, its system-tenant service key passes the target
-on the exchange:
+Deployment-wide work — an importer, a sync job, an admin's CLI — lives in the system tenant but
+writes into customer tenants. Instead of one credential per customer, the exchange names the
+target:
 
 ```jsonc
 POST /auth/token
-{ "apiKey": "umk_…", "api": "dbx-t01", "tenantId": "<target tenant id>" }
+{ "keyId": "…", "mac": "…", "api": "dbx-t01", "tenantId": "<target tenant id>" }
 ```
 
 The token then carries `tenant = <target>`, permissions resolved against the **target's** features,
-`is:system-tenant-member` (the key's home) but not `is:system-tenant` (it no longer acts there) —
-the same split a switched user session gets. Each such exchange is audited in the target tenant.
+`is:system-tenant-member` (the principal's home) but not `is:system-tenant` (it no longer acts
+there) — the same split a switched user session gets. Each such exchange is audited in the target
+tenant. A `tenantId` equal to the principal's own tenant is the plain exchange; an unknown tenant is
+`404`, a principal without the permission `403`. Who may, by subject kind:
 
-Who may: only a **service key** (a PAT always acts in its user's tenant) whose home is the system
-tenant, and only if the umami API's rules grant it `exchange:any-tenant`. Nothing grants that by
-default — deliberately not `switch:tenant`, which follows system-tenant membership and would open
-every tenant to every system machine key. A deployment opts a key in by writing the rule:
+- **PAT** — when its user could switch there from a session: the home tenant is the system tenant
+  and the umami API's rules grant `switch:tenant`, evaluated with the PAT's effective roles and its
+  markers `is:pat` / `is:hmac-pat`. This is the default way for a person to run a cross-tenant job.
+  Since such a PAT is a master key, harden the rule, e.g. to `is:2fa` for sessions and
+  `is:hmac-pat` for tokens (see [PERMISSIONS.md](PERMISSIONS.md)).
+- **Service key** — for unattended jobs: the key's tenant is the system tenant and the umami API's
+  rules grant it `exchange:any-tenant`. Nothing grants that by default — deliberately not
+  `switch:tenant`, which follows system-tenant membership and would open every tenant to every
+  system machine key. Opt a key in by writing the rule:
 
-```jsonc
-{ "when": "scope:importer + is:system-tenant-member", "grant": ["exchange:any-tenant"] }
-```
+  ```jsonc
+  { "when": "scope:importer + is:system-tenant-member", "grant": ["exchange:any-tenant"] }
+  ```
 
-A `tenantId` equal to the key's own tenant is the plain exchange; an unknown tenant is `404`, a key
-without the permission `403`.
+Background and alternatives: [adr/0001](adr/0001-cross-tenant-token-exchange.md).
 
 ## Common core (all modes)
 
@@ -179,8 +185,8 @@ policy (no override at self-service creation).
 
 ## Endpoints
 
-- `POST /auth/token` — exchange (raw key **or** signed form, optional `tenantId` for system
-  service keys), rate-limited
+- `POST /auth/token` — exchange (raw key **or** signed form, optional `tenantId` for
+  cross-tenant work), rate-limited
 - `POST /tenants/{id}/api-keys` (`manage:service-keys`) — create; returns `umk_…` once,
   optionally with `allowedOrigins`, `scopes`, `expiresAt`
 - `GET /tenants/{id}/api-keys` — list (metadata only)

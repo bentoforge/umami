@@ -35,6 +35,13 @@ policy evolves in config.
   - `is:totp` — the session authenticated with a TOTP second factor.
   - `is:2fa` — either strong second factor was used (passkey **or** TOTP); gate on this to require
     2FA regardless of method, e.g. `{ "when": "is:2fa", "grant": ["perm:sensitive-action"] }`.
+  - `is:pat` — the token was exchanged from a **personal access token**. A PAT never carries
+    `is:2fa`, so a rule demanding a second factor admits PATs only by naming them:
+    `is:2fa, is:pat`.
+  - `is:hmac-pat` — additionally set when that PAT used the **signed (HMAC) exchange**, i.e. its
+    secret never crossed the wire. Use it to admit only signed PATs to powerful grants, e.g.
+    `{ "when": "is:system-tenant-member + is:2fa, is:system-tenant-member + is:hmac-pat",
+    "grant": ["switch:tenant"] }`. See [adr/0001](adr/0001-cross-tenant-token-exchange.md).
 
   The auth-strength markers (`is:passkey`/`is:totp`/`is:2fa`) reflect **how this session logged in**:
   they are recorded on the session at login, re-applied on refresh, and carried across

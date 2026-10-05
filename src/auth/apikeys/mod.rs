@@ -17,7 +17,7 @@ pub mod repository;
 
 use crate::audit::repository::{AuditRepository, record_best_effort};
 use crate::audit::{AuditSeverity, NewAuditEntry};
-use crate::auth::broker::{MintParams, mint_for_api};
+use crate::auth::broker::{MintParams, PatProof, mint_for_api};
 use crate::auth::ratelimit::{
     Decision, POLICY_PER_IP_TOKEN, POLICY_TOKEN_EXCHANGE, Policy, RateLimiter, too_many_requests,
 };
@@ -30,7 +30,7 @@ use crate::config::repository::ConfigRepository;
 use crate::constants::{
     EXCHANGE_ANY_TENANT_PERMISSION, MANAGE_PERSONAL_TOKENS_PERMISSION,
     MANAGE_SERVICE_KEYS_PERMISSION, MANAGE_USERS_PERMISSION, MAX_TEXT_BODY_SIZE,
-    SYSTEM_TENANT_MARKER, SYSTEM_TENANT_MEMBER_MARKER, UMAMI_API_CODE,
+    SWITCH_TENANT_PERMISSION, SYSTEM_TENANT_MARKER, SYSTEM_TENANT_MEMBER_MARKER, UMAMI_API_CODE,
 };
 use crate::tenants::repository::TenantRepository;
 use crate::users::repository::UserRepository;
@@ -667,6 +667,11 @@ async fn exchange(
 
     // Verify possession by the method used: Mode 1 compares the presented secret against the stored
     // hash; Mode 2 checks the HMAC (no secret on the wire).
+    let pat_proof = if request.api_key.is_some() {
+        PatProof::Secret
+    } else {
+        PatProof::Hmac
+    };
     if let Some(api_key) = request.api_key.as_deref() {
         let ok = parse_api_key(api_key)
             .is_some_and(|(_, secret)| verify_refresh_secret(secret, &key.secret_hash));
@@ -730,16 +735,6 @@ async fn exchange(
     // intersected with the key's optional restriction); a service key acts as itself (its `scope:*`).
     let (access_token, _exp) = match &key.user_id {
         Some(user_id) => {
-            if request
-                .tenant_id
-                .as_deref()
-                .is_some_and(|target| target != key.tenant_id)
-            {
-                status_bail!(
-                    StatusCode::FORBIDDEN,
-                    "A personal access token acts in its user's tenant; 'tenantId' is for system service keys"
-                );
-            }
             // Personal access token — load the user fresh so deactivation/lock stops new tokens.
             let user = match users.get_user(user_id).await? {
                 Some(user) if !user.locked => user,
@@ -755,19 +750,54 @@ async fn exchange(
                     .cloned()
                     .collect()
             };
-            let features = tenant_features(&tenants, &user.tenant_id).await?;
-            mint_for_api(
+            let home_features = tenant_features(&tenants, &user.tenant_id).await?;
+            // A PAT may act in another tenant exactly when its user could switch there from a
+            // session — the same `switch:tenant` rule decides, evaluated with the PAT's markers so
+            // a deployment can demand `is:2fa, is:hmac-pat` for that power.
+            let acting_tenant = match request.tenant_id.as_deref() {
+                Some(target) if target != user.tenant_id => {
+                    let mut gate = subjects.clone();
+                    gate.extend(home_features.iter().cloned());
+                    gate.extend(
+                        pat_proof
+                            .markers()
+                            .iter()
+                            .map(|marker| (*marker).to_owned()),
+                    );
+                    if !is_system(&user.tenant_id)
+                        || !umami_grants(&config, gate, SWITCH_TENANT_PERMISSION)
+                    {
+                        status_bail!(
+                            StatusCode::FORBIDDEN,
+                            "This token may not act in another tenant"
+                        );
+                    }
+                    match tenants.get_tenant(target).await? {
+                        Some(tenant) => Some(tenant),
+                        None => status_bail!(StatusCode::NOT_FOUND, "No such tenant"),
+                    }
+                }
+                _ => None,
+            };
+            let tenant_id = acting_tenant
+                .as_ref()
+                .map_or(user.tenant_id.as_str(), |tenant| tenant.tenant_id.as_str());
+            let features = match &acting_tenant {
+                Some(tenant) => tenant.features.clone(),
+                None => home_features,
+            };
+            let minted = mint_for_api(
                 &tokens,
                 &config,
                 MintParams {
                     contacts: contacts.as_ref(),
                     api_code: &api_code,
                     subject: &user.user_id,
-                    tenant_id: &user.tenant_id,
+                    tenant_id,
                     token_version: user.token_version,
                     subjects: &subjects,
                     features: &features,
-                    // A key never switches tenants, so acting-in and membership coincide.
+                    // Acting-in follows the target tenant, membership stays with the user's home.
                     // A relaying service states the language of the person it acts for; a PAT
                     // otherwise inherits its owner's.
                     locale: &crate::i18n::resolve(
@@ -775,17 +805,34 @@ async fn exchange(
                         request.locale.as_deref().or(user.locale.as_deref()),
                         None,
                     ),
-                    system_tenant: is_system(&user.tenant_id),
+                    system_tenant: is_system(tenant_id),
                     system_tenant_member: is_system(&user.tenant_id),
                     passkey: false,
                     totp: false,
+                    pat: Some(pat_proof),
                     user: Some(&user),
-                    tenant: None,
+                    tenant: acting_tenant.as_ref(),
                     kind: Some("api_key"),
                     access_ttl_secs,
                 },
             )
-            .await?
+            .await?;
+            if let Some(tenant) = &acting_tenant {
+                record_best_effort(
+                    &audit,
+                    NewAuditEntry::new(
+                        AuditSeverity::Neutral,
+                        Some(tenant.tenant_id.clone()),
+                        Some(user.user_id.clone()),
+                        format!(
+                            "User '{}' exchanged personal access token '{}' for tenant '{}' (API '{api_code}')",
+                            user.user_id, key.key_id, tenant.tenant_id
+                        ),
+                    ),
+                )
+                .await;
+            }
+            minted
         }
         None => {
             // Service key — acts as itself; subjects are the key's `scope:*`.
@@ -832,6 +879,7 @@ async fn exchange(
                     system_tenant_member: is_system(&key.tenant_id),
                     passkey: false,
                     totp: false,
+                    pat: None,
                     user: None,
                     tenant: acting_tenant.as_ref(),
                     kind: Some("api_key"),
@@ -909,17 +957,19 @@ pub(crate) fn effective_token_policy(
 /// Whether a system-tenant service key holding `scopes` may mint for another tenant: resolved
 /// against the umami API's rules, with the subject set such a key has at home.
 fn may_exchange_for_any_tenant(config: &Config, scopes: &[String]) -> bool {
+    umami_grants(config, scopes.to_vec(), EXCHANGE_ANY_TENANT_PERMISSION)
+}
+
+/// Whether the umami API's rules grant `permission` to a system-tenant principal with `subjects`
+/// (the system markers are added here, since every caller is gating a cross-tenant exchange).
+fn umami_grants(config: &Config, mut subjects: Vec<String>, permission: &str) -> bool {
     let Some(api) = config.find_api(UMAMI_API_CODE) else {
         return false;
     };
-    let mut subjects = scopes.to_vec();
     subjects.push(SYSTEM_TENANT_MARKER.to_owned());
     subjects.push(SYSTEM_TENANT_MEMBER_MARKER.to_owned());
-    api.resolve(&subjects).is_some_and(|permissions| {
-        permissions
-            .iter()
-            .any(|permission| permission == EXCHANGE_ANY_TENANT_PERMISSION)
-    })
+    api.resolve(&subjects)
+        .is_some_and(|permissions| permissions.iter().any(|granted| granted == permission))
 }
 
 async fn tenant_features(
@@ -1209,6 +1259,39 @@ mod tests {
             &config,
             &["scope:other".to_owned()]
         ));
+    }
+
+    #[test]
+    fn pat_markers_follow_the_proof() {
+        assert_eq!(PatProof::Secret.markers(), &["is:pat"]);
+        assert_eq!(PatProof::Hmac.markers(), &["is:pat", "is:hmac-pat"]);
+    }
+
+    #[test]
+    fn a_rule_can_demand_a_second_factor_or_a_signed_pat_for_switching() {
+        // The deployment's hardening: switching needs 2FA, or a PAT that never sent its secret.
+        let mut config = Config::default();
+        let umami = config
+            .apis
+            .iter_mut()
+            .find(|api| api.code == UMAMI_API_CODE)
+            .unwrap();
+        for rule in &mut umami.permissions {
+            rule.grant.retain(|grant| grant != SWITCH_TENANT_PERMISSION);
+        }
+        umami.permissions.push(crate::config::PermissionRule {
+            when: "is:system-tenant-member + is:2fa, is:system-tenant-member + is:hmac-pat"
+                .to_owned(),
+            grant: vec![SWITCH_TENANT_PERMISSION.to_owned()],
+        });
+
+        let gate = |proof: PatProof| {
+            let mut subjects = vec!["role:admin".to_owned()];
+            subjects.extend(proof.markers().iter().map(|m| (*m).to_owned()));
+            umami_grants(&config, subjects, SWITCH_TENANT_PERMISSION)
+        };
+        assert!(!gate(PatProof::Secret));
+        assert!(gate(PatProof::Hmac));
     }
 
     #[test]

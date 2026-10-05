@@ -5,8 +5,8 @@
 use crate::auth::tokens::{AccessTokenClaims, TokenIssuer};
 use crate::config::Config;
 use crate::constants::{
-    PASSKEY_MARKER, SYSTEM_TENANT_MARKER, SYSTEM_TENANT_MEMBER_MARKER, TOTP_MARKER,
-    TWO_FACTOR_MARKER,
+    HMAC_PAT_MARKER, PASSKEY_MARKER, PAT_MARKER, SYSTEM_TENANT_MARKER, SYSTEM_TENANT_MEMBER_MARKER,
+    TOTP_MARKER, TWO_FACTOR_MARKER,
 };
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -26,6 +26,25 @@ pub fn auth_strength(caller: &wasabi::web::auth::user::User) -> (bool, bool) {
 }
 
 /// Everything needed to mint a token for a principal (user, PAT, or M2M key) against a target API.
+/// How a personal access token proved possession at the exchange.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PatProof {
+    /// The raw secret was presented (Mode 1).
+    Secret,
+    /// An HMAC over the hour bucket was presented; the secret never left the client (Mode 2).
+    Hmac,
+}
+
+impl PatProof {
+    /// The synthetic markers this proof adds to the subject set.
+    pub fn markers(self) -> &'static [&'static str] {
+        match self {
+            PatProof::Secret => &[PAT_MARKER],
+            PatProof::Hmac => &[PAT_MARKER, HMAC_PAT_MARKER],
+        }
+    }
+}
+
 pub struct MintParams<'a> {
     /// Target API code in the config `apis` catalog.
     pub api_code: &'a str,
@@ -59,6 +78,9 @@ pub struct MintParams<'a> {
     pub passkey: bool,
     /// Whether the session authenticated with a TOTP second factor (adds `is:totp` + `is:2fa`).
     pub totp: bool,
+    /// Set when the token is exchanged from a personal access token (adds `is:pat`, plus
+    /// `is:hmac-pat` for the signed form).
+    pub pat: Option<PatProof>,
     /// The user principal, when the token acts as a user (`None` for an M2M service key). Source of
     /// the `$user.*` claim references and the composed display names.
     pub user: Option<&'a crate::users::User>,
@@ -106,6 +128,9 @@ pub async fn mint_for_api(
     }
     if params.passkey || params.totp {
         subject_set.push(TWO_FACTOR_MARKER.to_owned());
+    }
+    if let Some(proof) = params.pat {
+        subject_set.extend(proof.markers().iter().map(|marker| (*marker).to_owned()));
     }
     let permissions = match api.resolve(&subject_set) {
         Some(permissions) => permissions,
