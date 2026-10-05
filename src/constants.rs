@@ -62,6 +62,14 @@ pub const MANAGE_TENANTS_PERMISSION: &str = "manage:tenants";
 /// `is:system-tenant`.
 pub const SWITCH_TENANT_PERMISSION: &str = "switch:tenant";
 
+/// Exchange a service key for a token acting in **another** tenant (`POST /auth/token` with
+/// `tenantId`). Only honoured for system-tenant service keys, and resolved against the umami API's
+/// permission rules like [`SWITCH_TENANT_PERMISSION`] — but granted by nothing in the built-in
+/// default config: `switch:tenant` follows system-tenant membership, so reusing it would hand every
+/// system-tenant machine key the run of every tenant. A deployment opts a key in by writing the
+/// rule, e.g. `{ "when": "scope:importer + is:system-tenant-member", "grant": ["exchange:any-tenant"] }`.
+pub const EXCHANGE_ANY_TENANT_PERMISSION: &str = "exchange:any-tenant";
+
 /// Manage a tenant's limits: set per-tenant settings, top up custom balance, read the ledger and
 /// history. Cross-tenant admin, like [`MANAGE_TENANTS_PERMISSION`]. See `docs/LIMITS.md`.
 pub const MANAGE_LIMITS_PERMISSION: &str = "manage:limits";
@@ -159,6 +167,16 @@ pub const TOTP_MARKER: &str = "is:totp";
 /// Added whenever the session used a strong second factor (passkey or TOTP), so permission rules
 /// can gate on "2FA present" regardless of the specific method.
 pub const TWO_FACTOR_MARKER: &str = "is:2fa";
+
+/// Added when the token was exchanged from a **personal access token**. A PAT carries its user's
+/// power without a second factor, so a rule that would otherwise demand `is:2fa` can admit it
+/// explicitly — `is:2fa, is:pat` — or only in its signed form, see [`HMAC_PAT_MARKER`].
+pub const PAT_MARKER: &str = "is:pat";
+
+/// Added (on top of [`PAT_MARKER`]) when the PAT was exchanged with the signed (HMAC) form, i.e.
+/// the secret never crossed the wire. Lets a rule enforce that for powerful PATs:
+/// `is:2fa, is:hmac-pat`.
+pub const HMAC_PAT_MARKER: &str = "is:hmac-pat";
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 

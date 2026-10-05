@@ -175,6 +175,7 @@ async fn switch_tenant(
             system_tenant_member: true,
             passkey,
             totp,
+            pat: None,
             user: Some(&user),
             tenant: Some(&target),
             kind: None,
