@@ -1,5 +1,5 @@
 import type { CustomFieldView } from "@bentoforge/umami-iam";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { useUmami } from "../auth/UmamiProvider";
@@ -14,6 +14,9 @@ export function CreateTenantPage() {
   const navigate = useNavigate();
   const [defs, setDefs] = useState<CustomFieldView[]>([]);
   const [name, setName] = useState("");
+  const [tenantId, setTenantId] = useState("");
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const advancedId = useId();
   const [fields, setFields] = useState<Record<string, unknown>>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -29,7 +32,11 @@ export function CreateTenantPage() {
     setBusy(true);
     setError(null);
     try {
-      const res = await client.createTenant({ name, customFields: fields });
+      const res = await client.createTenant({
+        name,
+        tenantId: tenantId.trim() || undefined,
+        customFields: fields,
+      });
       navigate(`/tenants/${encodeURIComponent(res.tenantId)}`, { replace: true });
     } catch (err) {
       setError(errMsg(err));
@@ -56,6 +63,34 @@ export function CreateTenantPage() {
             />
           </Field>
           <CustomFieldsForm defs={defs} values={fields} onChange={setFields} />
+        </div>
+        <div className="space-y-3">
+          <button
+            type="button"
+            className="text-xs text-primary hover:underline"
+            aria-expanded={advancedOpen}
+            aria-controls={advancedId}
+            onClick={() => setAdvancedOpen((was) => !was)}
+          >
+            {advancedOpen ? t("tenants.advancedHide") : t("tenants.advancedShow")}
+          </button>
+          {advancedOpen && (
+            <div id={advancedId} className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <Field label={t("tenants.idLabel")}>
+                <input
+                  className={input}
+                  value={tenantId}
+                  onChange={(e) => setTenantId(e.target.value)}
+                  maxLength={40}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                  {t("tenants.idHint")}
+                </p>
+              </Field>
+            </div>
+          )}
         </div>
         <div className="flex gap-2">
           <button

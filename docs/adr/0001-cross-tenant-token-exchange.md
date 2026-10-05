@@ -67,4 +67,6 @@ requires a second factor for sessions and the signed exchange for PATs.
 - **Product services need no change**, beyond trusting umami as issuer and having an API (audience)
   entry with the permissions they check (for dbx: `write:blocks`, `write:assets`).
 - **Tenant IDs matter:** the token's `tenant` is the umami tenant id. A service that already holds
-  data under some tenant key needs the umami tenant to carry the same id.
+  data under some tenant key needs the umami tenant to carry the same id — so `POST /tenants`
+  accepts an optional `tenantId` (longer than 10, at most 40 characters, unique), offered in the
+  UI under a collapsed "Advanced" section.

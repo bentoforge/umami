@@ -153,7 +153,11 @@
     "featuresTitle": "Manage features",
     "featuresNone": "none",
     "back": "Back",
-    "notFound": "Tenant not found."
+    "notFound": "Tenant not found.",
+    "advancedShow": "Advanced",
+    "advancedHide": "Hide advanced",
+    "idLabel": "ID",
+    "idHint": "Can be used to specify an ID. It is recommended to let the system assign one."
   },
   "limits": {
     "title": "Limits",

@@ -60,8 +60,8 @@ pub trait TenantRepository: Send + Sync {
         created_by: Option<&str>,
     ) -> anyhow::Result<Tenant>;
 
-    /// Creates a tenant with a caller-supplied id (used by auto-init to materialise the configured
-    /// system tenant). Same defaults as `create_tenant`.
+    /// Creates a tenant with a caller-supplied id (auto-init's system tenant, or an id an admin
+    /// chose on creation). Same defaults as `create_tenant`; an existing id fails.
     async fn create_tenant_with_id(
         &self,
         tenant_id: &str,
@@ -178,8 +178,8 @@ impl TenantRepository for DynamoTenantRepository {
             last_changed_by: created_by.map(str::to_owned),
         };
 
-        // Defensive: the id is the PK, so `attribute_not_exists` makes a (near-impossible) id
-        // collision fail loudly instead of silently overwriting an existing tenant — for free.
+        // The id is the PK, so `attribute_not_exists` makes an id collision — a caller-chosen id
+        // racing another create — fail loudly instead of silently overwriting a tenant.
         let _ = self
             .client
             .put_entity(TABLE_TENANTS, &tenant)?
