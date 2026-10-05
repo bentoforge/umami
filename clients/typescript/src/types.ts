@@ -215,6 +215,10 @@ export interface Tenant {
 
 export interface CreateTenantRequest {
   name: string;
+  /** Optional id for the new tenant (longer than 10, at most 40 characters, unique — `409`
+   * otherwise). Meant for mirroring an id another system already uses; omit it to let umami
+   * generate one, which is recommended. */
+  tenantId?: string;
   /** Optional first owner. Omit to create an empty tenant (add users afterwards by impersonating
    * it on the Tenants screen). */
   owner?: {

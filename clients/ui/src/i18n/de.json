@@ -153,7 +153,11 @@
     "featuresTitle": "Merkmale verwalten",
     "featuresNone": "keine",
     "back": "Zurück",
-    "notFound": "Mandant nicht gefunden."
+    "notFound": "Mandant nicht gefunden.",
+    "advancedShow": "Erweitert",
+    "advancedHide": "Erweitert ausblenden",
+    "idLabel": "ID",
+    "idHint": "Kann verwendet werden, um eine ID vorzugeben. Es wird empfohlen, das System eine ID vergeben zu lassen."
   },
   "limits": {
     "title": "Kontingente",

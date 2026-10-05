@@ -71,11 +71,23 @@ struct OwnerSpec {
     roles: Option<Vec<String>>,
 }
 
+/// A caller-chosen tenant id must be longer than this — short ids are easy to collide with and
+/// to guess.
+const MIN_CUSTOM_TENANT_ID_LEN: usize = 10;
+
+/// …and at most this long, which covers the ids other systems hand out (ULIDs, UUIDs).
+const MAX_CUSTOM_TENANT_ID_LEN: usize = 40;
+
 /// Request body for self-serve tenant creation.
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct CreateTenantRequest {
     name: String,
+    /// Optional caller-chosen tenant id. Lets a tenant mirror an id that already exists in
+    /// another system (e.g. the tenant key a product service stores data under). Absent = umami
+    /// generates one, which is the recommended default.
+    #[serde(default)]
+    tenant_id: Option<String>,
     /// Optional first owner. When omitted the tenant is created empty — add users afterwards
     /// (e.g. impersonate the tenant on the Tenants screen, then create its users).
     #[serde(default)]
@@ -337,13 +349,37 @@ async fn create_tenant(
         None => None,
     };
 
-    let tenant = tenants
-        .create_tenant(
-            request.name.trim(),
-            &slugify(&request.name),
-            Some(&created_by),
-        )
-        .await?;
+    let requested_id = requested_tenant_id(request.tenant_id.as_deref())?;
+    if let Some(tenant_id) = &requested_id
+        && tenants.get_tenant(tenant_id).await?.is_some()
+    {
+        status_bail!(
+            StatusCode::CONFLICT,
+            "A tenant with the id '{tenant_id}' already exists"
+        );
+    }
+
+    let tenant = match &requested_id {
+        Some(tenant_id) => {
+            tenants
+                .create_tenant_with_id(
+                    tenant_id,
+                    request.name.trim(),
+                    &slugify(&request.name),
+                    Some(&created_by),
+                )
+                .await?
+        }
+        None => {
+            tenants
+                .create_tenant(
+                    request.name.trim(),
+                    &slugify(&request.name),
+                    Some(&created_by),
+                )
+                .await?
+        }
+    };
 
     // Persist any custom-field values (create_tenant starts them empty).
     if !custom_fields.is_empty() {
@@ -365,6 +401,23 @@ async fn create_tenant(
         tenant_id: tenant.tenant_id,
         owner_user_id,
     })
+}
+
+/// Validates a caller-chosen tenant id: blank means "generate one", otherwise it must be longer
+/// than [`MIN_CUSTOM_TENANT_ID_LEN`] and at most [`MAX_CUSTOM_TENANT_ID_LEN`] characters.
+/// Uniqueness is checked against the store by the caller.
+fn requested_tenant_id(raw: Option<&str>) -> anyhow::Result<Option<String>> {
+    let Some(tenant_id) = raw.map(str::trim).filter(|id| !id.is_empty()) else {
+        return Ok(None);
+    };
+    let len = tenant_id.chars().count();
+    if len <= MIN_CUSTOM_TENANT_ID_LEN || len > MAX_CUSTOM_TENANT_ID_LEN {
+        client_bail!(
+            "A tenant id must be longer than {MIN_CUSTOM_TENANT_ID_LEN} and at most \
+             {MAX_CUSTOM_TENANT_ID_LEN} characters"
+        );
+    }
+    Ok(Some(tenant_id.to_owned()))
 }
 
 async fn list_tenants(
@@ -470,4 +523,30 @@ async fn patch_tenant(
     tenant.last_changed_by = Some(caller.user_id()?.to_owned());
 
     tenants.put_tenant(tenant).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn blank_tenant_ids_mean_generate_one() {
+        assert_eq!(requested_tenant_id(None).unwrap(), None);
+        assert_eq!(requested_tenant_id(Some("   ")).unwrap(), None);
+    }
+
+    #[test]
+    fn tenant_ids_must_be_longer_than_ten_and_at_most_forty_characters() {
+        assert!(requested_tenant_id(Some("0123456789")).is_err());
+        assert_eq!(
+            requested_tenant_id(Some(" 01234567890 "))
+                .unwrap()
+                .as_deref(),
+            Some("01234567890")
+        );
+        assert!(requested_tenant_id(Some(&"x".repeat(40))).is_ok());
+        assert!(requested_tenant_id(Some(&"x".repeat(41))).is_err());
+        // An id other systems hand out fits
+        assert!(requested_tenant_id(Some("4FTGMQPM94UI5BH9ML9HQRKJM0")).is_ok());
+    }
 }
