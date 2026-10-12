@@ -41,6 +41,7 @@ use std::env;
 use std::sync::Arc;
 use std::time::Duration;
 use wasabi::aws::dynamodb::generate_id;
+use wasabi::aws::ses::{Mail, Mailer};
 
 /// Which notification a mail is, for a worker that renders its own layout.
 ///
@@ -418,12 +419,11 @@ pub async fn from_env(aws: &Aws) -> anyhow::Result<(Arc<dyn Notifier>, Selection
             let from = ses_from().with_context(|| {
                 format!("{VARIABLE}={SES} requires UMAMI_MAIL_SES_FROM to be set")
             })?;
-            check_from_address(&from)?;
             aws.require()
                 .await
                 .with_context(|| format!("{VARIABLE}={SES} needs a usable AWS client"))?;
             Ok((
-                ses_notifier(from).await,
+                ses_notifier(from).await?,
                 Selection::explicit(SEAM, VARIABLE, SES).with_note(MAIL_WITHOUT_A_WAY_BACK),
             ))
         }
@@ -451,12 +451,10 @@ async fn detect(aws: &Aws) -> anyhow::Result<(Arc<dyn Notifier>, Selection)> {
     let queue = queue_url();
     let from = ses_from();
     // A malformed setting is a typo, not an absence — it fails the boot here rather than making
-    // umami fall back to a transport nobody asked for.
+    // umami fall back to a transport nobody asked for. The sender is checked by wasabi's mailer,
+    // once SES is the transport chosen.
     if let Some(url) = &queue {
         check_queue_url(url)?;
-    }
-    if let Some(address) = &from {
-        check_from_address(address)?;
     }
 
     if queue.is_some() || from.is_some() {
@@ -476,7 +474,7 @@ async fn detect(aws: &Aws) -> anyhow::Result<(Arc<dyn Notifier>, Selection)> {
             }
             if let Some(address) = from {
                 return Ok((
-                    ses_notifier(address).await,
+                    ses_notifier(address).await?,
                     Selection::detected(SEAM, VARIABLE, SES).with_note(MAIL_WITHOUT_A_WAY_BACK),
                 ));
             }
@@ -582,68 +580,22 @@ fn ses_configuration_set() -> Option<String> {
         .filter(|name| !name.is_empty())
 }
 
-/// Builds the SES notifier and says who mail comes from.
-async fn ses_notifier(from: String) -> Arc<dyn Notifier> {
-    let notifier = SesNotifier::new(from).await;
-    match &notifier.configuration_set {
-        Some(name) => tracing::info!(
-            "outbound mail goes straight to SES as {} (configuration set {name})",
-            notifier.from
-        ),
-        None => tracing::info!("outbound mail goes straight to SES as {}", notifier.from),
-    }
-    Arc::new(notifier)
+/// Builds the SES notifier. wasabi's mailer rejects a sender that cannot be one and says who mail
+/// comes from.
+///
+/// Only the shape of the sender is checked, never the identity: proving it is verified would take
+/// `ses:GetEmailIdentity`, which a least-privilege policy granting only `ses:SendEmail` legitimately
+/// withholds.
+async fn ses_notifier(from: String) -> anyhow::Result<Arc<dyn Notifier>> {
+    Ok(Arc::new(SesNotifier::new(from).await?))
 }
 
-/// Rejects a sender address that cannot be one.
-///
-/// Only the shape, and for the same reason as [`check_queue_url`]: proving the identity is verified
-/// would take `ses:GetEmailIdentity`, which a least-privilege policy granting only `ses:SendEmail`
-/// legitimately withholds. What this catches is the paste error — a bare domain, a display name with
-/// no address — which otherwise surfaces on the first password reset.
-///
-/// Both RFC 5322 forms are accepted, because both are what people write into a deployment manifest:
-/// `no-reply@example.com` and `umami <no-reply@example.com>`.
-fn check_from_address(raw: &str) -> anyhow::Result<()> {
-    let complain = |why: &str| {
-        anyhow::anyhow!(
-            "UMAMI_MAIL_SES_FROM must be a sender address \
-             (no-reply@example.com, or 'umami <no-reply@example.com>'), got '{raw}' — {why}"
-        )
-    };
-    let address = match (raw.find('<'), raw.rfind('>')) {
-        (Some(open), Some(close)) if close > open => raw
-            .get(open + 1..close)
-            .ok_or_else(|| complain("the angle brackets do not enclose an address"))?
-            .trim(),
-        (None, None) => raw,
-        _ => return Err(complain("the angle brackets are unbalanced")),
-    };
-
-    let (local, domain) = address
-        .split_once('@')
-        .ok_or_else(|| complain("there is no '@'"))?;
-    if local.is_empty() || domain.is_empty() {
-        return Err(complain("there is nothing on one side of the '@'"));
-    }
-    if domain.contains('@') {
-        return Err(complain("there is more than one '@'"));
-    }
-    if !domain.contains('.') {
-        return Err(complain("the domain has no dot"));
-    }
-    if address.chars().any(char::is_whitespace) {
-        return Err(complain("the address itself contains whitespace"));
-    }
-    Ok(())
-}
-
-/// The client configuration both AWS transports use.
+/// The client configuration of the SQS transport.
 ///
 /// The timeouts are tight on purpose, and they are what makes the claim in the module docs true: a
 /// single fast call only stays one if a stuck request cannot sit there. A queue or a mail provider
 /// having a bad day must surface as a failed verification, never as a stalled request handler in the
-/// one service the whole fleet logs in through. Same bounds wasabi puts on DynamoDB.
+/// one service the whole fleet logs in through. Same bounds wasabi puts on DynamoDB and on SES.
 async fn aws_client_config() -> aws_config::SdkConfig {
     let timeout_config = aws_config::timeout::TimeoutConfig::builder()
         .connect_timeout(Duration::from_secs(3))
@@ -809,7 +761,7 @@ impl Notifier for SqsNotifier {
 ///   minutes later, to an event destination that does not exist in this setup. So a dead address
 ///   stays `verified` and umami goes on sending reset links into nothing — the exact failure
 ///   [`crate::notify::service`]'s `POST /notifications/undeliverable` exists to prevent.
-/// - **The login path waits on SES.** Bounded by [`aws_client_config`], but non-zero.
+/// - **The login path waits on SES.** Bounded by the timeouts of wasabi's mailer, but non-zero.
 ///
 /// A synchronous rejection *is* visible, and logged with the recipient — it is the one hard signal
 /// this transport gets, and reading it is currently a human's job. Wiring it to withdraw the
@@ -820,52 +772,18 @@ impl Notifier for SqsNotifier {
 /// adds a configuration set and an event destination can correlate a bounce back to a user without
 /// umami changing.
 pub struct SesNotifier {
-    client: aws_sdk_sesv2::Client,
-    from: String,
-    configuration_set: Option<String>,
+    mailer: Mailer,
 }
 
 impl SesNotifier {
-    /// Builds the client from the ambient AWS environment (region, credentials).
-    pub async fn new(from: String) -> Self {
-        SesNotifier {
-            client: aws_sdk_sesv2::Client::new(&aws_client_config().await),
-            from,
-            configuration_set: ses_configuration_set(),
-        }
-    }
-
-    /// Builds one UTF-8 text part.
+    /// Builds the mailer from the ambient AWS environment (region, credentials).
     ///
-    /// The charset is load-bearing rather than decorative: without it SES encodes as 7-bit ASCII and
-    /// every umlaut in a German subject line arrives as a replacement character.
-    fn utf8(data: &str) -> anyhow::Result<aws_sdk_sesv2::types::Content> {
-        Ok(aws_sdk_sesv2::types::Content::builder()
-            .data(data)
-            .charset("UTF-8")
-            .build()?)
-    }
-
-    /// One message tag, or `None` when the value is not one SES accepts.
-    ///
-    /// SES allows `[A-Za-z0-9_-]` in a tag value and rejects the **whole send** over a stray
-    /// character. Every id umami mints is safe, so this never fires today — but a tag is a
-    /// convenience and a mail is not, so an id from some later source drops the tag rather than the
-    /// message.
-    fn tag(name: &'static str, value: &str) -> Option<aws_sdk_sesv2::types::MessageTag> {
-        if value.is_empty()
-            || !value
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-        {
-            tracing::debug!("dropping SES message tag {name}: value is not tag-safe");
-            return None;
-        }
-        aws_sdk_sesv2::types::MessageTag::builder()
-            .name(name)
-            .value(value)
-            .build()
-            .ok()
+    /// Fails if `from` is not a sender address.
+    pub async fn new(from: String) -> anyhow::Result<Self> {
+        let mailer = Mailer::ses(from, ses_configuration_set())
+            .await
+            .context("UMAMI_MAIL_SES_FROM is not usable")?;
+        Ok(SesNotifier { mailer })
     }
 }
 
@@ -873,69 +791,22 @@ impl SesNotifier {
 impl Notifier for SesNotifier {
     #[tracing::instrument(level = "debug", skip(self, mail), err(level = "debug", Display))]
     async fn send(&self, mail: OutboundMail) -> anyhow::Result<()> {
-        let body = aws_sdk_sesv2::types::Body::builder()
-            .text(SesNotifier::utf8(&mail.body)?)
-            .build();
-        let message = aws_sdk_sesv2::types::Message::builder()
-            .subject(SesNotifier::utf8(&mail.subject)?)
-            .body(body)
-            .build();
-        let content = aws_sdk_sesv2::types::EmailContent::builder()
-            .simple(message)
-            .build();
+        let message_id = mail.message_id.clone();
+        let outbound = Mail::new(mail.to, mail.subject, mail.body)
+            .with_tag("umamiMessageId", mail.message_id)
+            .with_tag("umamiUserId", mail.user_id);
 
-        let mut request = self
-            .client
-            .send_email()
-            .from_email_address(&self.from)
-            .destination(
-                aws_sdk_sesv2::types::Destination::builder()
-                    .to_addresses(&mail.to)
-                    .build(),
-            )
-            .content(content)
-            .set_configuration_set_name(self.configuration_set.clone());
-        for tag in [
-            SesNotifier::tag("umamiMessageId", &mail.message_id),
-            SesNotifier::tag("umamiUserId", &mail.user_id),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            request = request.email_tags(tag);
-        }
-
-        match request.send().await {
-            Ok(_) => Ok(()),
-            Err(err) => {
-                // The one hard signal this transport gets. Loud and with the address, because
-                // nothing else in the deployment will ever mention it — see the type's docs.
-                tracing::warn!(
-                    "SES refused mail {} to {}: {}",
-                    mail.message_id,
-                    mail.to,
-                    aws_error(&err)
-                );
-                Err(anyhow::Error::new(err)
-                    .context(format!("Failed to send mail {} via SES", mail.message_id)))
-            }
-        }
+        self.mailer.send(outbound).await.map_err(|err| {
+            // The one hard signal this transport gets. Loud and with the address (wasabi's error
+            // names it), because nothing else in the deployment will ever mention it — see the
+            // type's docs.
+            tracing::warn!("SES refused mail {message_id}: {err:#}");
+            err.context(format!("Failed to send mail {message_id} via SES"))
+        })
     }
 
     fn is_configured(&self) -> bool {
         true
-    }
-}
-
-/// The service's own message for an SDK error, which is the half worth reading. Falls back to the
-/// SDK's rendering when the failure never reached the service (a timeout, a bad credential chain).
-fn aws_error<E, R>(err: &aws_sdk_sesv2::error::SdkError<E, R>) -> String
-where
-    E: std::error::Error,
-{
-    match err.as_service_error() {
-        Some(service) => service.to_string(),
-        None => err.to_string(),
     }
 }
 
@@ -1024,35 +895,6 @@ mod tests {
         assert!(check_queue_url("arn:aws:sqs:eu-central-1:123456789012:umami-mail").is_err());
         assert!(check_queue_url("https://sqs.eu-central-1.amazonaws.com").is_err());
         assert!(check_queue_url("https://sqs.eu-central-1.amazonaws.com/").is_err());
-    }
-
-    /// A sender address is the one SES setting a deployment types by hand, and getting it wrong
-    /// otherwise surfaces on the first password reset rather than at boot.
-    #[test]
-    fn a_sender_address_that_cannot_be_one_is_refused() {
-        assert!(check_from_address("no-reply@example.com").is_ok());
-        assert!(check_from_address("umami <no-reply@example.com>").is_ok());
-        assert!(check_from_address("umami IAM <no-reply@mail.example.co.uk>").is_ok());
-
-        assert!(check_from_address("example.com").is_err());
-        assert!(check_from_address("no-reply@localhost").is_err());
-        assert!(check_from_address("umami <no-reply@example.com").is_err());
-        assert!(check_from_address("@example.com").is_err());
-        assert!(check_from_address("no-reply@").is_err());
-        assert!(check_from_address("a@b@example.com").is_err());
-        assert!(check_from_address("no reply@example.com").is_err());
-    }
-
-    /// A tag value SES would reject takes the whole send with it, so an unsafe one has to drop the
-    /// tag instead. Every id umami mints is already safe — this guards the next source of ids.
-    #[test]
-    fn an_unsafe_message_tag_is_dropped_rather_than_sent() {
-        assert!(SesNotifier::tag("umamiMessageId", &generate_id()).is_some());
-        assert!(SesNotifier::tag("umamiUserId", "user-1_A").is_some());
-
-        assert!(SesNotifier::tag("umamiUserId", "user 1").is_none());
-        assert!(SesNotifier::tag("umamiUserId", "jane@example.com").is_none());
-        assert!(SesNotifier::tag("umamiUserId", "").is_none());
     }
 
     /// The optional half of a mail must not appear in the payload at all when it is absent — a
