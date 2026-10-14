@@ -101,6 +101,12 @@ export interface UmamiClientOptions {
    * session to lose.
    */
   onSessionExpired?: () => void;
+  /**
+   * The API (see `docs/AUDIENCES.md`) to mint access tokens for, default `umami`. The server's
+   * session is audience-agnostic, so the client names it on every refresh — this is what a page
+   * reload's first `refresh()` uses. A login or passkey login with an explicit `api` replaces it.
+   */
+  api?: string;
 }
 
 /** What the server said about the refresh cookie. A refresh that never arrived throws instead. */
@@ -114,6 +120,8 @@ export class UmamiClient {
   private readonly baseUrl: string;
   private readonly onTokenChange?: (token: string | null) => void;
   private readonly onSessionExpired?: () => void;
+  /** The API every refresh and tenant switch mints for; `undefined` leaves the server default. */
+  private api: string | undefined;
   private accessToken: string | null = null;
   /** In-flight refresh, if any — coalesces concurrent 401s into a single rotation. */
   private refreshing: Promise<RefreshVerdict> | null = null;
@@ -124,6 +132,7 @@ export class UmamiClient {
     this.baseUrl = options.baseUrl.replace(/\/+$/, "");
     this.onTokenChange = options.onTokenChange;
     this.onSessionExpired = options.onSessionExpired;
+    this.api = options.api;
   }
 
   /** The current in-memory access token, if any. */
@@ -217,24 +226,29 @@ export class UmamiClient {
 
   /** Password login by username. On success the access token is stored; if MFA is enabled and no
    * `totpCode` is given, the response has `mfaRequired: true` and no token. Pass `api` to mint the
-   * first token for a product API directly (default: the umami admin API); the session itself is
-   * audience-agnostic, so later `refresh` calls choose their own `api`. */
+   * token for a product API directly (default: the one from {@link UmamiClientOptions.api}, else
+   * the umami admin API). The client remembers it and names it on every later refresh, since the
+   * server-side session is audience-agnostic. */
   async login(
     username: string,
     password: string,
     totpCode?: string,
     api?: string,
   ): Promise<LoginResponse> {
+    const target = api ?? this.api;
     const data = await this.request<LoginResponse>(
       "/auth/login",
-      { method: "POST", body: JSON.stringify({ username, password, totpCode, api }) },
+      { method: "POST", body: JSON.stringify({ username, password, totpCode, api: target }) },
       false,
     );
+    // Remembered even on an MFA challenge, so the follow-up call with the code need not repeat it.
+    this.api = target;
     if (data.accessToken) this.setToken(data.accessToken);
     return data;
   }
 
-  /** Silent refresh via the cookie. Returns whether a fresh token was obtained. */
+  /** Silent refresh via the cookie, for the remembered `api`. Returns whether a fresh token was
+   * obtained. */
   async refresh(): Promise<boolean> {
     return (await this.refreshOnce()) === "renewed";
   }
@@ -253,7 +267,8 @@ export class UmamiClient {
   }
 
   private async doRefresh(): Promise<RefreshVerdict> {
-    const response = await this.doFetch("/auth/refresh", { method: "POST" }, false);
+    const path = this.api ? `/auth/refresh?api=${enc(this.api)}` : "/auth/refresh";
+    const response = await this.doFetch(path, { method: "POST" }, false);
     if (!response.ok) {
       this.setToken(null);
       return "rejected";
@@ -304,11 +319,12 @@ export class UmamiClient {
   /** Re-scope the **session** to another tenant (requires `switch:tenant`). Durable, not a one-off
    * token: every later refresh follows the switch and it survives a reload, so there is no "acting
    * as" state to keep here. Switching back is a switch to the home tenant — and so is losing the
-   * permission, which the server re-checks on every refresh. Returns the active tenant id. */
+   * permission, which the server re-checks on every refresh. The new token is minted for the
+   * remembered `api`. Returns the active tenant id. */
   async switchTenant(tenantId: string): Promise<string> {
     const data = await this.request<TokenResponse>("/auth/switch-tenant", {
       method: "POST",
-      body: JSON.stringify({ tenantId }),
+      body: JSON.stringify({ tenantId, api: this.api }),
     });
     this.setToken(data.accessToken);
     return this.getClaims()?.tenant ?? tenantId;
@@ -358,8 +374,8 @@ export class UmamiClient {
    *
    * Omit `username` for a discoverable login: the challenge then carries no allow-list and the
    * authenticator picks both the credential and, with it, the user. Pass `api` to mint the token
-   * for a product API directly (default: umami); the session keeps that audience across
-   * refreshes. */
+   * for a product API directly (default: {@link UmamiClientOptions.api}, else umami); the client
+   * remembers it for later refreshes, as with {@link login}. */
   async loginWithPasskey(username?: string, api?: string): Promise<void> {
     await this.passkeyCeremony(username, api);
   }
@@ -411,6 +427,7 @@ export class UmamiClient {
       signal: get?.signal,
     })) as PublicKeyCredential | null;
     if (!credential) throw new Error("Passkey login was cancelled");
+    const target = api ?? this.api;
     const data = await this.request<TokenResponse>(
       "/auth/webauthn/login/finish",
       {
@@ -418,11 +435,12 @@ export class UmamiClient {
         body: JSON.stringify({
           ceremonyId: start.ceremonyId,
           credential: assertionToJSON(credential),
-          api,
+          api: target,
         }),
       },
       false,
     );
+    this.api = target;
     this.setToken(data.accessToken);
   }
 
