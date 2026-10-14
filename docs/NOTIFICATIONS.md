@@ -6,6 +6,11 @@ umami decides **who** hears about something and **where** they can be reached. T
 For the addresses themselves see [CONTACTS.md](CONTACTS.md); for the permission DSL,
 [PERMISSIONS.md](PERMISSIONS.md).
 
+Related decisions:
+
+- [ADR 0014 — Transactional mail stays outside the notification catalogue](adr/0014-transactional-mail-outside-notification-catalogue.md)
+- [ADR 0015 — The app owns the notification clock; cadences are opaque strings](adr/0015-app-owns-notification-clock.md)
+
 ---
 
 ## 1. Three kinds of message, and only two are here
@@ -18,25 +23,19 @@ For the addresses themselves see [CONTACTS.md](CONTACTS.md); for the permission 
 
 Cases 2 and 3 are one code path; an **empty `cadences` list** is what distinguishes them.
 
-There is deliberately no "not suppressible" flag on a type. Case 1 does not ask, so it cannot be
-switched off — and a flag saying so would only invite somebody to route a password reset through the
-consent machinery, where it does not belong.
+There is no "not suppressible" flag on a type: case 1 does not ask, so it cannot be switched off.
+Why: [ADR 0014](adr/0014-transactional-mail-outside-notification-catalogue.md).
 
 ---
 
 ## 2. Cadences, and why the app owns the clock
 
-An app already runs its own jobs — say it asks "is there new content" daily, weekly and monthly. umami
-does **not** reproduce that: when a job fires it says which cadences that firing represents, and
-umami answers with the users whose choice matches.
+The app runs its own jobs; umami schedules nothing. When a job fires it says which cadences that
+firing represents, and umami answers with the users whose choice matches — one string comparison per
+user, nothing accumulated or grouped. Why: [ADR 0015](adr/0015-app-owns-notification-clock.md).
 
-Nothing is accumulated, nothing is grouped, nothing is scheduled here. The decision is one string
-comparison per user, and that is deliberate — a store of pending items plus a scheduler plus digest
-templates plus a per-user timezone is a large amount of machinery for something the app's own
-calendar already expresses.
-
-**A firing is legitimately several cadences at once.** The Friday run *is* the daily run and the
-weekly run; on the first Friday of the month it is the monthly one too. So a firing carries a set:
+**A firing may be several cadences at once.** The Friday run is the daily and the weekly run; on the
+first Friday of the month it is the monthly one too. So a firing carries a set:
 
 ```json
 { "tenantId": "…", "type": "new-content", "cadences": ["daily", "weekly", "monthly"] }
@@ -46,22 +45,16 @@ Each user still appears at most once, because a user's choice is a single value.
 
 ### A cadence is a string
 
-There is no cadence enum. umami never *interprets* one — no arithmetic, no ordering, no scheduling —
-so a closed vocabulary would only dictate words umami has no business dictating. An app whose rhythm
-is `on-publish` or `quarterly` is not wrong.
+There is no cadence enum; umami never interprets one, so `on-publish` or `quarterly` are as valid as
+`weekly`. There is **no "immediate" or "push" concept** either: a type with no rhythm of its own
+declares a single cadence, called whatever suits, and its subscribers choose that string.
 
-Consequently there is **no "immediate" or "push" concept** either. A type with no rhythm of its own
-declares a single cadence, called whatever suits, and its subscribers choose that string. umami
-cannot tell it apart from a weekly type and does not need to.
+Each cadence carries its own **label**, exactly as a role or a feature does: a `LocalizedText`, a
+plain string or a map of locale tag to string. `GET /auth/me/notifications` resolves it into the
+reader's language, so the picker gets one string per entry either way — see [CONFIG.md](CONFIG.md)
+(*Labels*).
 
-Each cadence carries its own **label**, exactly as a role or a feature does — a vocabulary the
-deployment invents has to bring its own words, because nothing in a client's message catalogue could
-know what `on-publish` should read as in a picker. And exactly as for a role, that label is a
-`LocalizedText`: a plain string, or a map of locale tag to string. `GET /auth/me/notifications`
-resolves it into the reader's language, so the picker gets one string per entry either way — see
-[CONFIG.md](CONFIG.md) (*Labels*).
-
-The typo protection an enum would have bought lives where it has to:
+Typos are caught against the declared list:
 
 | Typo in | Caught by |
 |---|---|
@@ -69,11 +62,10 @@ The typo protection an enum would have bought lives where it has to:
 | a user's choice | the same list — refused at `PUT`, not stored |
 | the declaration itself | `validate_catalogue` on `PUT /config` |
 
-That last one matters most, because the declaration is the source of truth and has nothing to be
-compared against at runtime. The gate refuses a duplicate code, a type with no cadences, a
-non-lowercase cadence (it would never match a normalized firing), and a `default` naming a cadence
-the type is never fired at — which would silently park every untouched user in a group that receives
-nothing.
+The declaration has nothing to be compared against at runtime, so the gate refuses a duplicate code,
+a type with no cadences, a non-lowercase cadence (it would never match a normalized firing), and a
+`default` naming a cadence the type is never fired at — which would silently park every untouched
+user in a group that receives nothing.
 
 ---
 

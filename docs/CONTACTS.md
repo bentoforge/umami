@@ -5,21 +5,21 @@ possession of it. That is the whole concept.
 
 Chat identities (Telegram/WhatsApp) are a **different** thing and documented in
 [CONFIG.md](CONFIG.md) §7: they answer "which user sent this message", which ends in a minted token
-rather than a delivered mail. The two shared a table for a while and it made every function branch on
-which half of the data it was looking at — so they are apart, and stay apart.
+rather than a delivered mail.
+
+Decisions behind this design:
+
+- [Contacts as a verified list, not an email field on the user](adr/0011-contacts-as-verified-list.md)
+- [umami renders mail, a worker delivers it](adr/0012-mail-worker-outbound-seam.md)
+- [Password recovery by mailed link](adr/0013-password-recovery-by-mail.md)
 
 ---
 
 ## 1. Why a list, not one field on the user
 
-The deciding case is a **change of address**:
-
-- With a list the user adds the new address, verifies it, and only then drops the old one. They are
-  reachable the whole way through.
-- With a single field the new address overwrites a verified one while still unverified — so the user
-  is unreachable exactly when the confirmation mail has to arrive.
-
-"Work and private" is the second reason and the cheaper one.
+A user holds any number of contacts. A change of address is add the new one, verify it, then drop
+the old one — the user stays reachable throughout. Why: see
+[the ADR](adr/0011-contacts-as-verified-list.md).
 
 ---
 
@@ -153,17 +153,14 @@ POST /notifications/undeliverable          (notifications:report, scope:mail-wor
 { "userId": "…", "address": "jane@example.com", "event": "bounced", "messageId": "…" }
 ```
 
-The address's confirmation is **withdrawn** — the row stays, the flag clears. It was proven once and
-the proof is now stale, so the user sees what happened and can confirm it again if the mailbox comes
-back. Without this a dead address stays confirmed forever and every later message, reset links
-included, goes on being sent into nothing.
+The address's confirmation is **withdrawn** — the row stays, the flag clears, so the user sees what
+happened and can confirm it again if the mailbox comes back.
 
-**Hard failures only.** A full mailbox or a greylisting is the worker's to retry and says nothing
-about whether the address is still the user's. `complained` is accepted too and treated the same way:
-somebody saying "do not mail me here" is at least as good a reason to stop.
+**Hard failures only.** A full mailbox or a greylisting is the worker's to retry. `complained` is
+accepted too and treated the same way.
 
-Its own permission and its own scope, separate from `notifications:send`: the worker and the app
-asking for a send are different principals, and the worker has no business resolving an audience.
+Its own permission and its own scope, separate from `notifications:send`. Why the seam and the bounce
+report look like this: [the ADR](adr/0012-mail-worker-outbound-seam.md).
 
 With no mail transport configured, outbound mail is off: `GET /auth/me/contacts` reports
 `verificationAvailable: false`, the UI hides the action, and the endpoint answers `503` instead of
@@ -259,17 +256,15 @@ in another life.
 
 ## 6. A user record has no email field
 
-It used to have one. The field is **gone**, not hidden, and four things went with it:
+Addresses live only in contacts ([why](adr/0011-contacts-as-verified-list.md)). Concretely:
 
-- **The `email` claim is no longer minted.** umami puts no personal data in every token by default; a
-  deployment that wants an address in its tokens maps one through the API's `claims` block.
-- **`username` is required** on `POST /users` and on the tenant-owner form. The old "fall back to the
-  email as the username" convenience is gone: a contact is not an identity.
-- **`PATCH /users/{id}` does not accept `email`.** There is exactly one place an address is managed,
-  which is the point.
-- **Admin user search** covers username, name parts and custom fields — not addresses. Pulling
-  addresses into that search would mean a read per user across the whole tenant scan; looking a user
-  up *by* an address is a direct query on `ByAddressIndex` instead, which is cheaper than the scan.
+- **The `email` claim is not minted by default.** A deployment that wants an address in its tokens
+  maps one through the API's `claims` block.
+- **`username` is required** on `POST /users` and on the tenant-owner form; there is no fallback to an
+  email as the username.
+- **`PATCH /users/{id}` does not accept `email`.** Contacts are the only place an address is managed.
+- **Admin user search** covers username, name parts and custom fields — not addresses. Looking a user
+  up *by* an address is a direct query on `ByAddressIndex`.
 
 **`$user.email` is available as a claim** for a deployment that wants an address in its tokens —
 sourced from the preferred address, which is a confirmed one by the rules above. It is resolved **only** when
@@ -285,25 +280,18 @@ and it is *omitted* rather than empty when there is no confirmed address.
 link arrives by mail, and here it *has* to work without a session — the premise is that the user
 cannot sign in.
 
-Five decisions worth knowing:
+The rules (reasoning in [the ADR](adr/0013-password-recovery-by-mail.md)):
 
 - **The entry point always answers 202.** Unknown identifier, known one, unconfirmed address,
-  ambiguous address, no mail path — all identical. Any difference turns the endpoint into an oracle
-  for "does this account exist here", which is exactly what the sign-in screen spends effort not
-  revealing. The operator sees what happened in the audit log; the caller never does. The one
-  distinguishable answer is `429`, and it is about the caller's own volume rather than any account.
-- **The address must be confirmed.** A reset link is account takeover in one click for whoever reads
-  it, so an address nobody proved possession of is not a place to send it. This is the reason
-  confirmation exists before recovery does.
-- **An ambiguous address is refused, not guessed.** Two accounts may share `info@acme.com`; mailing
-  "reset your password" for an account the reader may not own is worse than asking for a username.
-- **The purpose is stored on the challenge and checked on consume.** A confirmation link and a reset
-  link share one table, so without that check the former would be redeemable as the latter — turning
-  "can receive mail here" into "can take over this account".
-- **A successful reset bumps `tokenVersion`**, so every existing session dies at its next refresh. A
-  recovery is often a recovery *from* something; that is the point, not a side effect. It stamps
-  `lastPasswordChange`, not `lastPasswordReset` — the user chose this password, so the account must
-  not show as holding a generated one.
+  ambiguous address, no mail path — all identical. The operator sees what happened in the audit log;
+  the caller never does. The one distinguishable answer is `429`, about the caller's own volume.
+- **The address must be confirmed.**
+- **An ambiguous address is refused, not guessed.** If two accounts share `info@acme.com`, the user
+  has to give a username.
+- **The purpose is stored on the challenge and checked on consume.** Confirmation and reset links
+  share one table; a confirmation link is not redeemable as a reset.
+- **A successful reset bumps `tokenVersion`**, so every existing session dies at its next refresh. It
+  stamps `lastPasswordChange`, not `lastPasswordReset` — the user chose this password.
 
 Two TTLs, deliberately different: `contactChallengeTtlSecs` defaults to 24h (a mail read the next
 morning should still work), `passwordResetTtlSecs` to 1h (someone who just asked for it is looking at

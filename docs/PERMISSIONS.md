@@ -3,10 +3,15 @@
 The authorization model is a small **ACL**: users get **roles**, tenants get **features**, and
 application code **only ever checks permissions**. Roles and features carry no meaning by
 themselves — a per-API **mapping** turns the subject's roles/features into the permissions baked
-into a JWT. This keeps product code stable (it checks permissions) while the role/feature→permission
-policy evolves in config.
+into a JWT.
 
 > See [`docs/AUDIENCES.md`](AUDIENCES.md) for the per-API token-broker mechanics this builds on.
+
+**Related ADRs** (the *why* behind this reference):
+- [ADR 0006 — Permissions projected per API from subjects via an ordered rule DSL](adr/0006-permission-dsl-per-api-mapping.md)
+- [ADR 0007 — Roles for users, scopes for service keys, role restriction for PATs](adr/0007-roles-scopes-pat-restriction.md)
+- [ADR 0008 — System tenant expressed via the `is:system-tenant` marker](adr/0008-system-tenant-marker.md)
+- [ADR 0001 — Cross-tenant token exchange for system principals](adr/0001-cross-tenant-token-exchange.md)
 
 ## 1. The four subject kinds
 
@@ -18,9 +23,9 @@ policy evolves in config.
 | **Synthetic** | `is:` | — (computed) | never stored | `is:system-tenant` |
 
 - **Roles vs. scopes:** identical mechanics (a label mapped to permissions), but roles are for
-  **users** and scopes for **machine (M2M) tokens**. Kept separate on purpose so M2M tokens can be
-  granted capabilities **no user role ever maps to** — e.g. a bot-backend service key getting
-  `messaging:link` / `messaging:resolve` in umami, which no `role:*` grants, so no human can hold them.
+  **users** and scopes for **machine (M2M) tokens**, so M2M tokens can hold permissions no user role
+  maps to (e.g. `messaging:link` / `messaging:resolve`). Why: see
+  [ADR 0007](adr/0007-roles-scopes-pat-restriction.md).
 - **Personal access tokens (PATs)** act as their user, so they carry `role:*`, not scopes. A PAT may
   carry an optional **role restriction** (`role:*` list); its effective roles are then
   `user.roles ∩ pat.roles` (empty list = the user's full roles) — a subject-level down-scope,
@@ -140,8 +145,7 @@ granted — enabling chaining like `role:admin → write:blocks`, then `write:bl
   **ordered list** of `{ when, grant }` rules. Rules run top-to-bottom, accumulating: a rule fires
   when its `when` holds against the current set (subjects + permissions granted so far), adding its
   `grant`. The token's permissions are the accumulated set. Ordered (not a map) so chaining is
-  well-defined and author-controlled. This makes "which permissions land in the JWT for audience X"
-  explicit and per-audience.
+  well-defined and author-controlled. Why: see [ADR 0006](adr/0006-permission-dsl-per-api-mapping.md).
 - `eligibility` (optional): if present and false against the final accumulated set (subjects +
   granted permissions), **no token is issued for that API** (403). Omitted = always eligible.
 
@@ -164,7 +168,7 @@ exchange runs through.)*
    `$tenant.custom.<code>` references, or a literal string without the `$`. See AUDIENCES.md for the
    full table. Plus `kind` for machine and chat-resolved tokens, and `amr` when the session used a
    second factor. **No `features` claim** by default — everything the product needs is cooked into
-   `permissions`.
+   `permissions` (see [ADR 0006](adr/0006-permission-dsl-per-api-mapping.md)).
 
 ## 5. Assignability + management
 
@@ -204,8 +208,9 @@ feature set (this encodes prerequisites, e.g. `feature:premium` requires `featur
 The mint layer adds `is:system-tenant` to `S` when the token's tenant is the configured
 `UMAMI_SYSTEM_TENANT_ID`. The `umami` API maps it to the cross-tenant permissions
 (`manage:tenants`, `switch:tenant`), and the cross-tenant routes (`GET/POST /tenants`,
-`DELETE /tenants/{id}`) check **those permissions**. The rule is config-expressed and travels in the
-token — there is no env-based tenant guard in the route handlers.
+`DELETE /tenants/{id}`) check **those permissions** — there is no tenant guard in the route
+handlers. Why: see [ADR 0008](adr/0008-system-tenant-marker.md); for acting in another tenant
+with a PAT or service key, see [ADR 0001](adr/0001-cross-tenant-token-exchange.md).
 
 ## 7. Storage & migration
 
@@ -222,7 +227,11 @@ token — there is no env-based tenant guard in the route handlers.
 
 ## 8. Decisions (resolved)
 
-1. **Permissions are referenceable in the DSL** via ordered, accumulating rules — a later rule can
-   match a permission an earlier rule granted (§2/§4).
-2. **No `features` claim** — everything the product needs is cooked into `permissions`.
-3. **PATs keep a role-level restriction** (`user.roles ∩ pat.roles`), separate from M2M scopes (§1).
+The decisions behind this model are recorded as ADRs:
+
+- Ordered, accumulating rules (permissions referenceable in the DSL); no `features` claim —
+  [ADR 0006](adr/0006-permission-dsl-per-api-mapping.md)
+- Roles vs. scopes; PATs keep a role-level restriction —
+  [ADR 0007](adr/0007-roles-scopes-pat-restriction.md)
+- System tenant via `is:system-tenant` — [ADR 0008](adr/0008-system-tenant-marker.md)
+- Cross-tenant token exchange — [ADR 0001](adr/0001-cross-tenant-token-exchange.md)
