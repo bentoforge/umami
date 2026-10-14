@@ -429,7 +429,7 @@ export class UmamiClient {
   // ── API-key exchange (M2M / BFF) ──────────────────────────────────────────────
 
   /** Exchanges an `umk_…` API key for a short-lived token (stores it). Server-side/BFF use.
-   * `api` selects the target API when the key allows more than one (see `docs/AUDIENCES.md`). */
+   * `api` selects the target API (default `umami`); a key is not tied to one (see `docs/AUDIENCES.md`). */
   async exchangeApiKey(apiKey: string, api?: string): Promise<ExchangeResponse> {
     const data = await this.request<ExchangeResponse>(
       "/auth/token",

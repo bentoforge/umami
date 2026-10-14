@@ -18,11 +18,12 @@ apis: [
   {
     "code": "catalog",
     "audience": "catalog",                          // → the token's `aud`
-    "eligibility": "role:member,role:admin",         // must hold, else 403
+    "eligibility": "role:member,role:admin,role:owner", // must hold, else 403
     "permissions": [                                 // ORDERED list; later rules see earlier grants
-      { "when": "admin:tenant", "grant": ["admin:blocks", "admin:assets", "write:blocks"] },
-      { "when": "write:members+admin:tenant", "grant": ["manage:team"] },
-      { "when": "feature:ai", "grant": ["use:ai"] }
+      { "when": "role:admin,role:owner", "grant": ["write:blocks", "read:blocks"] },
+      { "when": "role:member", "grant": ["read:blocks"] },
+      { "when": "feature:ai + role:member", "grant": ["use:ai"] },
+      { "when": "write:blocks + feature:ai", "grant": ["generate:blocks"] }  // sees rule 1's grant
     ],
     "claims": {                                      // claim mapping for this audience
       "svc":      "catalog",                        // static literal (no `$`)
@@ -34,21 +35,25 @@ apis: [
 ```
 
 Each `ApiDef`:
-- **`code`** — internal id (referenced by API keys and the exchange call).
+- **`code`** — internal id, named by the `api` parameter at login, refresh and key exchange.
 - **`audience`** — the `aud` claim written into tokens minted for this API.
-- **`passthrough`** *(optional, default false)* — if true, the token carries the requester's own
-  role-derived permissions verbatim (the `permissions` map is ignored). Used for the `umami` API.
-- **`eligibility`** *(optional)* — a boolean expression that must hold, else the exchange is `403`.
-- **`permissions`** — rule map, `expression → [permission,…]`; the token's permissions are the
-  **union** of the outputs of all rules whose expression matches.
+- **`eligibility`** *(optional)* — an expression that must hold, else the mint is `403`. It is
+  evaluated **after** the projection, against the subjects plus the permissions just granted.
+- **`permissions`** — an **ordered** list of `{ when, grant }` rules. They fire top to bottom: each
+  `when` is evaluated against the subjects plus everything granted so far, and a match adds its
+  `grant`. The token's permissions are all grants collected that way. The `umami` API itself is
+  configured like any other entry; there is no pass-through mode.
 - **`claims`** *(optional)* — `claimName → source` (see below).
 
 ## The mini-DSL
 
-- `,` = **OR** (low precedence), `+` = **AND** (high). So `"a,b+c"` = `a OR (b AND c)`.
-- Terms are matched against the requester's set **S = permissions ∪ features** (bare names).
-  *(Optional future `perm:`/`feat:` prefixes to disambiguate collisions.)*
-- Evaluation: `expr.split(',').any(clause => clause.split('+').all(term => S.has(term)))`.
+`when` and `eligibility` use the permission-string DSL from [PERMISSIONS.md](PERMISSIONS.md) §2:
+
+- `,` = **OR** (lowest precedence), `+` = **AND**, `!term` = **NOT**. So `"a,b+!c"` =
+  `a OR (b AND NOT c)`. An empty expression holds.
+- Terms are matched by set membership against the subject set **S** (namespaced `role:*` or
+  `scope:*`, `feature:*`, `is:*` — see PERMISSIONS.md §1) plus the bare permissions granted by
+  earlier rules.
 
 ## Claim sources
 
@@ -113,8 +118,9 @@ by refresh cookie vs. by API key.
 
 2. **API-key exchange** — `POST /auth/token { apiKey, api? }`. `api` picks the target audience
    (default `umami`); a key is not pinned to an audience, so the requested one is bounded only by
-   the key's scopes + the API's eligibility (an ineligible `api` is 403). The requester's S comes
-   from the key's roles (+ its tenant's effective features). Machine tokens also carry
+   the API's eligibility (an ineligible `api` is 403). The requester's S comes from the key:
+   a service key contributes its `scope:*`, a personal access token its user's `role:*` (narrowed
+   by the PAT's role restriction), plus the tenant's `feature:*` and computed `is:*` markers. Machine tokens also carry
    `kind: "api_key"`. No cookie, no session — this is the machine/BFF path.
 
 > **Cross-*site* SPAs** (a product SPA on a genuinely different registrable domain, where
@@ -126,19 +132,19 @@ by refresh cookie vs. by API key.
 
 ## Worked example
 
-A key requests `api=catalog`; its roles resolve to `{member, write:blocks}`; its tenant has feature
-`{ai}` → **S = {member, write:blocks, ai}**.
+A user with role `admin` refreshes for `api=catalog`; their tenant has feature `ai`
+→ **S = {role:admin, feature:ai}**.
 
-- Eligibility `member,admin`: `member ∈ S` → **eligible**.
-- Projection: `write:blocks → [write:blocks]` ✓, `ai → [use:ai]` ✓ (others don't match)
-  → **permissions = {write:blocks, use:ai}**.
-- Token: `aud=catalog`, `permissions=[write:blocks,use:ai]`, `svc=catalog`, `features=[ai]`,
-  `dept=<user.customFields.department>`.
+- Projection, top to bottom: `role:admin,role:owner` ✓ → grants `write:blocks`, `read:blocks`;
+  `role:member` ✗; `feature:ai + role:member` ✗; `write:blocks + feature:ai` ✓ (it sees rule 1's
+  grant) → grants `generate:blocks`.
+- Eligibility `role:member,role:admin,role:owner`: `role:admin` holds → **eligible**.
+- Token: `aud=catalog`, `permissions=[generate:blocks,read:blocks,write:blocks]`, `svc=catalog`,
+  `features=[ai]`, `dept=<user.custom.department>` (omitted when the user has no such field).
 
 ## Deferred
 
-- `perm:`/`feat:` namespacing in the DSL; per-API rate limits; audience-scoped API-key creation
-  restrictions.
+- Per-API rate limits; audience-scoped API-key creation restrictions.
 - An **authorization code** for `GET /auth/authorize`. The redirect itself exists (hosted login,
   `security.redirectUris`), but it hands back only control, not a credential: umami is deployed
   next to the apps it serves, so the browser carries the refresh cookie across the redirect and the

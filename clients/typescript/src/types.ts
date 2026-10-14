@@ -27,8 +27,9 @@ export interface LoginRequest {
   username: string;
   password: string;
   totpCode?: string;
-  /** Optional target API to mint the access token for directly (default: `umami`). The session
-   * remembers it, so refreshes keep the same audience. See `docs/AUDIENCES.md`. */
+  /** Optional target API to mint the first access token for (default: `umami`). The session does
+   * not remember it, and this client's automatic refresh names no `api`, so refreshed tokens are
+   * for `umami`. See `docs/AUDIENCES.md`. */
   api?: string;
 }
 
