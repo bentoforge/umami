@@ -269,9 +269,11 @@ Full reference: **[docs/CONFIG.md](docs/CONFIG.md)**.
 | [docs/PERMISSIONS.md](docs/PERMISSIONS.md) | The permission-string DSL and the mint algorithm. |
 | [docs/AUDIENCES.md](docs/AUDIENCES.md) | Audiences, the `apis` catalog, and the token-minting paths. |
 | [docs/API-KEYS.md](docs/API-KEYS.md) | Service keys vs. personal access tokens. |
-| [docs/CONTACTS.md](docs/CONTACTS.md) | Email contacts: the list, verification, and why a user record has no email field. |
+| [docs/CONTACTS.md](docs/CONTACTS.md) | Email contacts: the list, verification, recovery, and the mail worker hand-off. |
 | [docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md) | Notification types, cadences, and who a firing reaches. |
 | [docs/SEAMS.md](docs/SEAMS.md) | Selectable backends (storage, config store, keys, mail) and how umami picks one. |
+| [docs/LIMITS.md](docs/LIMITS.md) | Per-tenant limits: catalogue, values, booking, ledger and history (German). |
+| [docs/adr/](docs/adr/) | Architecture decision records: why the design above is the way it is. |
 
 The identity/tenancy data model lives in the code: the entity structs (`User`, `Tenant`, `Session`,
 …) are the schema, and the model's design rationale is the module doc on

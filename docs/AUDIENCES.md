@@ -4,6 +4,10 @@ umami is a **token broker**: it mints tokens not only for itself but for any tar
 fleet, each with its own `aud`, eligibility gate, permission projection and claim mapping — all
 defined in the config `apis` catalog.
 
+Related decisions:
+- [ADR 0004 — umami as a token broker with per-API audiences](adr/0004-token-broker-per-api-audiences.md)
+- [ADR 0009 — Audience-agnostic sessions and API keys](adr/0009-audience-agnostic-sessions-and-keys.md)
+
 ## The `apis` catalog (config)
 
 ```jsonc
@@ -49,8 +53,8 @@ Each `ApiDef`:
 ## Claim sources
 
 A source is either a **literal string** or a **`$` reference**. The `$` is what makes the
-difference, and forgetting it used to fail silently — `"tenant.features"` wrote those very words into
-the token instead of the array. `PUT /config` now refuses both that and an unknown `$…` reference.
+difference: `PUT /config` refuses a reference that lacks it (`"tenant.features"` would otherwise be
+written as those very words instead of the array) as well as an unknown `$…` reference.
 
 | Source string | Value written |
 |---|---|
@@ -105,6 +109,7 @@ by refresh cookie vs. by API key.
    of setting the cookie *and* handing back that first access token in one round-trip; the session
    does **not** remember `api`. To hold tokens for several APIs at once, a SPA simply calls
    `/auth/refresh?api=` once per API — concurrent calls are safe (see the refresh grace window).
+   Why the session pins no audience: [ADR 0009](adr/0009-audience-agnostic-sessions-and-keys.md).
 
 2. **API-key exchange** — `POST /auth/token { apiKey, api? }`. `api` picks the target audience
    (default `umami`); a key is not pinned to an audience, so the requested one is bounded only by
@@ -129,16 +134,6 @@ A key requests `api=catalog`; its roles resolve to `{member, write:blocks}`; its
   → **permissions = {write:blocks, use:ai}**.
 - Token: `aud=catalog`, `permissions=[write:blocks,use:ai]`, `svc=catalog`, `features=[ai]`,
   `dept=<user.customFields.department>`.
-
-## What changes
-
-- **config**: add `apis: [ApiDef]`; the default config ships the `umami` API (`passthrough`, with
-  the old `tokenClaims` behaviour folded into its `claims`). The top-level `tokenClaims` is
-  superseded by per-API `claims`.
-- **token issuance**: `aud` is now per-call (from the resolved API). `login`, `refresh`, and
-  API-key exchange all mint for the requested `api` (default `umami`); neither the session nor a
-  key pins an audience.
-- **`UMAMI_DEFAULT_AUDIENCE`** env is superseded by the `umami` API's `audience` in config.
 
 ## Deferred
 

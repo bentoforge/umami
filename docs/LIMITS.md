@@ -9,14 +9,17 @@ Definition** sagt, *was* ein Limit ist; ein **Wert je Mandant** sagt, *wie viel*
 **Laufzeit-State** hält die Zähler. Anders als Rollen/Scopes/Features tragen Limits echten,
 ständig veränderlichen Zustand — deshalb die dritte Schicht.
 
+Dieses Dokument beschreibt den aktuellen Stand. Die Entscheidungen dahinter stehen in den ADRs:
+
+- [ADR 0016 — Drei-Schichten-Modell (Katalog / Mandanten-Werte / Laufzeit-State)](adr/0016-limits-three-layer-model.md)
+- [ADR 0019 — Buchungs-Kaskade und Overrun-Policies](adr/0019-limits-booking-cascade-and-overrun-policy.md)
+- [ADR 0017 — Lazy Rollover beim ersten Zugriff](adr/0017-limits-lazy-rollover-on-access.md)
+- [ADR 0018 — Pures `accounting`, dünnes Repo, eine begrenzte OCC-Schleife](adr/0018-limits-pure-accounting-core-thin-repository.md)
+
 ## Herkunft
 
-Der verbrauchbare Kern ist eine Verallgemeinerung des AI-Budget-Subsystems aus `pip-core`
-(`src/ai/limits/`): pro `(issuer, tenant)` ein monatliches Credit-Kontingent mit Zusatzkontingent und
-optionalem Tages-Cap, atomar gebucht, Limits auf die Periodenzeile gestempelt. Neu gegenüber
-pip sind: **Sonderguthaben** (persistentes Top-up), **Gauge-Limits** mit Watermarks, ein
-**Transaktions-Ledger**, eine **Monats-History** und ein backend-agnostischer Schnitt zwischen
-Buchungslogik und Speicher.
+Der verbrauchbare Kern verallgemeinert das AI-Budget-Subsystem aus `pip-core` (`src/ai/limits/`).
+Was übernommen und was neu ist: siehe [ADR 0016](adr/0016-limits-three-layer-model.md).
 
 ## Die drei Schichten
 
@@ -28,6 +31,8 @@ Buchungslogik und Speicher.
 
 L1 folgt exakt `FeatureDef`, L2 exakt `custom_fields` — beide sind reine umami-Muster. L3 ist
 neu und nutzt das atomare Update-Muster aus `auth/ratelimit` und `tenants` (OCC).
+
+Warum so: siehe [ADR 0016](adr/0016-limits-three-layer-model.md).
 
 ## L1 — `LimitDef` (Katalog)
 
@@ -152,9 +157,10 @@ reconcilen (der erste Call baut den State aus den neuen Settings).
 
 **Zweistufig, nicht cross-table-atomar**: erst wird `Tenant.limits` (L2, die Quelle der Wahrheit)
 per `put_tenant` geschrieben, dann der L3-State über dieselbe OCC-Schleife + `compare_and_swap`
-abgeglichen (mit `settings`-Ledger-Eintrag). Kein `TransactWriteItems` über beide Tabellen — ein
-Abbruch nach dem L2-Write verzögert die Wirkung höchstens bis zum nächsten Monat (Rollover baut aus
-L2) und der Retry ist idempotent (`used`-basiert). Warnungen kommen sofort in der Response.
+abgeglichen (mit `settings`-Ledger-Eintrag). Ein Abbruch nach dem L2-Write verzögert die Wirkung
+höchstens bis zum nächsten Monat (Rollover baut aus L2) und der Retry ist idempotent
+(`used`-basiert). Warnungen kommen sofort in der Response. Warum zweistufig: siehe
+[ADR 0016](adr/0016-limits-three-layer-model.md).
 
 ## L3 — State, Ledger, History
 
@@ -229,7 +235,7 @@ Gauge führt keinen Perioden-Snapshot.
 
 Abzug in fester Reihenfolge: **monthly → custom → extraAllowance**. Zuerst das inkludierte
 Monatsguthaben, dann das persistente Sonderguthaben, zuletzt das (teure) Zusatzkontingent. Reicht die
-Summe nicht, greift die Overrun-Policy.
+Summe nicht, greift die Overrun-Policy. Warum so: siehe [ADR 0019](adr/0019-limits-booking-cascade-and-overrun-policy.md).
 
 ### Rollover (bei jedem Zugriff)
 
@@ -242,6 +248,8 @@ Rollover-Ledger-Eintrag, damit die Buchungen den Monatswechsel und den Stand-Spr
 Monat**, vom ersten Zugriff getragen. Für lückenlose History bei nie abgefragten Limits gibt es
 zusätzlich `POST /tenants/{id}/limits/{code}/rollover` bzw. einen Sweep, den ein
 Reporting-Service/Cron zum Monatswechsel anstößt.
+
+Warum lazy statt Cron: siehe [ADR 0017](adr/0017-limits-lazy-rollover-on-access.md).
 
 ### Overrun-Policy (je Limit, `LimitDef.overrunPolicy`)
 
@@ -264,6 +272,8 @@ Reicht die Summe nicht, entscheidet die Policy des Limits, was mit dem Überstan
 
 Keine negativen Buckets — der Überstand lebt im Zähler, nicht als Minus-Guthaben. Nur bei
 `Consumable` erlaubt (Gauge-Validierung lehnt eine Nicht-Default-Policy ab).
+
+Warum diese Policies: siehe [ADR 0019](adr/0019-limits-booking-cascade-and-overrun-policy.md).
 
 #### Überzug ist wie eine Schuld — er wird verrechnet, nicht nur gemerkt
 
@@ -298,12 +308,12 @@ Nur `set`: `gaugeValue`/`gaugeMonth` auf aktuellen Monat setzen, Watermark-Statu
 
 ### Fail-closed
 
-`check`/`consume` verweigern bei Store-Fehler (deny) — Kostenschutz vor Verfügbarkeit, wie pip.
+`check`/`consume` verweigern bei Store-Fehler (deny). Warum: siehe [ADR 0018](adr/0018-limits-pure-accounting-core-thin-repository.md).
 
 ## Backend-Schnitt: zentrale Logik, dünnes Repo
 
-Die Buchungslogik ist **backend-agnostisch und pur**; das Repository-Trait ist bewusst dünn, damit
-ein neues DB-Backend die schwere Logik nicht nachprogrammiert.
+Die Buchungslogik ist **backend-agnostisch und pur**; das Repository-Trait ist dünn und enthält nur
+mechanische Primitive. Warum so: siehe [ADR 0018](adr/0018-limits-pure-accounting-core-thin-repository.md).
 
 **Pures `accounting`-Modul** (kein I/O, voll unit-testbar):
 
@@ -346,18 +356,16 @@ status_bail!(StatusCode::SERVICE_UNAVAILABLE,
 ```
 
 `backoff_jitter` ist ein kleiner randomisierter Sleep (Vollzitter, mit `attempt` leicht wachsend),
-damit konkurrierende Bucher nicht im Gleichtakt kollidieren. Der Abbruch ist fail-closed (deny),
-konsistent mit der Store-Fehler-Politik. Konstanten in `src/constants.rs`
+damit konkurrierende Bucher nicht im Gleichtakt kollidieren. Der Abbruch ist fail-closed (deny). Konstanten in `src/constants.rs`
 (`LIMIT_CAS_MAX_ATTEMPTS`, Backoff-Ober-/Untergrenze).
 
 Dynamo committet `compare_and_swap` als ein `TransactWriteItems` (State-Put mit
 `#version = :expected`, Ledger-Put, History-Put-if-not-exists) → State und Ledger driften nie
-auseinander. Ein Postgres-Backend implementiert dieselben zwei Methoden mit `UPDATE … WHERE
-version = $n` in einer Transaktion. Kaskade, Rollover, Reconciliation stehen nur im `accounting`.
+auseinander. Kaskade, Rollover, Reconciliation stehen nur im `accounting`.
 
 ## Testing
 
-Der Schnitt existiert genau, um Vollgas beim Testen zu erlauben — der schwere Teil ist pur.
+Der schwere Teil ist pur und wird ohne DB getestet.
 
 - **`accounting` (pur, kein I/O)** — der Löwenanteil. Tabellen-getriebene Unit-Tests, keine DB:
   - Kaskade `monthly → custom → extraAllowance` inkl. exakter Bucket-Aufschlüsselung im `Outcome`.
@@ -494,9 +502,8 @@ den *Dienst*.
 
 **Bewusst weggelassen**:
 
-- **Rollover-Sweep** für inaktive Mandanten — die History entsteht lazy beim ersten Zugriff im
-  neuen Monat; ein Mandant ohne jeden Zugriff hat nichts zu verbuchen, ein leerer Monatsrecord wäre
-  nutzlos. Lücken sind akzeptiert.
+- **Rollover-Sweep** für inaktive Mandanten — History-Lücken sind akzeptiert, siehe
+  [ADR 0017](adr/0017-limits-lazy-rollover-on-access.md).
 - **`persistActorName`-Deploy-Schalter** — eine strenge Umgebung schickt den Namen einfach nicht
   (oder TTL't/schwärzt den Ledger); ein zentraler Schalter lohnt erst, wenn er wirklich gebraucht
   wird.

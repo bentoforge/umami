@@ -4,11 +4,18 @@ An **API key** is a credential a client exchanges for a short-lived access token
 OAuth2 `client_credentials` in spirit. umami offers **three auth modes**; a customer picks per
 integration based on what they can run and how much protection they need.
 
+Related decisions:
+
+- [ADR 0003 — Three API-key auth modes and an honest browser threat model](adr/0003-api-key-auth-modes.md)
+- [ADR 0005 — Service keys and personal access tokens as one key entity](adr/0005-service-keys-and-personal-access-tokens.md)
+- [ADR 0010 — HMAC signed key exchange keyed by the stored secret hash](adr/0010-hmac-signed-key-exchange.md)
+- [ADR 0001 — Cross-tenant token exchange for system principals](adr/0001-cross-tenant-token-exchange.md)
+
 ## Honest framing
 
-A secret that reaches a **browser** is not secret — anyone who opens the page can read it. So the
-question is never "how do I hide a frontend key" (impossible) but "how much do I cap the damage".
-The three modes trade off *where the secret lives* against *client complexity*:
+A secret that reaches a **browser** is not secret; the modes cap the damage rather than hide the
+key. They trade off *where the secret lives* against *client complexity* (why: see
+[ADR 0003](adr/0003-api-key-auth-modes.md)):
 
 | Mode | Secret lives | Stops | Does **not** stop | Use when |
 |------|--------------|-------|-------------------|----------|
@@ -40,7 +47,8 @@ Mapping the real use-cases:
    client-credentials / service-account case — no separate entity type.
 
 Both kinds share the key format, the `api-keys` table, and the single exchange endpoint below; only
-`sub` + permission resolution differ.
+`sub` + permission resolution differ. Why: see
+[ADR 0005](adr/0005-service-keys-and-personal-access-tokens.md).
 
 ### Acting in another tenant (`tenantId`)
 
@@ -102,10 +110,10 @@ The key sits in frontend JS (e.g. an app embedded in a shop `iframe`). Accepted 
   stops "someone embeds my key in *their* site" (browser attackers can't forge `Origin`).
 - ❗ **Not a boundary:** an extracted key replays from curl with a forged `Origin`. Therefore Mode 1
   **requires** a strict **rate-limit** — that is what actually caps the cost.
-- Use **`Origin`, not `Referer`** (Referer is suppressible by `Referrer-Policy`/privacy tools and
-  leaks the path). Note the iframe subtlety: the fetch's `Origin` is the *app's* origin, not the
-  embedding shop's. Restricting *which shop may embed the app* is a separate mechanism — CSP
-  `frame-ancestors` on the app, not the key.
+- The check uses **`Origin`, not `Referer`** (why: see
+  [ADR 0003](adr/0003-api-key-auth-modes.md)). Note the iframe subtlety: the fetch's `Origin` is
+  the *app's* origin, not the embedding shop's. Restricting *which shop may embed the app* is a
+  separate mechanism — CSP `frame-ancestors` on the app, not the key.
 
 ## Mode 2 — Signed request (HMAC proof-of-possession)
 
@@ -116,9 +124,9 @@ mac = base64url( HMAC-SHA256( key = SHA-256(secret), "umami:apikey:<keyId>:<hour
 hourBucket = floor(unixSeconds / 3600)
 ```
 
-- **The HMAC key is `SHA-256(secret)` — exactly the digest umami already stores.** So the client
-  derives it from its secret, and the server verifies with the stored hash: no raw secret on the
-  wire *and* none kept at rest. (`verify_key_hmac` in `auth/apikeys`.)
+- **The HMAC key is `SHA-256(secret)` — exactly the digest umami already stores.** The client
+  derives it from its secret, the server verifies with the stored hash. (`verify_key_hmac` in
+  `auth/apikeys`.) Why: see [ADR 0010](adr/0010-hmac-signed-key-exchange.md).
 - umami recomputes the MAC for the current hour and **±1 hour** (clock-skew / boundary tolerance),
   constant-time compares, and on a match issues the JWT as usual. The message binds the `keyId`, so
   a MAC for one key can't be replayed against another.
@@ -126,18 +134,17 @@ hourBucket = floor(unixSeconds / 3600)
   and widening it would widen the replay window for every key at once. A MAC rendered into a page is
   therefore good for one to two hours — long enough for a visit. What has to outlive the visit is
   the *token*, not the proof that fetched it (`accessTtlSecs` below).
-- Prefer **HMAC-SHA256** (the modern default).
-- **Where it shines:** backend / native clients — the secret never transits (safe against proxy/log
-  capture). **Tradeoff:** a captured MAC is **replayable within its ~±1 h window**; TLS plus the
-  narrow window bound the exposure. **Caveat for frontends:** if the secret lives in browser JS,
-  Mode 2 still doesn't hide it from someone reading the source — it only protects the *transport*;
-  rate-limiting remains the backstop.
+- Algorithm: **HMAC-SHA256**.
+- **Where it fits:** backend / native clients — the secret never transits. A captured MAC is
+  **replayable within its ~±1 h window** (no per-request nonce). In browser JS the secret is still
+  readable from the source — Mode 2 only protects the *transport*; rate-limiting remains the
+  backstop.
 
 ## Mode 3 — BFF (recommended default when a backend exists)
 
 The key lives **only** on a backend. The backend does the exchange (Mode 1 or 2) server-side and
-hands the iframe a **short-lived scoped JWT** — never the key. A leak is then minutes-long and
-rate-limited. Least code on the "dumb server" (hold key → POST over TLS → return JWT; umami hashes).
+hands the iframe a **short-lived scoped JWT** — never the key. The backend only holds the key,
+POSTs it over TLS and returns the JWT; umami does the hashing.
 
 ## Entity / endpoint additions
 
