@@ -11,7 +11,7 @@
 
 use crate::config::{LimitSettings, OverrunPolicy};
 use crate::limits::{HistoryRow, LedgerEntry, LimitState, ledger_type};
-use chrono::{DateTime, Datelike, SecondsFormat, Utc};
+use chrono::{DateTime, Datelike, SecondsFormat, TimeZone, Utc};
 
 /// Optional actor/context for a ledger entry — caller-provided, never validated against umami users.
 /// Three opaque ids, each length-capped at ingress; no names or free-text, so nothing
@@ -42,6 +42,17 @@ pub struct Outcome {
 /// The calendar month a timestamp falls in, as `"YYYY-MM"` — the key the monthly counters bucket by.
 pub fn year_month(now: DateTime<Utc>) -> String {
     format!("{:04}-{:02}", now.year(), now.month())
+}
+
+/// Midnight UTC on the first of `now`'s month — the boundary a rollover ledger entry is stamped with.
+/// The close belongs to the month turn, not to whichever access happened to trigger it lazily, and
+/// stamping it there sorts it before every entry of the new month even when it is committed in the
+/// same transaction as one.
+fn month_start(now: DateTime<Utc>) -> DateTime<Utc> {
+    // Always a single valid instant in UTC; `now` is only an unreachable fallback.
+    Utc.with_ymd_and_hms(now.year(), now.month(), 1, 0, 0, 0)
+        .single()
+        .unwrap_or(now)
 }
 
 /// The calendar day a timestamp falls in, as `"YYYY-MM-DD"` — the key the daily throttle resets on.
@@ -138,7 +149,7 @@ pub fn rolled_over(
                     &before,
                     &new_state,
                     rollover_entry_id,
-                    now,
+                    month_start(now),
                     ledger_type::CARRY,
                     carried,
                     &Actor::default(),
@@ -153,7 +164,7 @@ pub fn rolled_over(
                     &before,
                     &new_state,
                     rollover_entry_id,
-                    now,
+                    month_start(now),
                     ledger_type::RESET,
                     0,
                     &Actor::default(),
@@ -535,7 +546,6 @@ pub fn apply_settings_change(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::TimeZone;
 
     fn at(year: i32, month: u32, day: u32) -> DateTime<Utc> {
         Utc.with_ymd_and_hms(year, month, day, 12, 0, 0).unwrap()
@@ -820,6 +830,32 @@ mod tests {
         assert_eq!(out.state.monthly_remaining, 800);
         assert_eq!(out.state.extra_allowance_remaining, 200);
         assert_eq!(out.state.overrun, 0);
+    }
+
+    #[test]
+    fn the_rollover_entry_is_stamped_at_the_month_turn_and_sorts_first() {
+        // Rollover and consume commit together; the rollover must still read as the earlier event.
+        let mut prior = LimitState::fresh("t1", "limit:ai", "2026-09", &settings(Some(1000), None));
+        prior.overrun = 150;
+        let out = apply_consume(
+            Some(prior),
+            "t1",
+            "limit:ai",
+            &settings(Some(1000), None),
+            50,
+            at(2026, 10, 14),
+            "oct-1",
+            &Actor::default(),
+            OverrunPolicy::Carry,
+        );
+        let rollover = out
+            .rollover
+            .as_ref()
+            .expect("a rollover entry was produced");
+        assert_eq!(rollover.timestamp, "2026-10-01T00:00:00.000Z");
+        assert_eq!(led(&out).timestamp, "2026-10-14T12:00:00.000Z");
+        // RFC 3339 in UTC with fixed millis sorts lexicographically, as the ledger sort key does.
+        assert!(rollover.timestamp < led(&out).timestamp);
     }
 
     #[test]

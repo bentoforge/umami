@@ -244,7 +244,7 @@ Sieht er `periodYearMonth != aktueller Monat`, schließt er den Vormonat: schrei
 (idempotent), lässt monthly/extraAllowance verfallen, füllt aus dem aktuellen
 `Tenant.limits`-Snapshot neu, `customBalance` bleibt. Jeder Abschluss schreibt **genau einen**
 Rollover-Ledger-Eintrag, damit die Buchungen den Monatswechsel und den Stand-Sprung erklären: unter
-`carry` ein `carry` (zieht die Schuld ins neue Budget), sonst ein `reset`-Marker (kein Abzug). Kosten: **ein Extra-Write je Limit je
+`carry` ein `carry` (zieht die Schuld ins neue Budget), sonst ein `reset`-Marker (kein Abzug). Sein `timestamp` ist der Monatsanfang (`YYYY-MM-01T00:00:00.000Z`), nicht der auslösende Zugriff — so steht er im Ledger vor allen Buchungen des neuen Monats, auch wenn er mit einer davon in derselben Transaktion geschrieben wird. Kosten: **ein Extra-Write je Limit je
 Monat**, vom ersten Zugriff getragen. Für lückenlose History bei nie abgefragten Limits gibt es
 zusätzlich `POST /tenants/{id}/limits/{code}/rollover` bzw. einen Sweep, den ein
 Reporting-Service/Cron zum Monatswechsel anstößt.
