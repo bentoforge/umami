@@ -632,12 +632,12 @@ async fn login(
 /// nothing apart, so they are one value rather than two adjacent booleans nobody can tell apart at
 /// a call site.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct AuthStrength {
+pub struct AuthStrength {
     pub passkey: bool,
     pub totp: bool,
 }
 
-pub(crate) async fn issue_session(
+pub async fn issue_session(
     context: &AuthContext,
     user: &User,
     api_code: &str,

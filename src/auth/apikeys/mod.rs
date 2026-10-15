@@ -938,7 +938,7 @@ async fn exchange(
 
 /// Builds the effective per-key `tokenExchange` policy: the key's optional override raises/replaces
 /// the global values (any unset field falls back to global), or disables the per-key cap entirely.
-pub(crate) fn effective_token_policy(
+pub fn effective_token_policy(
     global: &VolumeRateLimit,
     override_: Option<&KeyRateLimit>,
 ) -> Policy {

@@ -235,7 +235,8 @@ fn parse_data_uri(uri: &str) -> Option<(String, Vec<u8>)> {
 mod tests {
     use super::{parse_data_uri, ui_routes};
     use crate::config::Config;
-    use crate::config::repository::{ConfigRepository, StaticConfigRepository};
+    use crate::config::repository::ConfigRepository;
+    use crate::config::repository::memory::StaticConfigRepository;
     use crate::config::text::LocalizedText;
     use std::fs;
     use std::path::PathBuf;

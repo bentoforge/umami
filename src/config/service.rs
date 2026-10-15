@@ -339,7 +339,7 @@ async fn put_config(request: Config, config: Arc<dyn ConfigRepository>) -> anyho
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::repository::StaticConfigRepository;
+    use crate::config::repository::memory::StaticConfigRepository;
     use crate::config::{FeatureDef, RoleDef};
 
     /// A config whose catalogues are written in two languages plus a fallback.

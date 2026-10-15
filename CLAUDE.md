@@ -41,9 +41,10 @@ the canonical examples in this repo:
 
 - `src/main.rs` — boot, bootstrap, serve, and the strict lint block.
 - `src/boot/mod.rs` + `src/storage/mod.rs` — how dependencies are built and a backend is chosen.
-- `src/tenants/repository.rs` — canonical repository: `#[async_trait]` trait +
-  `#[cfg_attr(test, mockall::automock)]`, `DynamoXRepository { client: DynamoClient }`,
-  `with_client(&DynamoClient)` that calls `create_table`, `const FIELD_*`, camelCase entities.
+- `src/tenants/repository/` — canonical repository: `mod.rs` holds the `#[async_trait]` trait +
+  `#[cfg_attr(test, mockall::automock)]` and what both backends share; `dynamodb.rs` holds
+  `DynamoXRepository { client: DynamoClient }` with `with_client(&DynamoClient)` calling
+  `create_table` and its `const FIELD_*`; `postgres.rs` holds `PostgresXRepository`.
 - `src/api/*.rs` + `src/tenants/service.rs` — canonical warp routes: one route group per domain,
   `pub fn x_route(deps) -> BoxedFilter<(impl warp::Reply,)>`, `into_response` /
   `into_response_with_status`, `with_body_as_json`, `with_cloneable`, permission guards.
@@ -97,7 +98,7 @@ CORS with credentials. Reach for the first one.
 ## Wiring: where dependencies come from
 
 - `src/storage/` — the storage seam. `Repositories` bundles all ten repository ports; one backend
-  answers for all of them (`storage::dynamodb` today). A new backend implements the traits and
+  answers for all of them (`storage::dynamodb` or `storage::postgres`). A new backend implements the traits and
   returns a `Repositories`, so the compiler lists what it still owes.
 - `src/boot/` — `Platform` holds every resolved dependency, `Platform::boot()` builds it from the
   environment, `boot::auto_init` does the first-run bootstrap.
@@ -155,10 +156,24 @@ reference: [docs/SEAMS.md](docs/SEAMS.md).
 - **Strict lints** in `main.rs`: keep the `#![deny(...)]` block
   (denies `warnings`, `missing_docs`, `unsafe_code`, `clippy::unwrap_used`, `expect_used`,
   `panic`, `indexing_slicing`, …) with the same `#![cfg_attr(test, allow(...))]` relaxation.
-- **Repositories**: `#[async_trait] pub trait XRepository: Send + Sync` +
-  `#[cfg_attr(test, mockall::automock)]`; `DynamoXRepository { client: DynamoClient }` with
+- **Repositories** are a module per domain: `<domain>/repository/mod.rs` declares
+  `#[async_trait] pub trait XRepository: Send + Sync` + `#[cfg_attr(test, mockall::automock)]`
+  plus the helpers both backends share (entity construction, search haystacks, cursor encoding),
+  and one child module per backend next to it. The backends are children of `mod.rs`, so they
+  reach its **private** helpers through `super::` — a helper does not become `pub` just because a
+  backend uses it.
+- **`dynamodb.rs`**: `DynamoXRepository { client: DynamoClient }` with
   `pub async fn with_client(client: &DynamoClient) -> anyhow::Result<Self>` provisioning tables
   via `client.create_table(...)`. Field names as `const FIELD_*`; table names as `const TABLE_*`.
+- **`postgres.rs`**: `PostgresXRepository { database: Database }`, `with_database` calling
+  `storage::postgres::ensure_table`, on wasabi's `postgres` module:
+  tables are declared as `static X: LazyLock<Table>`, rows written with `record!`, plain SQL where a
+  record cannot say it (atomic counters, jsonb merges). The entity lives whole in `data JSONB`;
+  typed columns exist only for keys, lookups, sort order, `version` and `expires_at`, and a write
+  updates column and `data` together. Integration tests run against `POSTGRES_TEST_URL` (each in
+  its own schema) and are skipped when it is unset.
+- **Visibility**: `pub` or private, never `pub(crate)` — umami is a binary, where the two mean the
+  same thing and the qualifier is only noise.
 - **Routes**: `pub fn x_api_route(deps…) -> BoxedFilter<(impl warp::Reply,)>`; a thin
   `#[tracing::instrument(name = "POST /auth/login", skip_all)]` handler that calls `into_response`
   / `into_response_with_status`, wrapping a pure `anyhow::Result<T>` / `Result<(StatusCode, T)>`
@@ -198,7 +213,7 @@ reference: [docs/SEAMS.md](docs/SEAMS.md).
 - **AWS SDK feature flags**: `aws-sdk-dynamodb = { version = "1", default-features = false,
   features = ["default-https-client", "rt-tokio"] }` — must match wasabi-core so cargo unions to a
   single version and avoids the legacy rustls 0.21 CVE path.
-- Pin `wasabi` to a released tag (currently **`4.1.0`**); confirm shared crate versions
+- Pin `wasabi` to a released tag (currently **`4.4.0`**); confirm shared crate versions
   (`aws-sdk-*`, `jsonwebtoken`) resolve to a single version against wasabi's lockfile.
 
 ## Token claims (must match `wasabi::web::auth::User`)

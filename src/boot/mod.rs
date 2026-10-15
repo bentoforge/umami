@@ -18,6 +18,7 @@
 
 pub mod auto_init;
 pub mod aws;
+pub mod postgres;
 pub mod seam;
 
 use crate::auth::AuthContext;
@@ -27,6 +28,7 @@ use crate::auth::secretbox::SecretBox;
 use crate::auth::tokens::{KeyRepository, TokenIssuer, key_repository_from_env};
 use crate::auth::webauthn::WebauthnService;
 use crate::boot::aws::Aws;
+use crate::boot::postgres::Postgres;
 use crate::config::repository::{self, ConfigRepository};
 use crate::contacts::service::VerifyDeps;
 use crate::messaging::service::ResolveDeps;
@@ -41,7 +43,7 @@ use wasabi::web::auth::authenticator::Authenticator;
 
 /// Every dependency the route table needs, resolved from the environment at startup.
 pub struct Platform {
-    /// Persistence, from whichever backend answered (today: DynamoDB).
+    /// Persistence, from whichever backend answered (DynamoDB or PostgreSQL).
     pub repos: Repositories,
     /// Validates the JWTs on umami's own admin routes.
     pub authenticator: Arc<Authenticator>,
@@ -79,8 +81,10 @@ impl Platform {
         // provider. Every such seam takes it, so the precondition they share is visible rather
         // than rediscovered as a failure on the first call to each service.
         let aws = Aws::new();
+        // The one pool every Postgres-backed seam shares; connects only if one of them picks it.
+        let postgres = Postgres::new();
 
-        let (repos, storage_seam) = storage::from_env(&aws).await?;
+        let (repos, storage_seam) = storage::from_env(&aws, &postgres).await?;
 
         // Rate limiter (per-node LRU block cache in front of the store) guarding /auth/login and
         // /auth/token; the LRU size is `UMAMI_RATELIMIT_CACHE_CAP`, thresholds live in the config.
@@ -89,7 +93,7 @@ impl Platform {
         let (keys, keys_seam) = key_repository_from_env()?;
         let tokens = Arc::new(TokenIssuer::from_env(keys.clone())?);
 
-        let (config, config_seam) = repository::from_env(&aws).await?;
+        let (config, config_seam) = repository::from_env(&aws, &postgres).await?;
 
         // umami guards its own admin routes with a trusted issuer (for local dev it can trust itself
         // via the JWKS endpoint — see AUTH_ISSUER in .env.example). Configured with the languages

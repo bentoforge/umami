@@ -21,7 +21,7 @@ use std::sync::Arc;
 use wasabi::aws::dynamodb::client::DynamoClient;
 use wasabi::aws::dynamodb::generate_id;
 
-/// Logical table + key names, mirroring the private consts in [`crate::limits::repository`] — a dev
+/// Logical table + key names, mirroring the private consts in [`crate::limits::repository::dynamodb`] — a dev
 /// tool may duplicate them.
 const TABLE_LIMIT_STATE: &str = "limit-state";
 const TABLE_LIMIT_LEDGER: &str = "limit-ledger";
