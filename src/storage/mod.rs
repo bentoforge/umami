@@ -3,7 +3,7 @@
 //! ## Why a bundle and not one argument per repository
 //!
 //! umami talks to its store through ten narrow repository traits, and every one of them is
-//! answered by the *same* backend. Nobody keeps users in DynamoDB and sessions in Postgres — a
+//! answered by the *same* backend (`dynamodb` or `postgres`). Nobody keeps users in DynamoDB and sessions in Postgres — a
 //! mixed set is not a deployment anyone wants, and pretending it is one costs a constructor
 //! argument at every call site (the boot path used to carry ten).
 //!
@@ -15,8 +15,10 @@
 //! This bundle exists for the wiring layer only.
 
 pub mod dynamodb;
+pub mod postgres;
 
 use crate::boot::aws::Aws;
+use crate::boot::postgres::{Postgres, URL_VARIABLE as POSTGRES_URL};
 use crate::boot::seam::{self, Selection};
 
 use crate::audit::repository::AuditRepository;
@@ -38,11 +40,12 @@ use wasabi::aws::dynamodb::client::DynamoClient;
 const SEAM: &str = "storage";
 /// The variable that names the backend.
 pub const VARIABLE: &str = "UMAMI_STORAGE";
-/// DynamoDB, the only backend implemented today.
+/// DynamoDB.
 const DYNAMODB: &str = "dynamodb";
+/// PostgreSQL, on the pool `POSTGRES_URL` names.
+const POSTGRES: &str = "postgres";
 /// Every backend name this build accepts.
-const PROVIDERS: &[&str] = &[DYNAMODB];
-
+const PROVIDERS: &[&str] = &[DYNAMODB, POSTGRES];
 /// Every repository umami needs, from one backend.
 ///
 /// Cloning clones ten `Arc`s and nothing else, so the wiring layer hands copies out freely.
@@ -74,25 +77,35 @@ pub struct Repositories {
 
 /// Resolves the storage backend and builds its repositories.
 ///
-/// The AWS probe is checked before any table is touched. umami cannot run without storage, so an
-/// unusable AWS is fatal either way — but failing here says *why* ("credentials are expired"),
-/// while failing on the first `with_client` says "Cannot access DynamoDB table
-/// 'umami-dev-users'", which reads like a missing table or a bad IAM policy. Once a non-AWS
-/// backend exists, this same check is what keeps DynamoDB from winning auto-detection on a host
-/// where it could never work.
-pub async fn from_env(aws: &Aws) -> anyhow::Result<(Repositories, Selection)> {
+/// Auto-detection takes Postgres when `POSTGRES_URL` is set and DynamoDB otherwise. A connection
+/// string is a deliberate act — nobody sets one by accident — while AWS credentials are often
+/// just lying around on a developer machine, so the URL is the stronger signal. It is not a
+/// probe: a set but broken URL fails the boot instead of quietly landing on DynamoDB.
+///
+/// For DynamoDB the AWS probe is checked before any table is touched. Failing there says *why*
+/// ("credentials are expired"), while failing on the first `with_client` says "Cannot access
+/// DynamoDB table 'umami-dev-users'", which reads like a missing table or a bad IAM policy.
+pub async fn from_env(aws: &Aws, postgres: &Postgres) -> anyhow::Result<(Repositories, Selection)> {
     let selection = match seam::requested(VARIABLE) {
         Some(name) if name == DYNAMODB => Selection::explicit(SEAM, VARIABLE, DYNAMODB),
+        Some(name) if name == POSTGRES => Selection::explicit(SEAM, VARIABLE, POSTGRES),
         Some(other) => return Err(seam::unknown_provider(VARIABLE, &other, PROVIDERS)),
-        // Nothing to auto-detect while there is one backend — an operator has no choice to make
-        // yet, so this is a default rather than a detection.
-        None => Selection::default_for(SEAM, VARIABLE, DYNAMODB),
+        None if postgres.is_configured() => Selection::detected(SEAM, VARIABLE, POSTGRES),
+        None => Selection::detected(SEAM, VARIABLE, DYNAMODB),
     };
 
-    // A second backend turns this into a match on `selection.provider`, and the check below into
-    // "is DynamoDB eligible" rather than "must DynamoDB work".
+    if selection.provider == POSTGRES {
+        let database = postgres.database().await.with_context(|| {
+            format!("{POSTGRES} storage needs a reachable database at {POSTGRES_URL}")
+        })?;
+        return Ok((postgres::repositories(&database).await?, selection));
+    }
+
     aws.require().await.with_context(|| {
-        format!("{DYNAMODB} storage needs a usable AWS client, and it is umami's only backend")
+        format!(
+            "{DYNAMODB} storage needs a usable AWS client. Set {POSTGRES_URL} to run on \
+             PostgreSQL instead."
+        )
     })?;
     let client = DynamoClient::from_env().await?;
     Ok((dynamodb::repositories(&client).await?, selection))

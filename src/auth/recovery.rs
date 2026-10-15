@@ -419,7 +419,7 @@ mod tests {
     use crate::auth::challenge::MockChallengeRepository;
     use crate::auth::challenge::Proven;
     use crate::auth::ratelimit::repository::MockRateLimitRepository;
-    use crate::config::repository::StaticConfigRepository;
+    use crate::config::repository::memory::StaticConfigRepository;
     use crate::contacts::Contact;
     use crate::contacts::repository::MockContactRepository;
     use crate::users::Salutation;

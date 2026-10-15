@@ -1,0 +1,335 @@
+//! Loading and saving the whole [`Config`] document.
+//!
+//! [`ConfigRepository`] is the seam (like `KeyRepository`): [`StaticConfigRepository`] serves a
+//! built-in default (dev/tests/no-S3), [`S3ConfigRepository`] keeps the document in S3 with a
+//! cached, periodically-refreshed read path and a whole-document write path, and
+//! [`PostgresConfigRepository`] keeps it in a PostgreSQL blob table the same way.
+
+pub mod memory;
+pub mod postgres;
+pub mod s3;
+
+use crate::boot::aws::Aws;
+use crate::boot::postgres::{Postgres, URL_VARIABLE as POSTGRES_URL};
+use crate::boot::seam::{self, Selection};
+use crate::config::Config;
+use anyhow::Context;
+use async_trait::async_trait;
+use memory::StaticConfigRepository;
+use postgres::PostgresConfigRepository;
+use s3::S3ConfigRepository;
+use std::env;
+use std::sync::Arc;
+use std::time::Duration;
+use warp::http::StatusCode;
+use wasabi::aws::s3::S3Client;
+use wasabi::status_bail;
+
+/// The seam's name in the boot report.
+const SEAM: &str = "config store";
+/// The variable that names the config store.
+pub const VARIABLE: &str = "UMAMI_CONFIG_STORE";
+/// The config document lives in S3, versioned and cached.
+const S3: &str = "s3";
+/// The config document lives in a PostgreSQL blob table, cached.
+const POSTGRES: &str = "postgres";
+/// The built-in default, in memory, lost on restart.
+const MEMORY: &str = "memory";
+/// Every store name this build accepts.
+const PROVIDERS: &[&str] = &[S3, POSTGRES, MEMORY];
+
+/// What an operator loses by running without a persistent config store. Logged as a `WARN` on the
+/// auto-detected path, because there it is a surprise rather than a decision.
+const NOT_PERSISTED: &str = "config edits (features, custom fields, PUT /config) are NOT persisted \
+                             and are lost on restart";
+
+/// Resolves the config store.
+///
+/// Explicit `s3` with no reachable S3 client — no bucket configured, or an AWS client that does not
+/// work — fails the boot: a deployment that asked for a persistent catalog and silently got the
+/// in-memory one would look healthy and reset every config edit on the next restart, so the failure
+/// would surface days later, as data loss.
+///
+/// Explicit `postgres` likewise fails the boot when `POSTGRES_URL` is unset or unreachable.
+///
+/// With nothing configured, a set `POSTGRES_URL` wins: an operator who points umami at a
+/// database wants the catalog next to the rest of its data, and S3 credentials lying around on the
+/// same host say much less. After that, S3 is only eligible when AWS actually works. That is what makes the
+/// in-memory fallback correct rather than lucky: a developer with no credentials gets the memory
+/// store immediately, instead of an S3 store that constructs fine and fails on the first read.
+pub async fn from_env(
+    aws: &Aws,
+    postgres: &Postgres,
+) -> anyhow::Result<(Arc<dyn ConfigRepository>, Selection)> {
+    match seam::requested(VARIABLE).as_deref() {
+        Some(name) if name == S3 => {
+            aws.require()
+                .await
+                .with_context(|| format!("{VARIABLE}={S3} needs a usable AWS client"))?;
+            let client = S3Client::from_env().await.with_context(|| {
+                format!(
+                    "{VARIABLE}={S3} but no S3 client could be built — is S3_BUCKET_SUFFIX set? \
+                     Leave {VARIABLE} unset to fall back to the in-memory store instead."
+                )
+            })?;
+            let repository = Arc::new(S3ConfigRepository::from_env(client).await?);
+            Ok((repository, Selection::explicit(SEAM, VARIABLE, S3)))
+        }
+        Some(name) if name == POSTGRES => {
+            let repository = postgres_repository(postgres).await.with_context(|| {
+                format!("{VARIABLE}={POSTGRES} needs a reachable database at {POSTGRES_URL}")
+            })?;
+            Ok((repository, Selection::explicit(SEAM, VARIABLE, POSTGRES)))
+        }
+        Some(name) if name == MEMORY => Ok((
+            Arc::new(StaticConfigRepository::with_default()),
+            Selection::explicit(SEAM, VARIABLE, MEMORY).with_note(NOT_PERSISTED),
+        )),
+        Some(other) => Err(seam::unknown_provider(VARIABLE, other, PROVIDERS)),
+        // Unset: persist in S3 when AWS works and a bucket is available the wasabi way (i.e.
+        // S3_BUCKET_SUFFIX is set), otherwise run in memory. This is the local-dev path.
+        None if postgres.is_configured() => Ok((
+            postgres_repository(postgres).await?,
+            Selection::detected(SEAM, VARIABLE, POSTGRES),
+        )),
+        None => detect(aws).await,
+    }
+}
+
+/// The Postgres store on the shared pool.
+async fn postgres_repository(postgres: &Postgres) -> anyhow::Result<Arc<dyn ConfigRepository>> {
+    let database = postgres.database().await?;
+    Ok(Arc::new(
+        PostgresConfigRepository::from_env(&database).await?,
+    ))
+}
+
+/// Auto-detection: S3 when it can actually be reached, else the in-memory default.
+async fn detect(aws: &Aws) -> anyhow::Result<(Arc<dyn ConfigRepository>, Selection)> {
+    let unusable = match aws.require().await {
+        Ok(_) => match S3Client::from_env().await {
+            Ok(client) => {
+                let repository = Arc::new(S3ConfigRepository::from_env(client).await?);
+                return Ok((repository, Selection::detected(SEAM, VARIABLE, S3)));
+            }
+            Err(err) => format!("{err:#}"),
+        },
+        Err(err) => format!("{err:#}"),
+    };
+
+    tracing::warn!(
+        "no S3 config store ({unusable}) — using the in-memory config repository. \
+         {NOT_PERSISTED} (reset to the built-in default). Set S3_BUCKET_SUFFIX (wasabi S3 naming) \
+         with working AWS credentials to persist config in S3, {POSTGRES_URL} to persist it in \
+         PostgreSQL, or {VARIABLE}={MEMORY} to say this was intended."
+    );
+    Ok((
+        Arc::new(StaticConfigRepository::with_default()),
+        Selection::detected(SEAM, VARIABLE, MEMORY).with_note(NOT_PERSISTED),
+    ))
+}
+
+/// Minimum time a persistent store's config stays cached before a refresh is attempted, when its
+/// cache-TTL variable says nothing.
+///
+/// This is the propagation delay of a config edit across instances, and the config holds the
+/// permission rules: for this long after a save, every other instance still authorizes against the
+/// previous document. An edit that takes a permission away is therefore not in effect fleet-wide
+/// until the TTL has passed — which is why this is seconds rather than minutes.
+///
+/// It is not the price of a download. Past the TTL a store only asks whether the document changed
+/// (S3: the object's ETag; Postgres: the row's revision) and keeps what it has unless it did, and
+/// it does so lazily, on the next read — so one instance costs at most one check per TTL, not a
+/// poll.
+const DEFAULT_CONFIG_CACHE_TTL: Duration = Duration::from_secs(60);
+
+/// Below this, the freshness check stops being a background cost and moves onto the request path:
+/// [`ConfigRepository::current`] is read by every permission check, so a TTL this short makes a
+/// store round trip part of authorizing a request. Warned about rather than refused — it is a reasonable
+/// thing to ask for while testing a config change.
+const CACHE_TTL_ON_REQUEST_PATH: Duration = Duration::from_secs(5);
+
+/// The cache TTL `variable` configures, or [`DEFAULT_CONFIG_CACHE_TTL`].
+fn cache_ttl_from_env(variable: &str) -> anyhow::Result<Duration> {
+    parse_cache_ttl(variable, env::var(variable).ok().as_deref())
+}
+
+/// Says at boot how stale another instance's config may be, and warns when the TTL is so short
+/// that the freshness check runs on the request path.
+fn log_cache_ttl(variable: &str, cache_ttl: Duration) {
+    if cache_ttl < CACHE_TTL_ON_REQUEST_PATH {
+        tracing::warn!(
+            "{variable}={}s puts a config freshness check on the request path — the config is \
+             read while authorizing every request. Intended for tracking a config change down; \
+             raise it again afterwards.",
+            cache_ttl.as_secs()
+        );
+    }
+    tracing::info!(
+        "config cache TTL {}s — a config edit reaches other instances after at most that long \
+         ({variable} to change it)",
+        cache_ttl.as_secs()
+    );
+}
+
+/// Parses [`CACHE_TTL_VARIABLE`]. A value that is not a whole number of seconds fails the boot: it
+/// was set on purpose, and silently serving a config an operator believes is refreshing every few
+/// seconds is the failure this knob exists to prevent. Empty reads as unset, so a templated
+/// variable from an unset deployment value does not fail a boot.
+fn parse_cache_ttl(variable: &str, raw: Option<&str>) -> anyhow::Result<Duration> {
+    let Some(value) = raw.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(DEFAULT_CONFIG_CACHE_TTL);
+    };
+    let seconds = value
+        .parse::<u64>()
+        .with_context(|| format!("{variable}='{value}' must be a whole number of seconds"))?;
+    Ok(Duration::from_secs(seconds))
+}
+
+/// Source of the configuration document. Pluggable (S3, in-memory, …); both implementations expose
+/// the whole document.
+#[async_trait]
+pub trait ConfigRepository: Send + Sync {
+    /// Returns the current config (cached; may refresh internally).
+    async fn current(&self) -> anyhow::Result<Arc<Config>>;
+
+    /// Returns the stored config, read **past** any cache.
+    ///
+    /// For the one caller that hands its result straight back to [`Self::save`]: an editor loading
+    /// the document to edit it. A cached read there shows a `version` that may already be
+    /// superseded, and the editor then spends a full round of edits before the save refuses them
+    /// with a `409` it could not have avoided. Every other reader wants [`Self::current`] — this
+    /// one costs an S3 round trip, and the config is read while authorizing each request.
+    async fn authoritative(&self) -> anyhow::Result<Config>;
+
+    /// Publishes the whole document if the stored one is still at `expected_version`, and returns it
+    /// as saved, with the version bumped. A mismatch is a `409`.
+    ///
+    /// The check belongs **here**, next to the write, and not in the route that calls it: the
+    /// version read by [`Self::current`] is a cached one, and comparing against a cached version is
+    /// how two editors both pass a guard and the second silently discards the first's document. An
+    /// implementation has to compare against what is actually stored, and has to keep nothing else
+    /// in between.
+    async fn save(&self, config: Config, expected_version: u64) -> anyhow::Result<Config>;
+}
+
+/// The document to store, with its version advanced past `stored_version` — or a `409` when the
+/// editor was working from a different one.
+fn bump(config: Config, stored_version: u64, expected_version: u64) -> anyhow::Result<Config> {
+    if stored_version != expected_version {
+        status_bail!(
+            StatusCode::CONFLICT,
+            "Config version mismatch: expected {stored_version}, got {expected_version} — reload \
+             and re-apply"
+        );
+    }
+    Ok(Config {
+        version: stored_version + 1,
+        ..config
+    })
+}
+
+/// The stored bytes as a [`Config`], or the built-in default when they do not parse.
+///
+/// Fail-safe: a stored config that no longer parses (corruption, or a schema change the document
+/// predates) must NOT take the whole service — including login — down. Fall back and log loudly; an
+/// admin can then repair and re-save via `PUT /config`.
+fn parse_or_default(bytes: &[u8]) -> Config {
+    match serde_json::from_slice(bytes) {
+        Ok(config) => config,
+        Err(err) => {
+            tracing::error!(
+                "stored config.json failed to parse — serving the built-in DEFAULT config so the \
+                 service stays up; your saved settings are NOT applied until you fix and re-save \
+                 the document via PUT /config: {err:#}"
+            );
+            Config::default()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Any variable name; the parser only quotes it back in its errors.
+    const CACHE_TTL_VARIABLE: &str = "UMAMI_CONFIG_S3_CACHE_TTL_SECS";
+
+    /// The version a `409` reports, since a stale editor has to be told what to reload to.
+    fn conflict_message(result: anyhow::Result<Config>) -> String {
+        format!("{:#}", result.expect_err("expected a conflict"))
+    }
+
+    #[test]
+    fn a_matching_version_advances_by_one() {
+        let saved = bump(Config::default(), 7, 7).expect("should save");
+        assert_eq!(saved.version, 8);
+    }
+
+    #[test]
+    fn a_stale_editor_is_refused_and_told_the_stored_version() {
+        // The case the cached read used to wave through: the editor holds 7, the store is at 8
+        // because somebody else already saved.
+        let message = conflict_message(bump(Config::default(), 8, 7));
+        assert!(message.contains("expected 8"), "{message}");
+        assert!(message.contains("got 7"), "{message}");
+    }
+
+    #[test]
+    fn a_version_from_the_future_is_refused_too() {
+        // Not symmetric for its own sake: a body claiming a version nothing ever stored is either a
+        // hand-edited document or a different deployment's, and overwriting on it would be worse
+        // than the stale case — there is no edit to reload.
+        assert!(bump(Config::default(), 3, 9).is_err());
+    }
+
+    #[test]
+    fn an_unset_cache_ttl_is_the_default() {
+        assert_eq!(
+            parse_cache_ttl(CACHE_TTL_VARIABLE, None).expect("default"),
+            DEFAULT_CONFIG_CACHE_TTL
+        );
+        // A templated variable from an unset deployment value arrives as empty, not as absent, and
+        // must not fail the boot.
+        assert_eq!(
+            parse_cache_ttl(CACHE_TTL_VARIABLE, Some("  ")).expect("default"),
+            DEFAULT_CONFIG_CACHE_TTL
+        );
+    }
+
+    #[test]
+    fn a_cache_ttl_is_read_as_whole_seconds() {
+        assert_eq!(
+            parse_cache_ttl(CACHE_TTL_VARIABLE, Some(" 30 ")).expect("parsed"),
+            Duration::from_secs(30)
+        );
+    }
+
+    #[test]
+    fn a_cache_ttl_that_is_not_seconds_fails_the_boot() {
+        // Rather than falling back to the default: an operator who wrote "30s" or "5m" believes
+        // the config refreshes at that rate, and a fallback would leave them with the old window
+        // and no sign of it.
+        for value in ["30s", "5m", "-1", "0.5"] {
+            assert!(
+                parse_cache_ttl(CACHE_TTL_VARIABLE, Some(value)).is_err(),
+                "{value} should be refused"
+            );
+        }
+        let message = format!(
+            "{:#}",
+            parse_cache_ttl(CACHE_TTL_VARIABLE, Some("5m")).expect_err("not seconds")
+        );
+        assert!(message.contains(CACHE_TTL_VARIABLE), "{message}");
+    }
+
+    #[test]
+    fn an_unparseable_document_reads_as_the_default() {
+        // So that `save` compares against the version an editor was actually shown, and the repair
+        // path stays open.
+        assert_eq!(
+            parse_or_default(b"{ not json").version,
+            Config::default().version
+        );
+    }
+}

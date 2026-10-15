@@ -1,21 +1,21 @@
-//! DynamoDB-backed storage — umami's only backend today.
+//! DynamoDB-backed storage.
 //!
 //! Each repository provisions its own table in `with_client`, so building the bundle is also what
 //! creates the tables on a fresh deployment. That is why this is `async` and why it is the one
 //! place allowed to know about `DynamoClient`.
 
-use crate::audit::repository::DynamoAuditRepository;
-use crate::auth::apikeys::repository::DynamoApiKeyRepository;
-use crate::auth::challenge::DynamoChallengeRepository;
-use crate::auth::ratelimit::repository::DynamoRateLimitRepository;
-use crate::auth::session::repository::DynamoSessionRepository;
-use crate::auth::webauthn::repository::DynamoWebauthnRepository;
-use crate::contacts::repository::DynamoContactRepository;
-use crate::limits::repository::DynamoLimitRepository;
-use crate::messaging::repository::DynamoMessagingRepository;
+use crate::audit::repository::dynamodb::DynamoAuditRepository;
+use crate::auth::apikeys::repository::dynamodb::DynamoApiKeyRepository;
+use crate::auth::challenge::dynamodb::DynamoChallengeRepository;
+use crate::auth::ratelimit::repository::dynamodb::DynamoRateLimitRepository;
+use crate::auth::session::repository::dynamodb::DynamoSessionRepository;
+use crate::auth::webauthn::repository::dynamodb::DynamoWebauthnRepository;
+use crate::contacts::repository::dynamodb::DynamoContactRepository;
+use crate::limits::repository::dynamodb::DynamoLimitRepository;
+use crate::messaging::repository::dynamodb::DynamoMessagingRepository;
 use crate::storage::Repositories;
-use crate::tenants::repository::DynamoTenantRepository;
-use crate::users::repository::DynamoUserRepository;
+use crate::tenants::repository::dynamodb::DynamoTenantRepository;
+use crate::users::repository::dynamodb::DynamoUserRepository;
 use std::sync::Arc;
 use wasabi::aws::dynamodb::client::DynamoClient;
 

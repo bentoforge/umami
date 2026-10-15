@@ -367,7 +367,7 @@ async fn tenant_features(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::repository::StaticConfigRepository;
+    use crate::config::repository::memory::StaticConfigRepository;
     use crate::config::{Config, RoleDef};
     use crate::tenants::repository::MockTenantRepository;
     use wasabi::web::auth::user::User as WasabiUser;

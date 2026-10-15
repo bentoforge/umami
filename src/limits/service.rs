@@ -1217,7 +1217,7 @@ async fn billing(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::repository::StaticConfigRepository;
+    use crate::config::repository::memory::StaticConfigRepository;
     use crate::config::{Config, LimitDef, LimitKind};
     use crate::tenants::repository::MockTenantRepository;
     use crate::tenants::{Tenant, slugify};

@@ -28,28 +28,17 @@
 //! single keyed get. DynamoDB's TTL expires rows on its own, and the row is deleted on use — the
 //! challenge is single-use because consuming it *removes* it, not because a flag says so.
 
+pub mod dynamodb;
+pub mod postgres;
+
 use crate::contacts::repository::ContactRepository;
-use anyhow::Context;
 use async_trait::async_trait;
-use aws_sdk_dynamodb::types::{BillingMode, ReturnValue};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
-use wasabi::aws::dynamodb::client::DynamoClient;
-use wasabi::aws::dynamodb::schema::{str_attribute, with_hash_index};
-use wasabi::aws::dynamodb::{deserialize_entity, str};
-
-/// Table holding pending challenges, keyed by the secret's hash and self-expiring via TTL.
-const TABLE_CHALLENGES: &str = "auth-challenges";
-
-/// Hash key — `sha256(secret)`, hex.
-const FIELD_SECRET_HASH: &str = "secretHash";
-
-/// Epoch-seconds attribute DynamoDB expires rows on.
-const FIELD_TTL: &str = "ttl";
 
 /// Bytes of entropy in a challenge secret. 32 bytes is the same order as the refresh secrets and far
 /// beyond guessing; the secret travels in a URL, so it is base64url-encoded.
@@ -118,28 +107,6 @@ pub trait ChallengeRepository: Send + Sync {
     async fn consume(&self, purpose: Purpose, secret: &str) -> anyhow::Result<Option<Proven>>;
 }
 
-/// DynamoDB-backed [`ChallengeRepository`].
-#[derive(Clone)]
-pub struct DynamoChallengeRepository {
-    client: DynamoClient,
-}
-
-impl DynamoChallengeRepository {
-    #[tracing::instrument(skip(client), err(level = "debug", Display))]
-    pub async fn with_client(client: &DynamoClient) -> anyhow::Result<Self> {
-        client
-            .create_table_with_ttl(TABLE_CHALLENGES, FIELD_TTL, |table| {
-                let table = table.attribute_definitions(str_attribute(FIELD_SECRET_HASH)?);
-                let table = with_hash_index(table, FIELD_SECRET_HASH)?;
-                Ok(table.billing_mode(BillingMode::PayPerRequest))
-            })
-            .await?;
-        Ok(Self {
-            client: client.clone(),
-        })
-    }
-}
-
 /// Hashes a challenge secret for storage and lookup.
 fn hash_secret(secret: &str) -> String {
     let digest = Sha256::digest(secret.as_bytes());
@@ -162,72 +129,6 @@ fn generate_secret() -> String {
     let mut bytes = [0_u8; SECRET_BYTES];
     rand::rng().fill_bytes(&mut bytes);
     URL_SAFE_NO_PAD.encode(bytes)
-}
-
-#[async_trait]
-impl ChallengeRepository for DynamoChallengeRepository {
-    #[tracing::instrument(level = "debug", skip(self), err(level = "debug", Display))]
-    async fn issue(
-        &self,
-        purpose: Purpose,
-        user_id: &str,
-        tenant_id: &str,
-        address: &str,
-        ttl_secs: i64,
-    ) -> anyhow::Result<String> {
-        let secret = generate_secret();
-        let now = Utc::now();
-        let challenge = Challenge {
-            secret_hash: hash_secret(&secret),
-            user_id: user_id.to_owned(),
-            tenant_id: tenant_id.to_owned(),
-            purpose,
-            address: address.to_owned(),
-            created: now,
-            ttl: (now + Duration::seconds(ttl_secs)).timestamp(),
-        };
-        let _ = self
-            .client
-            .put_entity(TABLE_CHALLENGES, &challenge)?
-            .send()
-            .await
-            .context("Error inserting a contact challenge")?;
-        Ok(secret)
-    }
-
-    #[tracing::instrument(level = "debug", skip(self, secret), err(level = "debug", Display))]
-    async fn consume(&self, purpose: Purpose, secret: &str) -> anyhow::Result<Option<Proven>> {
-        // Single-use by construction: the delete *is* the consumption, so two concurrent clicks on
-        // the same link cannot both succeed — only one receives the old item.
-        let output = self
-            .client
-            .delete_item(TABLE_CHALLENGES)
-            .key(FIELD_SECRET_HASH, str(hash_secret(secret)))
-            .return_values(ReturnValue::AllOld)
-            .send()
-            .await
-            .context("Error consuming a contact challenge")?;
-        let challenge: Option<Challenge> = deserialize_entity(output.attributes)?;
-
-        // Two checks the table cannot make for us:
-        //   * a row DynamoDB has not got round to expiring is still expired to us — TTL deletion is
-        //     eventual;
-        //   * the purpose must match, or a confirmation link would work as a password reset.
-        // The row is already gone either way, which is fine: a secret offered to the wrong endpoint
-        // is spent, and a legitimate holder still has the other link.
-        let now = Utc::now().timestamp();
-        Ok(challenge.and_then(|challenge| {
-            if redeemable(challenge.purpose, purpose, challenge.ttl, now) {
-                Some(Proven {
-                    user_id: challenge.user_id,
-                    tenant_id: challenge.tenant_id,
-                    address: challenge.address,
-                })
-            } else {
-                None
-            }
-        }))
-    }
 }
 
 /// Marks the proven address verified, if the user still has it.

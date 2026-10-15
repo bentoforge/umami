@@ -5,12 +5,12 @@ infrastructure. Four of those seams are selectable at runtime, one environment v
 
 | Seam | Variable | Values | Unset (auto) |
 |---|---|---|---|
-| Storage (all repositories) | `UMAMI_STORAGE` | `dynamodb` | `dynamodb` |
-| Config catalog | `UMAMI_CONFIG_STORE` | `s3`, `memory` | `s3` when AWS works and a bucket is available, else `memory` |
+| Storage (all repositories) | `UMAMI_STORAGE` | `dynamodb`, `postgres` | `postgres` when `POSTGRES_URL` is set, else `dynamodb` |
+| Config catalog | `UMAMI_CONFIG_STORE` | `s3`, `postgres`, `memory` | `postgres` when `POSTGRES_URL` is set, else `s3` when AWS works and a bucket is available, else `memory` |
 | Signing keys | `UMAMI_KEY_STORE` | `env` | `env` |
 | Outbound mail | `UMAMI_MAIL_TRANSPORT` | `sqs`, `ses`, `stdout`, `none` | `sqs` when a queue is set and AWS works, else `ses` when a sender is set and AWS works; else `stdout` in a debug build, `none` in a release build |
 
-Today most seams have one implementation. The variables exist anyway, because they are what makes
+Some seams still have one implementation. The variables exist anyway, because they are what makes
 the *strict* behaviour below possible — and because a deployment that has written down which backend
 it runs on does not silently change backends when its environment does.
 
@@ -21,8 +21,9 @@ settings** carry the provider's name (`UMAMI_MAIL_SQS_QUEUE_URL`), so it is read
 belongs to which backend and two providers of the same seam cannot collide over one variable — an
 SMTP transport would bring `UMAMI_MAIL_SMTP_HOST` and nothing has to be renamed for it.
 
-The two exceptions are not umami's to name: `S3_BUCKET_SUFFIX` and `DYNAMO_TABLE_PREFIX` come from
-wasabi's naming schema, and every wasabi service reads them under those names.
+The exceptions are not umami's to name: `S3_BUCKET_SUFFIX`, `DYNAMO_TABLE_PREFIX` and the
+`POSTGRES_*` connection variables come from wasabi's naming schema, and every wasabi service reads
+them under those names.
 
 ## Is AWS usable? (the eligibility probe)
 
@@ -74,8 +75,8 @@ probe the environment, take what is there, log which one won. A degraded choice 
 **3. An unknown value never falls back.** A typo fails the boot and the error lists the valid names:
 
 ```
-UMAMI_STORAGE='postgres' names a backend umami does not implement.
-Valid values: dynamodb. Leave UMAMI_STORAGE unset to auto-detect.
+UMAMI_STORAGE='mongo' names a backend umami does not implement.
+Valid values: dynamodb, postgres. Leave UMAMI_STORAGE unset to auto-detect.
 ```
 
 Values are trimmed and case-insensitive, and an empty value is the same as unset — a templated
@@ -90,6 +91,40 @@ about one seam and lax about the next.
 `memory`, `stdout` and `none` are real, nameable choices, not just what you get when something is
 missing. Setting one says "this deployment has no S3 / no mail queue, and that is intended": the
 boot report still shows what it costs, but the `WARN` about *stumbling into* it is gone.
+
+## PostgreSQL: `postgres`
+
+`UMAMI_STORAGE=postgres` and `UMAMI_CONFIG_STORE=postgres` run on one shared pool, configured the
+wasabi way:
+
+| Variable | Meaning | Default |
+|---|---|---|
+| `POSTGRES_URL` | `postgres://user:pass@host:5432/umami?sslmode=require` | (required) |
+| `POSTGRES_POOL_SIZE` | Maximum pooled connections | `16` |
+| `POSTGRES_CA_FILE` | PEM bundle of extra trusted CAs — RDS needs Amazon's bundle | (none) |
+| `UMAMI_CONFIG_POSTGRES_CACHE_TTL_SECS` | How long another instance's config edit takes to arrive | `60` |
+
+A set `POSTGRES_URL` wins auto-detection for both seams. Setting a connection string is a
+deliberate act; AWS credentials are often just lying around on a developer machine. It is not a
+probe: a set but unreachable database fails the boot instead of quietly landing on DynamoDB.
+
+umami creates and migrates its tables on boot, like it creates DynamoDB tables. Each table holds
+the entity whole as `data JSONB`, plus typed, indexed columns for what queries filter and sort on.
+A schema change that cannot lose data (a new table, column or index, a widened type) is applied
+automatically, in one transaction under an advisory lock so concurrently booting replicas do not
+race. A change that could lose data — a column the code no longer declares — is **withheld** and
+logged on `WARN` with its SQL, for an operator to run deliberately.
+
+The database user therefore needs `CREATE` on the schema it works in. Point several umami
+deployments at one database by giving each its own schema (`?options=-csearch_path%3Dumami_dev`).
+
+DynamoDB expires TTL'd items by itself; Postgres does not, so expiring rows (sessions,
+challenges, ceremonies, rate-limit windows) carry `expires_at`, are filtered out on every read and
+are swept opportunistically on writes.
+
+The config catalog lives in a `blobs` row. Unlike S3, Postgres can serialise saves across
+instances (`SELECT … FOR UPDATE`), so two editors on two instances can no longer both pass the
+version check.
 
 ## Mail without a worker: `ses`
 
@@ -150,7 +185,7 @@ running on?" is one grep away:
 
 ```
 Resolved backends:
-  storage        dynamodb  — default (UMAMI_STORAGE unset)
+  storage        dynamodb  — auto-detected (UMAMI_STORAGE unset)
   config store   s3        — auto-detected (UMAMI_CONFIG_STORE unset)
   signing keys   env       — default (UMAMI_KEY_STORE unset)
   mail transport stdout    — auto-detected (UMAMI_MAIL_TRANSPORT unset)

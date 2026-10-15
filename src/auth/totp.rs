@@ -352,7 +352,7 @@ async fn totp_disable(
 mod tests {
     use super::*;
     use crate::config::Config;
-    use crate::config::repository::StaticConfigRepository;
+    use crate::config::repository::memory::StaticConfigRepository;
 
     /// Seeds a config repository whose branding title is `title`.
     async fn config_titled(title: Option<&str>) -> Arc<dyn ConfigRepository> {

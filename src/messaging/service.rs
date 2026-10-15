@@ -547,7 +547,7 @@ async fn resolve(query: ResolveQuery, deps: ResolveDeps) -> anyhow::Result<Value
 mod tests {
     use super::*;
     use crate::audit::repository::MockAuditRepository;
-    use crate::config::repository::StaticConfigRepository;
+    use crate::config::repository::memory::StaticConfigRepository;
     use crate::messaging::repository::MockMessagingRepository;
     use std::sync::Mutex;
 
