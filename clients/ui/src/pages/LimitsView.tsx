@@ -437,11 +437,11 @@ function LimitRow({
         return (
           <tr key={line.key} className={divider}>
             {i === 0 && (
-              <td className={`${cell} whitespace-nowrap`} rowSpan={span}>
+              <td className={cell} rowSpan={span}>
                 <NameCell row={row} editable={editable} onEdit={() => onAction("edit", code)} />
               </td>
             )}
-            <td className={cell}>
+            <td className={`${cell} whitespace-nowrap`}>
               <span className="inline-flex items-center gap-2">
                 {line.bobble}
                 {line.label && (
@@ -454,10 +454,10 @@ function LimitRow({
                 )}
               </span>
             </td>
-            <td className={`${cell} text-right font-mono`}>
+            <td className={`${cell} whitespace-nowrap text-right font-mono`}>
               {line.ceiling != null ? `${formatNumber(line.ceiling)}${unit}` : ""}
             </td>
-            <td className={`${cell} text-right font-mono font-medium`}>
+            <td className={`${cell} whitespace-nowrap text-right font-mono font-medium`}>
               {formatNumber(line.value)}
               {unit}
             </td>
