@@ -40,14 +40,14 @@ impl SecretBox {
 
     /// Encrypts plaintext, returning a `base64url(nonce || ciphertext)` token.
     pub fn encrypt(&self, plaintext: &[u8]) -> anyhow::Result<String> {
-        let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&self.key));
+        let cipher = Aes256Gcm::new(&Key::<Aes256Gcm>::from(self.key));
 
         let mut nonce_bytes = [0u8; NONCE_LEN];
         rand::rng().fill_bytes(&mut nonce_bytes);
-        let nonce = Nonce::from_slice(&nonce_bytes);
+        let nonce = Nonce::from(nonce_bytes);
 
         let ciphertext = cipher
-            .encrypt(nonce, plaintext)
+            .encrypt(&nonce, plaintext)
             .map_err(|err| anyhow!("Failed to encrypt secret: {err}"))?;
 
         let mut token = nonce_bytes.to_vec();
@@ -60,15 +60,16 @@ impl SecretBox {
         let data = URL_SAFE_NO_PAD
             .decode(token)
             .context("Invalid encrypted secret encoding")?;
-        if data.len() <= NONCE_LEN {
+        let Some((nonce_bytes, ciphertext)) = data.split_first_chunk::<NONCE_LEN>() else {
+            return Err(anyhow!("Encrypted secret is too short"));
+        };
+        if ciphertext.is_empty() {
             return Err(anyhow!("Encrypted secret is too short"));
         }
-
-        let (nonce_bytes, ciphertext) = data.split_at(NONCE_LEN);
-        let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&self.key));
+        let cipher = Aes256Gcm::new(&Key::<Aes256Gcm>::from(self.key));
 
         cipher
-            .decrypt(Nonce::from_slice(nonce_bytes), ciphertext)
+            .decrypt(&Nonce::from(*nonce_bytes), ciphertext)
             .map_err(|err| anyhow!("Failed to decrypt secret: {err}"))
     }
 }

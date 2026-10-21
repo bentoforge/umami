@@ -116,7 +116,7 @@ fn verify_key_hmac(secret_hash_b64: &str, key_id: &str, presented_mac: &str) -> 
         };
         mac.update(format!("umami:apikey:{key_id}:{slot}").as_bytes());
         let expected = mac.finalize().into_bytes();
-        if bool::from(presented.ct_eq(expected.as_slice())) {
+        if bool::from(presented.ct_eq(&expected)) {
             return true;
         }
     }
