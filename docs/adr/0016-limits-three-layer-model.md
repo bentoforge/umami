@@ -2,6 +2,7 @@
 
 - **Status:** accepted
 - **Date:** 2026-09-07
+- **Extended by:** [ADR 0020](0020-limits-daily-throttle-reconciled-mid-day.md)
 
 ## Context
 
@@ -52,3 +53,5 @@ Limits are split into three layers:
   builds the state from the new settings.
 - `monthlySnapshot` / `extraAllowanceSnapshot` on the state row are load-bearing: they keep
   `used` well-defined when settings change mid-month.
+- The daily throttle is reconciled mid-day through `dailySnapshot`, decided later in
+  [ADR 0020](0020-limits-daily-throttle-reconciled-mid-day.md).
