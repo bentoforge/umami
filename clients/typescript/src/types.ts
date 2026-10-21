@@ -871,6 +871,9 @@ export interface LimitEntry {
   code: string;
   settings: LimitSettings;
   state?: LimitStateView;
+  /** The definition's internal note for limits admins (e.g. purchase prices), resolved to the
+   * caller's language. Sent only to `manage:limits` callers — never part of the public catalogue. */
+  adminNote?: string;
 }
 
 /** A tenant's configured limits (`GET /tenants/{id}/limits`). */

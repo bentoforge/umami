@@ -214,6 +214,19 @@ function FieldHint({ children }: { children: ReactNode }) {
   return <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{children}</p>;
 }
 
+/** The definition's internal note for the operators managing this tenant. The server sends it only
+ * to `manage:limits` callers; the self view on the start page never renders it either. */
+function AdminNote({ note, compact = false }: { note: string; compact?: boolean }) {
+  const { t } = useTranslation();
+  return (
+    <div
+      className={`${compact ? "mt-1 max-w-xs px-2 py-1 text-xs" : "px-3 py-2 text-sm"} whitespace-normal rounded border border-sky-200 bg-sky-50 text-sky-800 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-300`}
+    >
+      <span className="font-semibold">{t("limits.adminNote")}:</span> {note}
+    </div>
+  );
+}
+
 /** The name cell — the limit's label as a click-to-edit link (primary colour, pointer) when
  * editable, else plain; for an orphan its code with a muted "no longer defined". */
 function NameCell({ row, editable, onEdit }: { row: Row; editable: boolean; onEdit: () => void }) {
@@ -235,6 +248,7 @@ function NameCell({ row, editable, onEdit }: { row: Row; editable: boolean; onEd
         {row.def.description && (
           <div className="text-slate-400 dark:text-slate-500">{row.def.description}</div>
         )}
+        {editable && row.entry.adminNote && <AdminNote note={row.entry.adminNote} compact />}
       </div>
     );
   }
@@ -423,11 +437,11 @@ function LimitRow({
         return (
           <tr key={line.key} className={divider}>
             {i === 0 && (
-              <td className={`${cell} whitespace-nowrap`} rowSpan={span}>
+              <td className={cell} rowSpan={span}>
                 <NameCell row={row} editable={editable} onEdit={() => onAction("edit", code)} />
               </td>
             )}
-            <td className={cell}>
+            <td className={`${cell} whitespace-nowrap`}>
               <span className="inline-flex items-center gap-2">
                 {line.bobble}
                 {line.label && (
@@ -440,10 +454,10 @@ function LimitRow({
                 )}
               </span>
             </td>
-            <td className={`${cell} text-right font-mono`}>
+            <td className={`${cell} whitespace-nowrap text-right font-mono`}>
               {line.ceiling != null ? `${formatNumber(line.ceiling)}${unit}` : ""}
             </td>
-            <td className={`${cell} text-right font-mono font-medium`}>
+            <td className={`${cell} whitespace-nowrap text-right font-mono font-medium`}>
               {formatNumber(line.value)}
               {unit}
             </td>
@@ -627,6 +641,7 @@ function LimitEditor({
 
   return (
     <div className="space-y-4">
+      {row.entry.adminNote && <AdminNote note={row.entry.adminNote} />}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         {row.kind === "consumable" ? (
           <>

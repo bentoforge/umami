@@ -55,6 +55,11 @@ pub struct LimitState {
     /// applied.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub daily_date: Option<String>,
+    /// The daily allowance `daily_remaining` was reset to on `daily_date`, so a settings change
+    /// mid-day can keep what is already used today (`used = snapshot - remaining`). `None` on rows
+    /// written before it existed; the next daily reset fills it in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub daily_snapshot: Option<i64>,
     /// Gauge: the last value set. `None` until first set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gauge_value: Option<i64>,
@@ -89,6 +94,7 @@ impl LimitState {
             overrun: 0,
             daily_remaining: 0,
             daily_date: None,
+            daily_snapshot: None,
             gauge_value: None,
             gauge_month: None,
             version: 0,

@@ -74,6 +74,7 @@ fn refresh_daily(
     if state.daily_date.as_deref() != Some(today.as_str()) {
         state.daily_remaining = daily;
         state.daily_date = Some(today);
+        state.daily_snapshot = Some(daily);
     }
     state
 }
@@ -450,7 +451,9 @@ pub fn set_gauge(
 /// remaining` — so a rise grows the remaining by the delta, a fall shrinks it, and a fall below what
 /// is already used caps it at zero and warns. The persistent custom balance is never touched (it
 /// moves only via top-ups); a gauge's value stays put but is flagged when it now exceeds its bound.
-/// The daily throttle is not reconciled mid-day — it picks up the new setting at its next reset.
+/// The daily throttle follows the same rule against `daily_snapshot`, except that a fall below
+/// today's usage only caps it at zero: it is a gate, not a bucket, so there is nothing to book as
+/// overrun. A row without a snapshot keeps its counter until the next daily reset.
 /// Records a `settings` ledger entry. Returned warnings are advisory admin messages.
 #[allow(clippy::too_many_arguments)]
 pub fn apply_settings_change(
@@ -510,6 +513,21 @@ pub fn apply_settings_change(
              {} shortfall is booked as overrun",
             -raw_extra_allowance
         ));
+    }
+
+    // Daily: only within today's window. On a new day `rolled_over` has already reset the counter
+    // from the new setting, so used is 0 and this is a no-op.
+    if let (Some(new_daily), Some(snapshot)) = (settings.daily, state.daily_snapshot) {
+        let used_daily = (snapshot - state.daily_remaining).max(0);
+        state.daily_snapshot = Some(new_daily);
+        let raw_daily = new_daily - used_daily;
+        state.daily_remaining = raw_daily.max(0);
+        if raw_daily < 0 {
+            warnings.push(format!(
+                "daily throttle {new_daily} is below the {used_daily} already used today; no more \
+                 bookings pass the throttle until tomorrow"
+            ));
+        }
     }
 
     // A rise in budget or allowance retires prior overrun first (bookkeeping).
@@ -1062,6 +1080,74 @@ mod tests {
         let out = consume(None, &settings(Some(1000), None), 50, at(2026, 9, 7));
         assert_eq!(out.state.daily_remaining, 0);
         assert_eq!(out.state.daily_date, None);
+    }
+
+    /// Daily-throttled settings: 1000 a month, `daily` a day.
+    fn with_daily(daily: i64) -> LimitSettings {
+        LimitSettings {
+            monthly: Some(1000),
+            extra_allowance: None,
+            daily: Some(daily),
+            max: None,
+        }
+    }
+
+    /// A state that has used 70 of a 100 daily throttle on `reconcile`'s day (2026-09-07).
+    fn used_today() -> LimitState {
+        consume(None, &with_daily(100), 70, at(2026, 9, 7)).state
+    }
+
+    #[test]
+    fn the_daily_reset_records_its_snapshot() {
+        assert_eq!(used_today().daily_snapshot, Some(100));
+        assert_eq!(used_today().daily_remaining, 30);
+    }
+
+    #[test]
+    fn raising_the_daily_throttle_keeps_todays_usage() {
+        // 70 of 100 used today; raise to 150 -> 80 left today, not 30 and not a fresh 150.
+        let (out, warnings) = reconcile(used_today(), &with_daily(150));
+        assert_eq!(out.state.daily_remaining, 80);
+        assert_eq!(out.state.daily_snapshot, Some(150));
+        assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    #[test]
+    fn lowering_the_daily_throttle_shrinks_whats_left_today() {
+        // 70 of 100 used today; lower to 80 -> 10 left.
+        let (out, warnings) = reconcile(used_today(), &with_daily(80));
+        assert_eq!(out.state.daily_remaining, 10);
+        assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    #[test]
+    fn lowering_the_daily_throttle_below_todays_usage_caps_it_without_overrun() {
+        // 70 of 100 used today; lower to 50 -> nothing left today, and no overrun — the throttle is a
+        // gate, there is no debt to book.
+        let (out, warnings) = reconcile(used_today(), &with_daily(50));
+        assert_eq!(out.state.daily_remaining, 0);
+        assert_eq!(out.state.daily_snapshot, Some(50));
+        assert_eq!(out.state.overrun, 0);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+    }
+
+    #[test]
+    fn a_daily_change_on_a_new_day_starts_from_the_new_setting() {
+        // Used yesterday; a change today resets the throttle to the new value in full.
+        let yesterday = consume(None, &with_daily(100), 70, at(2026, 9, 6)).state;
+        let (out, _) = reconcile(yesterday, &with_daily(150));
+        assert_eq!(out.state.daily_date.as_deref(), Some("2026-09-07"));
+        assert_eq!(out.state.daily_remaining, 150);
+    }
+
+    #[test]
+    fn a_row_without_a_daily_snapshot_keeps_its_counter_until_the_next_reset() {
+        // Written before the snapshot existed: used is unknowable, so today's counter stays put.
+        let mut legacy = used_today();
+        legacy.daily_snapshot = None;
+        let (out, _) = reconcile(legacy, &with_daily(150));
+        assert_eq!(out.state.daily_remaining, 30);
+        assert_eq!(out.state.daily_snapshot, None);
     }
 
     /// A state with `used` of this month's budget, for the reconciliation tests.

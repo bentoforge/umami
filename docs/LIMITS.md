@@ -15,6 +15,7 @@ Dieses Dokument beschreibt den aktuellen Stand. Die Entscheidungen dahinter steh
 - [ADR 0019 — Buchungs-Kaskade und Overrun-Policies](adr/0019-limits-booking-cascade-and-overrun-policy.md)
 - [ADR 0017 — Lazy Rollover beim ersten Zugriff](adr/0017-limits-lazy-rollover-on-access.md)
 - [ADR 0018 — Pures `accounting`, dünnes Repo, eine begrenzte OCC-Schleife](adr/0018-limits-pure-accounting-core-thin-repository.md)
+- [ADR 0020 — Tagesabgleich des Daily-Throttles über `dailySnapshot`](adr/0020-limits-daily-throttle-reconciled-mid-day.md)
 
 ## Herkunft
 
@@ -66,8 +67,20 @@ pub struct LimitDef {
     // überhaupt einblendet. KEINE Eligibility/Durchsetzung — ein Limit mit Settings + State wird
     // unabhängig davon gebucht. None = für jeden Mandanten relevant.
     #[serde(default)] pub relevant_if: Option<String>,
+
+    // Interner Hinweis für die Mandantenverwaltung (z.B. Einkaufspreise). Nie für den Mandanten
+    // sichtbar — siehe „Interner Hinweis" unten.
+    #[serde(default)] pub admin_note: Option<LocalizedText>,
 }
 ```
+
+**Interner Hinweis (`adminNote`).** `description` ist öffentlich: sie geht über
+`GET /config/catalogue` an jedes Mitglied und erscheint auch in der Selbstansicht auf der
+Startseite. Für alles, was nur die Betreiber angeht („Ein AI Credit kostet 0.014 EUR im
+Einkauf.") gibt es `adminNote`. Der Hinweis steht **nicht** im Katalog, sondern wird nur von
+`GET /tenants/{id}/limits` ausgeliefert, und auch dort nur an Aufrufer mit `manage:limits` (aufgelöst
+in deren Sprache). Ein `view:limits`-Mitglied bekommt das Feld nie zu sehen. Die Management-UI zeigt
+ihn in der Mandantenverwaltung unter dem Limit-Namen und über dem Bearbeiten-Formular.
 
 **Validierung** beim `PUT /config`:
 
@@ -94,7 +107,8 @@ Ein Consumable (KI-Guthaben, alle Facetten, nur für Mandanten mit `feature:ai`)
       "extraAllowance": true,
       "customBalance": true,
       "daily": true,
-      "relevantIf": "feature:ai"
+      "relevantIf": "feature:ai",
+      "adminNote": "Ein AI Credit kostet 0.014 EUR im Einkauf."
     },
     { "code": "limit:seats", "name": "Seats", "kind": "gauge",
       "lowWatermarkPercent": 80, "highWatermarkPercent": 95 }
@@ -151,6 +165,13 @@ gestempelt mit `last_changed_by` + Tenant-OCC-`version`, wie `grant_feature`.
 | `newMonthly ≤ usedMonthly` | `remaining = 0` — auf Usage gedeckelt, **Warnung** in der Response |
 
 `used = snapshot − remaining`. Analog `extraAllowance`. `customBalance` bleibt unberührt (nur `topup`).
+`daily` wird genauso abgeglichen, aber nur innerhalb des laufenden Tages und gegen
+`dailySnapshot`: `remaining = max(0, newDaily − usedToday)`. Liegt der neue Wert unter dem heutigen
+Verbrauch, wird nur auf 0 gedeckelt (mit Warnung), **ohne** Overrun. Der Throttle ist ein Gate,
+kein Bucket, es gibt keine Schuld zu buchen. An einem neuen Tag setzt der Reset den Zähler ohnehin
+aus dem neuen Wert. Eine State-Zeile ohne `dailySnapshot` (geschrieben, bevor es das Feld gab)
+behält ihren Zähler bis zum nächsten Tagesreset, weil ihr heutiger Verbrauch nicht bekannt ist.
+Warum so: siehe [ADR 0020](adr/0020-limits-daily-throttle-reconciled-mid-day.md).
 Gauge-`max`-Änderung lässt den aktuellen Wert stehen (kann danach >max sein → Warnung). Existiert
 noch keine State-Zeile (Limit nie benutzt), wird nur `Tenant.limits` geschrieben — nichts zu
 reconcilen (der erste Call baut den State aus den neuen Settings).
@@ -178,12 +199,14 @@ monthlySnapshot                aus Tenant.limits bei Periodenstart kopiert
 extraAllowanceSnapshot                aus Tenant.limits bei Periodenstart kopiert
 customBalance                  persistent, verfällt NICHT
 dailyRemaining, dailyDate      Daily-Throttle (Facette)
+dailySnapshot                  aus Tenant.limits beim Tagesreset kopiert
 gaugeValue, gaugeMonth         Gauge: aktueller Wert, immer aktueller Monat
 version                        OCC
 ```
 
 `monthlySnapshot`/`extraAllowanceSnapshot` sind lasttragend: `usedMonthly = snapshot − remaining` ist
-so auch bei Mitte-Monat-Settings-Änderung wohldefiniert.
+so auch bei Mitte-Monat-Settings-Änderung wohldefiniert. `dailySnapshot` leistet dasselbe für den
+Tag.
 
 ### `limit-ledger` — Hash `tenantId#limitCode`, Range `timestamp#id`
 
@@ -481,7 +504,8 @@ den *Dienst*.
 
 - L3 Reconciliation: `PUT .../settings` gleicht die Live-Zähler an die neuen Werte an
   (`apply_settings_change`, pur): monthly/extraAllowance **grow/shrink/cap** über `used = snapshot −
-  remaining`, `customBalance` unberührt, Gauge-Wert bleibt (Warnung wenn > neues max),
+  remaining`, `daily` ebenso innerhalb des Tages (über `dailySnapshot`, Cap ohne Overrun),
+  `customBalance` unberührt, Gauge-Wert bleibt (Warnung wenn > neues max),
   `settings`-Ledger-Eintrag. Warnungen (auf Usage gedeckelt) kommen in der Response. Zweistufig
   (L2-Write, dann L3-CAS), idempotent.
 

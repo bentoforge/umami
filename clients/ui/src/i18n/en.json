@@ -175,6 +175,7 @@
     "overrun": "Overrun",
     "limitMax": "Limit",
     "actions": "Actions",
+    "adminNote": "Internal",
     "noLongerDefined": "(no longer defined)",
     "edit": "Edit",
     "ledger": "Transactions",
