@@ -80,6 +80,10 @@ impl LimitStateView {
 /// One of a tenant's limits: its stored settings and, when it has been used, the current counters.
 /// The definitions (labels, facets, watermarks) come separately from `GET /config/catalogue`; a
 /// screen merges the two by `code`.
+///
+/// `admin_note` is the exception to that split: the catalogue is readable by every member, and the
+/// note is meant for the operators managing the tenant, not for the tenant itself. So it travels
+/// here, and only to a `manage:limits` caller.
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct LimitEntry {
@@ -87,6 +91,8 @@ struct LimitEntry {
     settings: LimitSettings,
     #[serde(skip_serializing_if = "Option::is_none")]
     state: Option<LimitStateView>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    admin_note: Option<String>,
 }
 
 /// A tenant's limits with their live state.
@@ -234,10 +240,24 @@ async fn list_limits(
     let mut codes: BTreeSet<String> = config.relevant_limits(&features).into_iter().collect();
     codes.extend(tenant.limits.keys().cloned());
 
+    let shows_admin_notes = caller.has_any_permission(REQUIRE_MANAGE_LIMITS);
     let now = Utc::now();
     let mut entries = Vec::with_capacity(codes.len());
     for code in codes {
         let settings = tenant.limits.get(&code).cloned().unwrap_or_default();
+        let admin_note = if shows_admin_notes {
+            config
+                .limits
+                .iter()
+                .find(|def| def.code == code)
+                .and_then(|def| def.admin_note.as_ref())
+                .map(|note| {
+                    note.resolve(caller.locale(), &config.default_locale)
+                        .to_owned()
+                })
+        } else {
+            None
+        };
         // Project the live state to the current month/day in memory (no write), so the screen shows
         // what is actually left without needing the booking permission.
         let state = match limits.load_state(&tenant_id, &code).await? {
@@ -267,6 +287,7 @@ async fn list_limits(
             code,
             settings,
             state,
+            admin_note,
         });
     }
     Ok(LimitsResponse { limits: entries })
@@ -1251,6 +1272,7 @@ mod tests {
                 high_watermark_percent: None,
                 relevant_if: None,
                 unit: None,
+                admin_note: Some("One AI credit costs 0.014 EUR to buy.".into()),
                 overrun_policy: OverrunPolicy::Track,
             },
             LimitDef {
@@ -1265,6 +1287,7 @@ mod tests {
                 high_watermark_percent: Some(90),
                 relevant_if: None,
                 unit: None,
+                admin_note: None,
                 overrun_policy: OverrunPolicy::Track,
             },
             LimitDef {
@@ -1279,6 +1302,7 @@ mod tests {
                 high_watermark_percent: None,
                 relevant_if: None,
                 unit: None,
+                admin_note: None,
                 overrun_policy: OverrunPolicy::Track,
             },
             LimitDef {
@@ -1293,6 +1317,7 @@ mod tests {
                 high_watermark_percent: None,
                 relevant_if: None,
                 unit: None,
+                admin_note: None,
                 overrun_policy: OverrunPolicy::Reject,
             },
         ];
@@ -1505,6 +1530,53 @@ mod tests {
         )
         .await
         .expect("admin reads any tenant");
+    }
+
+    #[tokio::test]
+    async fn only_a_limits_admin_sees_the_admin_note() {
+        let mut tenants = MockTenantRepository::new();
+        tenants
+            .expect_get_tenant()
+            .returning(|_| Box::pin(async { Ok(Some(tenant("t-1"))) }));
+        let tenants = Arc::new(tenants);
+        let note_of = |response: &LimitsResponse| {
+            response
+                .limits
+                .iter()
+                .find(|entry| entry.code == "limit:ai-credits")
+                .expect("the credits limit is listed")
+                .admin_note
+                .clone()
+        };
+
+        let admin_view = list_limits(
+            "t-1".to_owned(),
+            tenants.clone(),
+            consumable_config().await,
+            None,
+            no_state_limits(),
+            caller(),
+        )
+        .await
+        .expect("listed");
+        assert_eq!(
+            note_of(&admin_view).as_deref(),
+            Some("One AI credit costs 0.014 EUR to buy.")
+        );
+
+        let member_view = list_limits(
+            "t-1".to_owned(),
+            tenants,
+            consumable_config().await,
+            None,
+            no_state_limits(),
+            member("t-1"),
+        )
+        .await
+        .expect("listed");
+        assert_eq!(note_of(&member_view), None);
+        let json = serde_json::to_string(&member_view).expect("serialized");
+        assert!(!json.contains("adminNote"), "{json}");
     }
 
     /// A tenant carrying a consumable AI-credits budget.
@@ -2114,6 +2186,7 @@ mod tests {
             high_watermark_percent: None,
             relevant_if: relevant_if.map(str::to_owned),
             unit: None,
+            admin_note: None,
             overrun_policy: OverrunPolicy::Track,
         };
         let current = repository.current().await.expect("seeded");

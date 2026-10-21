@@ -521,6 +521,12 @@ pub struct LimitDef {
     /// languages — the UI writes it after the numbers. Purely presentational.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unit: Option<LocalizedText>,
+    /// Optional note for the operators who manage tenants' limits — purchase prices, how a figure
+    /// was sized, whom to ask before raising it. Never shown to the tenant: it is left out of
+    /// `GET /config/catalogue` (readable by every member) and served only to `manage:limits`
+    /// callers of `GET /tenants/{id}/limits`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admin_note: Option<LocalizedText>,
     /// Consumable only: what `consume` does when a booking exceeds everything available. Default
     /// [`OverrunPolicy::Track`].
     #[serde(default)]
@@ -1948,6 +1954,7 @@ mod tests {
             high_watermark_percent: None,
             relevant_if: None,
             unit: None,
+            admin_note: None,
             overrun_policy: super::OverrunPolicy::Track,
         };
         let gauge = |code: &str| super::LimitDef {
@@ -1962,6 +1969,7 @@ mod tests {
             high_watermark_percent: Some(90),
             relevant_if: None,
             unit: None,
+            admin_note: None,
             overrun_policy: super::OverrunPolicy::Track,
         };
         let with_limits = |limits: Vec<super::LimitDef>| super::Config {
@@ -2024,6 +2032,7 @@ mod tests {
                     high_watermark_percent: None,
                     relevant_if: None,
                     unit: None,
+                    admin_note: None,
                     overrun_policy: super::OverrunPolicy::Track,
                 },
                 super::LimitDef {
@@ -2038,6 +2047,7 @@ mod tests {
                     high_watermark_percent: None,
                     relevant_if: None,
                     unit: None,
+                    admin_note: None,
                     overrun_policy: super::OverrunPolicy::Track,
                 },
             ],

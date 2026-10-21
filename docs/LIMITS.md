@@ -66,8 +66,20 @@ pub struct LimitDef {
     // überhaupt einblendet. KEINE Eligibility/Durchsetzung — ein Limit mit Settings + State wird
     // unabhängig davon gebucht. None = für jeden Mandanten relevant.
     #[serde(default)] pub relevant_if: Option<String>,
+
+    // Interner Hinweis für die Mandantenverwaltung (z.B. Einkaufspreise). Nie für den Mandanten
+    // sichtbar — siehe „Interner Hinweis" unten.
+    #[serde(default)] pub admin_note: Option<LocalizedText>,
 }
 ```
+
+**Interner Hinweis (`adminNote`).** `description` ist öffentlich: sie geht über
+`GET /config/catalogue` an jedes Mitglied und erscheint auch in der Selbstansicht auf der
+Startseite. Für alles, was nur die Betreiber angeht („Ein AI Credit kostet 0.014 EUR im
+Einkauf.") gibt es `adminNote`. Der Hinweis steht **nicht** im Katalog, sondern wird nur von
+`GET /tenants/{id}/limits` ausgeliefert, und auch dort nur an Aufrufer mit `manage:limits` (aufgelöst
+in deren Sprache). Ein `view:limits`-Mitglied bekommt das Feld nie zu sehen. Die Management-UI zeigt
+ihn in der Mandantenverwaltung unter dem Limit-Namen und über dem Bearbeiten-Formular.
 
 **Validierung** beim `PUT /config`:
 
@@ -94,7 +106,8 @@ Ein Consumable (KI-Guthaben, alle Facetten, nur für Mandanten mit `feature:ai`)
       "extraAllowance": true,
       "customBalance": true,
       "daily": true,
-      "relevantIf": "feature:ai"
+      "relevantIf": "feature:ai",
+      "adminNote": "Ein AI Credit kostet 0.014 EUR im Einkauf."
     },
     { "code": "limit:seats", "name": "Seats", "kind": "gauge",
       "lowWatermarkPercent": 80, "highWatermarkPercent": 95 }
