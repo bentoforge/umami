@@ -356,6 +356,17 @@
     "retryHint": "Fordern Sie in Ihrem Profil einen neuen Link an.",
     "continue": "Weiter"
   },
+  "resetPassword": {
+    "title": "Passwort zurücksetzen",
+    "newPassword": "Neues Passwort",
+    "repeat": "Neues Passwort wiederholen",
+    "submit": "Passwort setzen",
+    "mismatch": "Die beiden Passwörter stimmen nicht überein.",
+    "missingToken": "Dieser Link ist unvollständig — er enthält kein Token zum Zurücksetzen.",
+    "done": "Ihr Passwort wurde geändert.",
+    "sessionsEnded": "Zu Ihrer Sicherheit wurden alle bestehenden Sitzungen abgemeldet.",
+    "toSignIn": "Zur Anmeldung"
+  },
   "messaging": {
     "linksTitle": "Messaging-Verknüpfungen",
     "empty": "Keine Verknüpfungen.",
