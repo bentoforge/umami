@@ -10,6 +10,7 @@ Related decisions:
 
 - [ADR 0014 — Transactional mail stays outside the notification catalogue](adr/0014-transactional-mail-outside-notification-catalogue.md)
 - [ADR 0015 — The app owns the notification clock; cadences are opaque strings](adr/0015-app-owns-notification-clock.md)
+- [ADR 0021 — External recipients: a notification address without an identity](adr/0021-external-recipients-without-identity.md) (proposed)
 
 ---
 
@@ -276,3 +277,5 @@ and a `notification` block; the payload and the worker's contract are documented
 - **Templates.** umami forwards a `template` name and its `context`; it does not store, render or
   validate one. Which layouts exist is between the app and its worker, and a name umami does not
   know is not an error here — the worker falls back to the text.
+- **External recipients.** A tenant-owned address with a choice per type but no login, decided in
+  [ADR 0021](adr/0021-external-recipients-without-identity.md) and not implemented yet.
