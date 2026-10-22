@@ -559,7 +559,7 @@ async fn finish_verification(
         &audit,
         AuditSeverity::Good,
         &proven.tenant_id,
-        &proven.user_id,
+        &proven.subject_id,
         format!("Email contact verified ({})", proven.address),
     )
     .await;

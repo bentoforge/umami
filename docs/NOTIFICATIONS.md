@@ -10,7 +10,7 @@ Related decisions:
 
 - [ADR 0014 — Transactional mail stays outside the notification catalogue](adr/0014-transactional-mail-outside-notification-catalogue.md)
 - [ADR 0015 — The app owns the notification clock; cadences are opaque strings](adr/0015-app-owns-notification-clock.md)
-- [ADR 0021 — External recipients: a notification address without an identity](adr/0021-external-recipients-without-identity.md) (proposed)
+- [ADR 0021 — External recipients: a notification address without an identity](adr/0021-external-recipients-without-identity.md)
 
 ---
 
@@ -91,7 +91,15 @@ In the config, `notificationTypes`, shaped like the other catalogues:
   { "code": "build-failed",
     "name": "Build fehlgeschlagen",
     "default": "on",
-    "eligibleIf": "role:editor" }
+    "eligibleIf": "role:editor" },
+
+  // Open to a tenant's external recipients (§7) — mailboxes with no login. Such a type may gate
+  // on the tenant's features, never on a role: a recipient has none, and PUT /config refuses it.
+  { "code": "form-submission",
+    "name": { "de": "Formular-Eingaben", "en": "Form submissions" },
+    "default": "on",
+    "eligibleIf": "feature:forms",
+    "recipients": true }
 ]
 ```
 
@@ -171,14 +179,25 @@ and the answer is only as good as the record of who changed what when.
 POST /notifications/audience
 { "tenantId": "…", "type": "new-content", "cadences": ["daily","weekly"] }
 → { "recipients": [ { "userId": "…", "addressableName": "Ms Doe",
-                      "locale": "de", "cadence": "weekly" } ],
+                      "locale": "de", "cadence": "weekly" },
+                    { "recipientId": "…", "addressableName": "Front desk",   // an external
+                      "locale": "de", "cadence": "weekly" } ],             // recipient, §8
     "truncated": false }
 
 POST /notifications/send
 { "type": "new-content",          // omit entirely for a transactional message (case 1)
-  "messages": [ { "userId": "…", "subject": "…", "body": "…" } ] }
-→ { "results": [ { "userId": "…", "status": "queued", "messageId": "…" } ] }
+  "messages": [ { "userId": "…", "subject": "…", "body": "…" },
+                { "recipientId": "…", "subject": "…", "body": "…" } ] }
+→ { "results": [ { "userId": "…", "status": "queued", "messageId": "…" },
+                 { "recipientId": "…", "status": "queued", "messageId": "…" } ] }
 ```
+
+Every entry and every message carries **exactly one** of `userId` and `recipientId`: a user, or one
+of the tenant's external recipients. A message with both or neither is a `400` for the whole batch
+— neither is the shape a caller produces when it copies `userId` by name and meets its first
+recipient, and the batch failing loudly beats the mailbox being skipped in silence. A caller that
+spreads the audience entry into its message (`{ ...recipient, subject, body }`) reaches both kinds
+without a code change.
 
 ### Finished text, or something for the worker to render
 
@@ -268,7 +287,76 @@ and a `notification` block; the payload and the worker's contract are documented
 
 ---
 
-## 7. Not implemented yet
+## 7. External recipients
+
+A tenant can register addresses that are **not users** — a shared `info@` mailbox nobody logs in
+with — and have them hear about the types the catalogue opens to them. Why this exists, and why it
+is neither a user without a login nor a raw address on `send`:
+[ADR 0021](adr/0021-external-recipients-without-identity.md).
+
+A recipient is an address, a display name, a language and one choice per type, owned by a tenant.
+No role, no password, no session, no seat: it is not in `GET /users` and not counted anywhere a
+user is.
+
+**Consent, exactly as for a contact.** Creating a recipient mails a single-use confirmation link;
+the mail names the tenant and the types chosen, so the mailbox agrees to something specific.
+Unconfirmed, a recipient is in no audience. A hard bounce or a complaint withdraws the
+confirmation through the same report the worker files for a contact (`recipientId` in place of
+`userId`, see [CONTACTS.md](CONTACTS.md) §3).
+
+**Choices are explicit, never defaulted.** A type absent from a recipient's choices is off, whatever
+the type's `default` says — nobody ever showed the mailbox a default, so it cannot have agreed to
+it. A recipient has to be created with at least one choice that is not `off`.
+
+**Which types: `recipients: true`.** A type is closed to recipients unless the catalogue says
+otherwise. Such a type may gate on the tenant's `feature:*` (and the `is:system-tenant*` markers)
+but not on a `role:*` — a recipient has none, and `PUT /config` refuses the combination rather than
+guessing what a role predicate means for a mailbox.
+
+**The link in every mail.** Each notification sent to a recipient carries a management link with
+the recipient's own long-lived token, appended to the body above the signature separator and
+carried as `recipient.manageUrl` in the worker payload (a worker may set it as `List-Unsubscribe`).
+Behind it the mailbox reads and changes its choices or removes itself — without a login, and
+without ever touching the address: a different mailbox is a different recipient. The secret is
+stored encrypted, because umami has to put the plaintext into every mail; deleting the recipient
+is the revocation.
+
+### Endpoints
+
+Admin, `manage:recipients`, scoped to the caller's own tenant:
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/tenants/{id}/recipients` | the recipients, the types open to them (labels in the caller's language), `verificationAvailable` |
+| `POST` | `/tenants/{id}/recipients` | `{address, displayName, locale, choices}` → `201`, unconfirmed, confirmation mail out (`verificationSent`). Duplicate address in the tenant: `409` |
+| `PATCH` | `/tenants/{id}/recipients/{recipientId}` | `displayName`, `locale`, `choices` — never the address |
+| `DELETE` | `/tenants/{id}/recipients/{recipientId}` | |
+| `POST` | `/tenants/{id}/recipients/{recipientId}/verify` | send the confirmation again; `503` with no mail path, `429` over the admin's `mailSend` cap |
+
+Unauthenticated, the token in the **body** (never in a path or query umami logs):
+
+| Method | Path | Notes |
+|---|---|---|
+| `POST` | `/recipients/confirm` | `{token}` from the confirmation mail → `{status, tenantName}` |
+| `POST` | `/recipients/manage` | `{token}` → tenant name, display name, the eligible types and the current choices, in the recipient's language |
+| `PUT` | `/recipients/manage` | `{token, choices}` |
+| `DELETE` | `/recipients/manage` | `{token}` — unsubscribe from everything by removing the recipient |
+
+The management UI has a *Recipients* screen for the admin side, and two standalone pages
+(`/app/confirm-recipient`, `/app/recipient`) for the links.
+
+`manage:recipients` is its own permission: not `manage:contacts`, which is baseline self-service
+over one's own addresses and would let every member make umami mail strangers, and not
+`manage:users`, because a recipient is defined by not being a user. The default config grants it
+alongside `manage:users`. The admin's `mailSend` cap applies to the confirmation mails they cause.
+
+Every mutation is audited in the tenant's log — created, confirmation mailed or not and why,
+confirmed, choices changed (by the admin, or by the recipient itself), unsubscribed, deleted,
+confirmation withdrawn by a bounce. Deleting a tenant deletes its recipients with it.
+
+---
+
+## 8. Not implemented yet
 
 - **Digests.** Nothing accumulates, so "everything since last week in one mail" is the app's job —
   it holds the content anyway.
@@ -277,5 +365,3 @@ and a `notification` block; the payload and the worker's contract are documented
 - **Templates.** umami forwards a `template` name and its `context`; it does not store, render or
   validate one. Which layouts exist is between the app and its worker, and a name umami does not
   know is not an error here — the worker falls back to the text.
-- **External recipients.** A tenant-owned address with a choice per type but no login, decided in
-  [ADR 0021](adr/0021-external-recipients-without-identity.md) and not implemented yet.

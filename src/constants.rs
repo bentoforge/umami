@@ -127,6 +127,17 @@ pub const MANAGE_MESSAGING_PERMISSION: &str = "manage:messaging";
 /// verification and password recovery — both need a configured mail path, and neither exists yet.
 pub const MANAGE_CONTACTS_PERMISSION: &str = "manage:contacts";
 
+/// Administer a tenant's **external recipients** — addresses that receive notifications without
+/// having a login (`/tenants/{id}/recipients…`, own tenant). See ADR 0021.
+///
+/// Not [`MANAGE_CONTACTS_PERMISSION`]: that one is self-service over one's *own* addresses and
+/// sits in the baseline rule, so reusing it would let every member make umami mail confirmation
+/// links to arbitrary addresses. Not [`MANAGE_USERS_PERMISSION`] either: a recipient is defined by
+/// not being a user, and a deployment may hand recipient management to somebody who must not
+/// administer accounts. The default config grants the two together; forcing them together would
+/// cost something, granting them together costs nothing.
+pub const MANAGE_RECIPIENTS_PERMISSION: &str = "manage:recipients";
+
 /// Resolve who hears about one notification firing. Held by a system-tenant service key carrying
 /// `scope:notifier`.
 ///

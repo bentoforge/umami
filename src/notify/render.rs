@@ -102,11 +102,13 @@ mod tests {
 
     /// Every mail text umami renders itself, so a placeholder that no context supplies is caught
     /// here rather than in somebody's inbox.
-    const MAIL_KEYS: [&str; 4] = [
+    const MAIL_KEYS: [&str; 6] = [
         "auth.reset.subject",
         "auth.reset.body",
         "contact.verify.subject",
         "contact.verify.body",
+        "recipient.confirm.subject",
+        "recipient.confirm.body",
     ];
 
     fn a_recipient() -> Recipient {
@@ -120,7 +122,13 @@ mod tests {
     #[test]
     fn every_mail_text_renders_in_every_language() {
         let recipient = a_recipient();
-        let link = serde_json::json!({ "link": "https://umami.example.com/app/x?token=y" });
+        // The union of what every text needs: the link, plus what the recipient confirmation says
+        // about who is asking and for what.
+        let link = serde_json::json!({
+            "link": "https://umami.example.com/app/x?token=y",
+            "tenantName": "Example Ltd",
+            "types": "Form submissions"
+        });
         let context = MailContext {
             recipient: Some(&recipient),
             context: Some(&link),

@@ -37,6 +37,7 @@ use crate::auth::webauthn::repository::postgres::PostgresWebauthnRepository;
 use crate::contacts::repository::postgres::PostgresContactRepository;
 use crate::limits::repository::postgres::PostgresLimitRepository;
 use crate::messaging::repository::postgres::PostgresMessagingRepository;
+use crate::recipients::repository::postgres::PostgresRecipientRepository;
 use crate::storage::Repositories;
 use crate::tenants::repository::postgres::PostgresTenantRepository;
 use crate::users::repository::postgres::PostgresUserRepository;
@@ -64,6 +65,7 @@ pub async fn repositories(database: &Database) -> anyhow::Result<Repositories> {
         rate_limits: Arc::new(PostgresRateLimitRepository::with_database(database).await?),
         webauthn: Arc::new(PostgresWebauthnRepository::with_database(database).await?),
         limits: Arc::new(PostgresLimitRepository::with_database(database).await?),
+        recipients: Arc::new(PostgresRecipientRepository::with_database(database).await?),
     })
 }
 

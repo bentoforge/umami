@@ -38,6 +38,14 @@ impl SecretBox {
         Ok(Self { key })
     }
 
+    /// A box over a fixed key, for tests that need to encrypt and decrypt without an environment.
+    #[cfg(test)]
+    pub fn with_test_key() -> Self {
+        Self {
+            key: [7u8; KEY_LEN],
+        }
+    }
+
     /// Encrypts plaintext, returning a `base64url(nonce || ciphertext)` token.
     pub fn encrypt(&self, plaintext: &[u8]) -> anyhow::Result<String> {
         let cipher = Aes256Gcm::new(&Key::<Aes256Gcm>::from(self.key));
@@ -79,9 +87,7 @@ mod tests {
     use super::*;
 
     fn box_with_test_key() -> SecretBox {
-        SecretBox {
-            key: [7u8; KEY_LEN],
-        }
+        SecretBox::with_test_key()
     }
 
     #[test]

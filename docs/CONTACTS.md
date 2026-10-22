@@ -159,6 +159,10 @@ happened and can confirm it again if the mailbox comes back.
 **Hard failures only.** A full mailbox or a greylisting is the worker's to retry. `complained` is
 accepted too and treated the same way.
 
+A mail to an **external recipient** ([NOTIFICATIONS.md](NOTIFICATIONS.md) §7) carries `recipientId`
+in place of `userId`, and the report names the same: `{ "recipientId": "…", "address": "…",
+"event": "bounced" }` withdraws that recipient's confirmation, with the same semantics.
+
 Its own permission and its own scope, separate from `notifications:send`. Why the seam and the bounce
 report look like this: [the ADR](adr/0012-mail-worker-outbound-seam.md).
 

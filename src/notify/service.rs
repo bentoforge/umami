@@ -13,6 +13,11 @@
 //!   address itself, so no address ever leaves the service. The app gets to reach people without
 //!   getting to know them.
 //!
+//! Both calls also cover a tenant's **external recipients** (ADR 0021) — mailboxes with no login
+//! that the tenant registered and that confirmed. They appear in the audience with a `recipientId`
+//! where a user has a `userId`, and `send` takes either back. A caller that spreads an audience
+//! entry into its message reaches both without knowing the difference.
+//!
 //! That second endpoint exists as a convenience rather than a necessity: without it every app would
 //! carry its own queue credentials and its own retry story for something umami already does once.
 //!
@@ -41,6 +46,9 @@ use crate::notify::{
     NotificationMeta, Notifier, OutboundMail, Recipient as MailRecipient, TEMPLATE_NAMESPACE,
     TEMPLATE_UMAMI_PREFIX, template_namespace,
 };
+use crate::recipients::ExternalRecipient;
+use crate::recipients::repository::RecipientRepository;
+use crate::recipients::service::manage_url;
 use crate::tenants::repository::TenantRepository;
 use crate::users::User;
 use crate::users::repository::UserRepository;
@@ -83,6 +91,10 @@ pub struct NotifyDeps {
     pub tenants: Arc<dyn TenantRepository>,
     /// Contact store (resolving a recipient to a confirmed address).
     pub contacts: Arc<dyn ContactRepository>,
+    /// External recipients (ADR 0021): the tenant's addresses with no login.
+    pub recipients: Arc<dyn RecipientRepository>,
+    /// Decrypts a recipient's management secret, for the link every mail to it carries.
+    pub secrets: Arc<crate::auth::secretbox::SecretBox>,
     /// Config (the type catalogue).
     pub config: Arc<dyn ConfigRepository>,
     /// The outbound seam.
@@ -149,10 +161,17 @@ struct AudienceRequest {
 }
 
 /// One resolved recipient. Deliberately carries no address.
+///
+/// Exactly one of `user_id` and `recipient_id` is set: a user, or an external recipient (ADR
+/// 0021). The field name is the discriminator — the two name rows in different tables with
+/// different address rules, and a neutral id would need a `kind` beside it anyway.
 #[derive(Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 struct Recipient {
-    user_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    user_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recipient_id: Option<String>,
     /// How to address them, composed for their own language.
     addressable_name: String,
     /// Their resolved language (BCP-47), so the app can render in it.
@@ -182,7 +201,13 @@ struct SendRequest {
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct SendMessage {
-    user_id: String,
+    /// The user this message is for — or, with `recipient_id` instead, an external recipient.
+    /// Exactly one of the two; both or neither is a `400` for the whole batch.
+    #[serde(default)]
+    user_id: Option<String>,
+    /// The external recipient this message is for (ADR 0021).
+    #[serde(default)]
+    recipient_id: Option<String>,
     /// Subject line. Goes together with `body`, and may be omitted only when `template` is given.
     #[serde(default)]
     subject: Option<String>,
@@ -220,8 +245,13 @@ struct SendMessage {
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct DeliveryReport {
-    /// The user the message was for, as umami handed it over.
-    user_id: String,
+    /// The user the message was for, as umami handed it over — or, with `recipient_id` instead,
+    /// the external recipient.
+    #[serde(default)]
+    user_id: Option<String>,
+    /// The external recipient the message was for, as umami handed it over.
+    #[serde(default)]
+    recipient_id: Option<String>,
     /// The address it went to.
     address: String,
     /// `bounced` or `complained`.
@@ -235,7 +265,11 @@ struct DeliveryReport {
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct SendResult {
-    user_id: String,
+    /// Whichever id the message named, echoed back.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    user_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recipient_id: Option<String>,
     /// `queued`, `no-address` (nobody confirmed one) or `failed`.
     status: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -314,6 +348,7 @@ pub fn audience_route(
 /// (`notifications:report`).
 pub fn report_undeliverable_route(
     contacts: Arc<dyn ContactRepository>,
+    recipients: Arc<dyn RecipientRepository>,
     audit: Arc<dyn AuditRepository>,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
@@ -321,6 +356,7 @@ pub fn report_undeliverable_route(
         .and(warp::post())
         .and(with_body_as_json::<DeliveryReport>(MAX_TEXT_BODY_SIZE))
         .and(with_cloneable(contacts))
+        .and(with_cloneable(recipients))
         .and(with_cloneable(audit))
         .and(with_user_with_any_permission(authenticator, REQUIRE_REPORT))
         .and_then(handle_report_undeliverable_route)
@@ -392,10 +428,11 @@ async fn handle_audience_route(
 async fn handle_report_undeliverable_route(
     report: DeliveryReport,
     contacts: Arc<dyn ContactRepository>,
+    recipients: Arc<dyn RecipientRepository>,
     audit: Arc<dyn AuditRepository>,
     _caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    into_response(report_undeliverable(report, contacts, audit).await)
+    into_response(report_undeliverable(report, contacts, recipients, audit).await)
 }
 
 #[tracing::instrument(level = "debug", name = "POST /notifications/send", skip_all)]
@@ -425,6 +462,54 @@ fn offline_subjects(
         let _ = set.insert(crate::constants::SYSTEM_TENANT_MEMBER_MARKER.to_owned());
     }
     set
+}
+
+/// The offline subject set of a **tenant** — what an external recipient's eligibility is judged
+/// on: the tenant's features and the system-tenant markers, and nothing about roles, because a
+/// recipient has none.
+pub fn tenant_subjects(
+    tenant_id: &str,
+    tenant_features: &[String],
+    system_tenant_id: Option<&str>,
+) -> BTreeSet<String> {
+    let mut set: BTreeSet<String> = tenant_features.iter().cloned().collect();
+    if system_tenant_id.is_some_and(|id| id == tenant_id) {
+        let _ = set.insert(crate::constants::SYSTEM_TENANT_MARKER.to_owned());
+        let _ = set.insert(crate::constants::SYSTEM_TENANT_MEMBER_MARKER.to_owned());
+    }
+    set
+}
+
+/// Whether a tenant's external recipients may subscribe to `type_def` at all (ADR 0021): the type
+/// has to allow recipients, and its `eligibleIf` has to hold for the tenant. The catalogue gate
+/// guarantees the expression names no role, so evaluating it over the tenant's subjects is exact
+/// rather than a guess.
+pub fn eligible_for_recipients(
+    type_def: &NotificationTypeDef,
+    subjects: &BTreeSet<String>,
+) -> bool {
+    if !type_def.recipients {
+        return false;
+    }
+    match type_def.eligible_if.as_deref() {
+        None => true,
+        Some(expression) => {
+            let view: BTreeSet<&str> = subjects.iter().map(String::as_str).collect();
+            crate::config::eval_expression(expression, &view)
+        }
+    }
+}
+
+/// A recipient's stored choice for a type, in the form [`resolve_delivery`] expects — except that
+/// an absent choice is **off**, never the type's default: nobody ever showed the recipient the
+/// default, so it cannot have agreed to it.
+fn recipient_choice<'a>(recipient: &'a ExternalRecipient, code: &str) -> Option<&'a str> {
+    Some(
+        recipient
+            .choices
+            .get(code)
+            .map_or(CHOICE_OFF, String::as_str),
+    )
 }
 
 /// Whether `user` is eligible for `type_def` at all, before their own choice is considered.
@@ -624,10 +709,42 @@ async fn audience(
         let locale = crate::i18n::resolve(&config, user.locale.as_deref(), None);
         recipients.push(Recipient {
             addressable_name: user.display_names(&config.default_locale).addressable_name,
-            user_id: user.user_id,
+            user_id: Some(user.user_id),
+            recipient_id: None,
             locale,
             cadence,
         });
+    }
+
+    // Then the tenant's external recipients (ADR 0021), in the same shape. Only confirmed ones,
+    // only for a type the catalogue opened to recipients, and only on an explicit choice — the
+    // type's default never reaches a mailbox nobody showed it to.
+    let subjects = tenant_subjects(
+        &request.tenant_id,
+        &features,
+        deps.system_tenant_id.as_deref(),
+    );
+    if eligible_for_recipients(type_def, &subjects) {
+        for recipient in deps.recipients.list_recipients(&request.tenant_id).await? {
+            if !recipient.confirmed {
+                continue;
+            }
+            let cadence = match resolve_delivery(
+                type_def,
+                recipient_choice(&recipient, &type_def.code),
+                &firing,
+            ) {
+                Delivery::Deliver(cadence) => cadence.map(str::to_owned),
+                Delivery::Skip => continue,
+            };
+            recipients.push(Recipient {
+                user_id: None,
+                recipient_id: Some(recipient.recipient_id),
+                addressable_name: recipient.display_name,
+                locale: recipient.locale,
+                cadence,
+            });
+        }
     }
 
     // Audited because the endpoint answers with personal data, and because a count of zero is the
@@ -702,39 +819,29 @@ async fn send(
 
     let mut results: Vec<SendResult> = Vec::with_capacity(request.messages.len());
     for message in request.messages {
-        let user = match deps.users.get_user(&message.user_id).await? {
-            Some(user) if !user.locked => user,
-            _ => {
-                results.push(SendResult {
-                    user_id: message.user_id,
-                    status: "no-address",
-                    message_id: None,
-                });
-                continue;
-            }
+        let mut result = SendResult {
+            user_id: message.user_id.clone(),
+            recipient_id: message.recipient_id.clone(),
+            status: "no-address",
+            message_id: None,
         };
-        let Some(address) = delivery_address(&deps, &user).await? else {
-            results.push(SendResult {
-                user_id: message.user_id,
-                status: "no-address",
-                message_id: None,
-            });
+        // Who the mail goes to, and the name parts a layout greets them by. `check_messages` has
+        // already made sure exactly one of the two ids is set.
+        let Some((address, locale, recipient, mut mail)) = (match &message.recipient_id {
+            Some(recipient_id) => addressed_recipient(&deps, &config, recipient_id).await?,
+            None => addressed_user(&deps, &config, message.user_id.as_deref()).await?,
+        }) else {
+            results.push(result);
             continue;
         };
-
-        let locale = crate::i18n::resolve(&config, user.locale.as_deref(), None);
-        let recipient = MailRecipient::of(&user, &locale);
-        let mut mail = OutboundMail::new(
-            address,
-            message.subject.unwrap_or_default(),
-            message.body.unwrap_or_default(),
-            locale,
-            user.user_id.clone(),
-            user.tenant_id.clone(),
-        )
-        .with_recipient(recipient)
-        .with_template(message.template)
-        .with_context(message.context);
+        mail = mail
+            .with_recipient(recipient)
+            .with_template(message.template)
+            .with_context(message.context);
+        mail.to = address;
+        mail.locale = locale;
+        mail.subject = message.subject.unwrap_or_default();
+        mail.body = message.body.unwrap_or_default();
         if let Some(type_def) = type_def {
             mail = mail.with_notification(notification_meta(type_def, message.cadence.as_deref()));
         }
@@ -744,20 +851,16 @@ async fn send(
         // One failure must not abandon the rest of the batch — partial success is the normal case,
         // and the caller is told per entry which is which.
         match deps.notifier.send(mail).await {
-            Ok(()) => results.push(SendResult {
-                user_id: user.user_id,
-                status: "queued",
-                message_id: Some(message_id),
-            }),
+            Ok(()) => {
+                result.status = "queued";
+                result.message_id = Some(message_id);
+            }
             Err(err) => {
                 tracing::warn!("failed to queue a notification: {err:#}");
-                results.push(SendResult {
-                    user_id: user.user_id,
-                    status: "failed",
-                    message_id: None,
-                });
+                result.status = "failed";
             }
         }
+        results.push(result);
     }
 
     let queued = results
@@ -788,6 +891,73 @@ async fn send(
     Ok(json!({ "results": results }))
 }
 
+/// What a send needs to know about its target: the address, the language, the name parts, and a
+/// mail shell carrying the right id for the worker's audit trail.
+type Addressed = (String, String, MailRecipient, OutboundMail);
+
+/// Resolves a user message to where it goes. `None` for an unknown, locked or unreachable user.
+async fn addressed_user(
+    deps: &NotifyDeps,
+    config: &Config,
+    user_id: Option<&str>,
+) -> anyhow::Result<Option<Addressed>> {
+    let Some(user_id) = user_id else {
+        return Ok(None);
+    };
+    let user = match deps.users.get_user(user_id).await? {
+        Some(user) if !user.locked => user,
+        _ => return Ok(None),
+    };
+    let Some(address) = delivery_address(deps, &user).await? else {
+        return Ok(None);
+    };
+    let locale = crate::i18n::resolve(config, user.locale.as_deref(), None);
+    let recipient = MailRecipient::of(&user, &locale);
+    let mail = OutboundMail::new(
+        String::new(),
+        String::new(),
+        String::new(),
+        String::new(),
+        user.user_id,
+        user.tenant_id,
+    );
+    Ok(Some((address, locale, recipient, mail)))
+}
+
+/// Resolves an external-recipient message to where it goes. `None` for an unknown or unconfirmed
+/// recipient — unconfirmed is `no-address` for the same reason an unverified contact is: nothing
+/// is ever sent to an address that has not agreed.
+///
+/// Every such mail carries the management link, built here from the stored secret: the one place
+/// the plaintext is reassembled, and only ever into a mail to the address it belongs to.
+async fn addressed_recipient(
+    deps: &NotifyDeps,
+    config: &Config,
+    recipient_id: &str,
+) -> anyhow::Result<Option<Addressed>> {
+    let recipient = match deps.recipients.get_recipient(recipient_id).await? {
+        Some(recipient) if recipient.confirmed => recipient,
+        _ => return Ok(None),
+    };
+    let secret = deps
+        .secrets
+        .decrypt(&recipient.manage_secret)
+        .context("Failed to decrypt a recipient's management secret")?;
+    let secret = String::from_utf8(secret).context("A management secret is not valid UTF-8")?;
+    let link = manage_url(&deps.public_base_url, &recipient.recipient_id, &secret);
+    let locale = crate::i18n::resolve(config, Some(&recipient.locale), None);
+    let parts = MailRecipient::named(&recipient.display_name).with_manage_url(link);
+    let mail = OutboundMail::for_recipient(
+        String::new(),
+        String::new(),
+        String::new(),
+        String::new(),
+        recipient.recipient_id,
+        recipient.tenant_id,
+    );
+    Ok(Some((recipient.address, locale, parts, mail)))
+}
+
 /// Refuses a batch that would put an unrenderable mail in front of somebody.
 ///
 /// Up front, before the first message goes out, because the alternative is worse than a strict
@@ -802,7 +972,23 @@ fn check_messages(
     type_def: Option<&NotificationTypeDef>,
 ) -> anyhow::Result<()> {
     for message in messages {
-        let user = &message.user_id;
+        // Exactly one target. Neither is the shape a caller produces when it copies `userId` by
+        // name and meets its first external recipient; both is a caller that does not know which
+        // of two mailboxes it means. Either way the batch fails loudly rather than skipping someone.
+        let user = match (message.user_id.as_deref(), message.recipient_id.as_deref()) {
+            (Some(user_id), None) => user_id,
+            (None, Some(recipient_id)) => recipient_id,
+            (Some(user_id), Some(recipient_id)) => status_bail!(
+                StatusCode::BAD_REQUEST,
+                "A message names both 'userId' ({user_id}) and 'recipientId' ({recipient_id}) — \
+                 exactly one of the two"
+            ),
+            (None, None) => status_bail!(
+                StatusCode::BAD_REQUEST,
+                "A message names neither 'userId' nor 'recipientId' — an audience entry carries \
+                 one of the two; hand it back"
+            ),
+        };
         let subject = message.subject.as_deref().unwrap_or_default().trim();
         let body = message.body.as_deref().unwrap_or_default().trim();
         let template = message.template.as_deref().unwrap_or_default().trim();
@@ -886,6 +1072,7 @@ fn notification_meta(type_def: &NotificationTypeDef, cadence: Option<&str>) -> N
 async fn report_undeliverable(
     report: DeliveryReport,
     contacts: Arc<dyn ContactRepository>,
+    recipients: Arc<dyn RecipientRepository>,
     audit: Arc<dyn AuditRepository>,
 ) -> anyhow::Result<Value> {
     let event = report.event.trim().to_lowercase();
@@ -901,23 +1088,50 @@ async fn report_undeliverable(
     };
     let address = normalize_email(&report.address)?;
 
-    let tenant_id = contacts
-        .get_contact(&report.user_id, &address)
-        .await?
-        .map(|contact| contact.tenant_id);
-    contacts.mark_unverified(&report.user_id, &address).await?;
+    // Which kind of row the report is about — the same split the payload made on the way out.
+    let (tenant_id, user_id, who) =
+        match (report.user_id.as_deref(), report.recipient_id.as_deref()) {
+            (Some(user_id), None) => {
+                let tenant_id = contacts
+                    .get_contact(user_id, &address)
+                    .await?
+                    .map(|contact| contact.tenant_id);
+                contacts.mark_unverified(user_id, &address).await?;
+                (tenant_id, Some(user_id.to_owned()), String::new())
+            }
+            (None, Some(recipient_id)) => {
+                // The address has to be the recipient's own: a report naming somebody else's address
+                // withdraws nothing, however the ids line up.
+                let recipient = recipients
+                    .get_recipient(recipient_id)
+                    .await?
+                    .filter(|recipient| recipient.address == address);
+                if recipient.is_some() {
+                    recipients.mark_unconfirmed(recipient_id).await?;
+                }
+                (
+                    recipient.map(|recipient| recipient.tenant_id),
+                    None,
+                    format!(" (recipient {recipient_id})"),
+                )
+            }
+            _ => status_bail!(
+                StatusCode::BAD_REQUEST,
+                "A report names exactly one of 'userId' and 'recipientId'"
+            ),
+        };
 
     record_best_effort(
         &audit,
         NewAuditEntry::new(
             severity,
             tenant_id,
-            Some(report.user_id.clone()),
+            user_id,
             match report.message_id.as_deref() {
                 Some(id) => {
-                    format!("Mail to {address} {what}; confirmation withdrawn (message {id})")
+                    format!("Mail to {address}{who} {what}; confirmation withdrawn (message {id})")
                 }
-                None => format!("Mail to {address} {what}; confirmation withdrawn"),
+                None => format!("Mail to {address}{who} {what}; confirmation withdrawn"),
             },
         ),
     )
@@ -945,6 +1159,18 @@ fn notification_type<'a>(
 /// The refusal is the point: an app whose job schedule drifted from the config would otherwise
 /// silently resolve an empty audience, and "nobody was subscribed" looks exactly like "it worked".
 fn parse_firing(raw: &[String], type_def: &NotificationTypeDef) -> anyhow::Result<Vec<String>> {
+    // A type with no rhythm (case 2) is fired without naming any cadence; naming one is the
+    // caller confused about which kind of thing it is firing. A rhythmic type is the opposite.
+    if !type_def.has_rhythm() {
+        if !raw.is_empty() {
+            status_bail!(
+                StatusCode::BAD_REQUEST,
+                "'{}' has no rhythm of its own — fire it without 'cadences'",
+                type_def.code
+            );
+        }
+        return Ok(Vec::new());
+    }
     if raw.is_empty() {
         status_bail!(
             StatusCode::BAD_REQUEST,
@@ -995,13 +1221,15 @@ mod tests {
             ],
             default: None,
             eligible_if: None,
+            recipients: false,
         }
     }
 
     /// A message with nothing filled in, for a test to fill in one field of.
     fn message() -> SendMessage {
         SendMessage {
-            user_id: "user-1".to_owned(),
+            user_id: Some("user-1".to_owned()),
+            recipient_id: None,
             subject: None,
             body: None,
             template: None,
@@ -1098,10 +1326,114 @@ mod tests {
         assert!(check_messages(&[untyped], None).is_err());
     }
 
+    /// Case 2 is fired without cadences and case 3 never without — mixing the two up is a `400`,
+    /// not an empty audience.
+    #[test]
+    fn a_firing_matches_the_kind_of_type_it_names() {
+        let plain = NotificationTypeDef {
+            cadences: Vec::new(),
+            ..rhythmic()
+        };
+        assert_eq!(parse_firing(&[], &plain).unwrap(), Vec::<String>::new());
+        assert!(parse_firing(&["weekly".to_owned()], &plain).is_err());
+
+        let with_rhythm = rhythmic();
+        assert!(parse_firing(&[], &with_rhythm).is_err());
+        assert_eq!(
+            parse_firing(&[" Weekly ".to_owned()], &with_rhythm).unwrap(),
+            vec!["weekly".to_owned()]
+        );
+        assert!(parse_firing(&["hourly".to_owned()], &with_rhythm).is_err());
+    }
+
     /// A transactional send names no type at all, which is what the endpoint's contract promises.
     #[test]
     fn a_send_without_a_type_is_accepted() {
         assert!(check_messages(&[with_text(message())], None).is_ok());
+    }
+
+    /// A message is for a user or for an external recipient, never both and never neither. The
+    /// loud failure on neither is deliberate: it is what a caller copying `userId` by name sees on
+    /// its first recipient, instead of silently skipping the mailbox.
+    #[test]
+    fn a_message_names_exactly_one_target() {
+        let mut for_recipient = with_text(message());
+        for_recipient.user_id = None;
+        for_recipient.recipient_id = Some("recipient-1".to_owned());
+        assert!(check_messages(&[for_recipient], None).is_ok());
+
+        let mut both = with_text(message());
+        both.recipient_id = Some("recipient-1".to_owned());
+        assert!(check_messages(&[both], None).is_err());
+
+        let mut neither = with_text(message());
+        neither.user_id = None;
+        assert!(check_messages(&[neither], None).is_err());
+    }
+
+    /// A recipient's choices are the complete statement of its consent: an absent one is off,
+    /// whatever the type would default a user to.
+    #[test]
+    fn a_recipient_without_a_choice_is_off_not_defaulted() {
+        let type_def = NotificationTypeDef {
+            default: Some("weekly".to_owned()),
+            recipients: true,
+            ..rhythmic()
+        };
+        let firing = vec!["weekly".to_owned()];
+        let now = chrono::Utc::now();
+        let mut recipient = ExternalRecipient {
+            recipient_id: "r1".to_owned(),
+            tenant_id: "t1".to_owned(),
+            address: "info@example.com".to_owned(),
+            display_name: "Info".to_owned(),
+            locale: "de".to_owned(),
+            choices: Default::default(),
+            confirmed: true,
+            confirmed_at: None,
+            manage_secret: String::new(),
+            created: now,
+            last_updated: now,
+        };
+        assert_eq!(
+            resolve_delivery(
+                &type_def,
+                recipient_choice(&recipient, "new-content"),
+                &firing
+            ),
+            Delivery::Skip
+        );
+        let _ = recipient
+            .choices
+            .insert("new-content".to_owned(), "weekly".to_owned());
+        assert_eq!(
+            resolve_delivery(
+                &type_def,
+                recipient_choice(&recipient, "new-content"),
+                &firing
+            ),
+            Delivery::Deliver(Some("weekly"))
+        );
+    }
+
+    /// The flag is the gate, and the tenant's features still apply behind it.
+    #[test]
+    fn recipients_need_the_flag_and_the_tenant_features() {
+        let closed = rhythmic();
+        let with_features: BTreeSet<String> = ["feature:forms".to_owned()].into();
+        assert!(!eligible_for_recipients(&closed, &with_features));
+
+        let open = NotificationTypeDef {
+            recipients: true,
+            eligible_if: Some("feature:forms".to_owned()),
+            ..rhythmic()
+        };
+        assert!(eligible_for_recipients(&open, &with_features));
+        assert!(!eligible_for_recipients(&open, &BTreeSet::new()));
+
+        let system = tenant_subjects("sys", &[], Some("sys"));
+        assert!(system.contains(crate::constants::SYSTEM_TENANT_MARKER));
+        assert!(tenant_subjects("other", &[], Some("sys")).is_empty());
     }
 
     /// The cadence reaches the worker normalized, so `Weekly` from a caller and `weekly` from the

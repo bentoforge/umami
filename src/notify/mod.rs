@@ -85,9 +85,36 @@ pub struct Recipient {
     pub first_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_name: Option<String>,
+    /// For an **external recipient** (ADR 0021): the link behind which the mailbox can change its
+    /// choices or remove itself, without a login. Absent for a user, who has a profile for that.
+    /// A worker may also set it as the `List-Unsubscribe` value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub manage_url: Option<String>,
 }
 
 impl Recipient {
+    /// Every name form for an external recipient: the display name as entered, with no salutation
+    /// composed around it — a shared mailbox is not a person to address as Ms or Mr.
+    pub fn named(display_name: &str) -> Self {
+        Recipient {
+            addressable_name: display_name.to_owned(),
+            full_name: display_name.to_owned(),
+            name: display_name.to_owned(),
+            salutation: None,
+            salutation_key: crate::users::Salutation::Unspecified.code(),
+            first_name: None,
+            last_name: None,
+            manage_url: None,
+        }
+    }
+
+    /// Attaches the management link an external recipient's mail carries.
+    #[must_use]
+    pub fn with_manage_url(mut self, url: String) -> Self {
+        self.manage_url = Some(url);
+        self
+    }
+
     /// Composes every name form for `user`, in the language the mail is written in.
     ///
     /// `locale` is the mail's, not the deployment's: the salutation word has to match the text it
@@ -121,6 +148,7 @@ impl Recipient {
             salutation_key: salutation.code(),
             first_name: firstname.map(str::to_owned),
             last_name: lastname.map(str::to_owned),
+            manage_url: None,
         }
     }
 }
@@ -182,9 +210,15 @@ pub struct OutboundMail {
     /// The recipient's resolved language (BCP-47) — a worker may need it for a sender identity or a
     /// footer it owns.
     pub locale: String,
-    /// Who the mail is about, for the worker's own audit trail. Never used for addressing.
-    pub user_id: String,
-    /// That user's tenant.
+    /// Who the mail is about, for the worker's own audit trail. Never used for addressing. Absent
+    /// when the mail goes to an external recipient, which `recipient_id` then names instead.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+    /// The external recipient the mail is for (ADR 0021), for the worker's audit trail — the
+    /// counterpart of `user_id`, and like it never used for addressing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recipient_id: Option<String>,
+    /// The tenant the user or recipient belongs to.
     pub tenant_id: String,
 }
 
@@ -235,6 +269,9 @@ pub const TEMPLATE_CONTACT_VERIFICATION: &str = "umami::contact-verification";
 /// The layout name umami puts on its own password-reset mail.
 pub const TEMPLATE_PASSWORD_RESET: &str = "umami::password-reset";
 
+/// The layout name umami puts on the mail that asks an external recipient to confirm (ADR 0021).
+pub const TEMPLATE_RECIPIENT_CONFIRMATION: &str = "umami::recipient-confirmation";
+
 /// The namespace umami's own layouts live in, with its separator — what a caller is refused.
 pub const TEMPLATE_UMAMI_PREFIX: &str = "umami::";
 
@@ -273,7 +310,36 @@ impl OutboundMail {
             footer: None,
             global_context: std::collections::BTreeMap::new(),
             locale,
-            user_id,
+            user_id: Some(user_id),
+            recipient_id: None,
+            tenant_id,
+        }
+    }
+
+    /// Builds a mail for an external recipient (ADR 0021): the same shape, with the recipient's
+    /// id where a user's would be.
+    pub fn for_recipient(
+        to: String,
+        subject: String,
+        body: String,
+        locale: String,
+        recipient_id: String,
+        tenant_id: String,
+    ) -> Self {
+        OutboundMail {
+            message_id: generate_id(),
+            to,
+            subject,
+            body,
+            template: None,
+            context: None,
+            notification: None,
+            recipient: None,
+            footer: None,
+            global_context: std::collections::BTreeMap::new(),
+            locale,
+            user_id: None,
+            recipient_id: Some(recipient_id),
             tenant_id,
         }
     }
@@ -297,6 +363,10 @@ impl OutboundMail {
     /// to append it to, so a template-only message does not go out as a lone imprint. The separator
     /// is the RFC 3676 signature marker, which mail clients recognise and fold away.
     ///
+    /// An external recipient's management link goes into the body too, **ahead of** that separator:
+    /// everything below it is what clients fold out of sight, and the one line the mailbox needs to
+    /// find in order to stop the mail must not be the one that is hidden.
+    ///
     /// **Call this last.** It is what assembles the body, so anything that sets the body has to have
     /// run already.
     pub fn with_deployment(
@@ -309,6 +379,16 @@ impl OutboundMail {
             GLOBAL_CONTEXT_BASE_URL.to_owned(),
             public_base_url.trim_end_matches('/').to_owned(),
         );
+
+        if let Some(url) = self
+            .recipient
+            .as_ref()
+            .and_then(|recipient| recipient.manage_url.as_deref())
+            && !self.body.trim().is_empty()
+        {
+            let hint = crate::i18n::message(&self.locale, "recipient.manage.hint");
+            self.body = format!("{}\n\n{hint}\n{url}", self.body.trim_end());
+        }
 
         if let Some(footer) = mail.footer_for(&self.locale) {
             let footer = render::render(
@@ -792,9 +872,13 @@ impl Notifier for SesNotifier {
     #[tracing::instrument(level = "debug", skip(self, mail), err(level = "debug", Display))]
     async fn send(&self, mail: OutboundMail) -> anyhow::Result<()> {
         let message_id = mail.message_id.clone();
-        let outbound = Mail::new(mail.to, mail.subject, mail.body)
-            .with_tag("umamiMessageId", mail.message_id)
-            .with_tag("umamiUserId", mail.user_id);
+        let outbound =
+            Mail::new(mail.to, mail.subject, mail.body).with_tag("umamiMessageId", mail.message_id);
+        let outbound = match (mail.user_id, mail.recipient_id) {
+            (Some(user_id), _) => outbound.with_tag("umamiUserId", user_id),
+            (None, Some(recipient_id)) => outbound.with_tag("umamiRecipientId", recipient_id),
+            (None, None) => outbound,
+        };
 
         self.mailer.send(outbound).await.map_err(|err| {
             // The one hard signal this transport gets. Loud and with the address (wasabi's error

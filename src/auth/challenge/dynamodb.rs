@@ -48,7 +48,7 @@ impl ChallengeRepository for DynamoChallengeRepository {
     async fn issue(
         &self,
         purpose: Purpose,
-        user_id: &str,
+        subject_id: &str,
         tenant_id: &str,
         address: &str,
         ttl_secs: i64,
@@ -57,7 +57,7 @@ impl ChallengeRepository for DynamoChallengeRepository {
         let now = Utc::now();
         let challenge = Challenge {
             secret_hash: hash_secret(&secret),
-            user_id: user_id.to_owned(),
+            subject_id: subject_id.to_owned(),
             tenant_id: tenant_id.to_owned(),
             purpose,
             address: address.to_owned(),
@@ -97,7 +97,7 @@ impl ChallengeRepository for DynamoChallengeRepository {
         Ok(challenge.and_then(|challenge| {
             if redeemable(challenge.purpose, purpose, challenge.ttl, now) {
                 Some(Proven {
-                    user_id: challenge.user_id,
+                    subject_id: challenge.subject_id,
                     tenant_id: challenge.tenant_id,
                     address: challenge.address,
                 })

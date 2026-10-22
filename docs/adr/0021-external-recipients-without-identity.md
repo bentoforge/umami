@@ -1,6 +1,6 @@
 # ADR 0021 — External recipients: a notification address without an identity
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-10-22
 - **Extends:** [ADR 0014](0014-transactional-mail-outside-notification-catalogue.md),
   [ADR 0015](0015-app-owns-notification-clock.md)
@@ -52,8 +52,8 @@ and carrying no identity.
 - The address is normalized as a contact's is and is unique **per tenant**. The same mailbox may be
   a recipient in two tenants, and may also be a user's contact; those are independent facts in
   independent tables.
-- Storage is its own table, `tenant-recipients`, keyed by tenant and a `generate_id()` recipient
-  id, with an index on the address for the bounce report and the uniqueness check. Separate from
+- Storage is its own table, `tenant-recipients`, keyed by a `generate_id()` recipient id, with an
+  index on `(tenantId, address)` for the listing, the uniqueness check and the bounce report. Separate from
   `user-contacts` for the reason ADR 0011 gave for keeping chat identities out: shared rows make
   every function branch on which kind it is looking at.
 
@@ -110,15 +110,19 @@ thing for it, and umami must not guess what it means.
 ### The link in every mail: manage and unsubscribe without a login
 
 - Every message sent to a recipient carries a **management link** with a long-lived, per-recipient
-  token: umami appends it to the finished `body` after the footer and puts it, structured, into the
-  worker payload (`recipient.manageUrl`, and as the `List-Unsubscribe` value a worker may set).
+  token: umami appends it to the finished `body` below the text and ahead of the signature
+  separator (what follows that separator is what clients fold out of sight), and puts it,
+  structured, into the worker payload (`recipient.manageUrl`, and as the `List-Unsubscribe` value
+  a worker may set).
   The app never produces or sees it; the audience carries no address and no token.
 - The token is a capability over **this recipient's choices only**: read them, change them, set
   everything to `off`, or delete the recipient. It cannot change the address — a different mailbox
   is a different recipient and starts with its own confirmation — so a leaked link costs at most a
   subscription, never a redirection.
-- Only `sha256(token)` is stored, for the reason every other secret in umami is stored that way.
-  Deleting the recipient is the revocation; there is no separate rotation.
+- The secret is stored **encrypted** with the deployment's secret box, not hashed: umami has to
+  put the plaintext into every mail it sends the recipient, so a hash alone would not do, and a
+  table dump must still not hand out working links. Deleting the recipient is the revocation;
+  there is no separate rotation.
 - The endpoints behind the link are **unauthenticated** and take the token in the body, like
   `POST /auth/contacts/verify`: the link is opened from a mail client on whatever device is at
   hand, and demanding a login contradicts the premise.

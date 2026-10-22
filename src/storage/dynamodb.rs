@@ -13,6 +13,7 @@ use crate::auth::webauthn::repository::dynamodb::DynamoWebauthnRepository;
 use crate::contacts::repository::dynamodb::DynamoContactRepository;
 use crate::limits::repository::dynamodb::DynamoLimitRepository;
 use crate::messaging::repository::dynamodb::DynamoMessagingRepository;
+use crate::recipients::repository::dynamodb::DynamoRecipientRepository;
 use crate::storage::Repositories;
 use crate::tenants::repository::dynamodb::DynamoTenantRepository;
 use crate::users::repository::dynamodb::DynamoUserRepository;
@@ -34,5 +35,6 @@ pub async fn repositories(client: &DynamoClient) -> anyhow::Result<Repositories>
         rate_limits: Arc::new(DynamoRateLimitRepository::with_client(client).await?),
         webauthn: Arc::new(DynamoWebauthnRepository::with_client(client).await?),
         limits: Arc::new(DynamoLimitRepository::with_client(client).await?),
+        recipients: Arc::new(DynamoRecipientRepository::with_client(client).await?),
     })
 }

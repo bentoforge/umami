@@ -40,6 +40,7 @@ pub fn routes(platform: &Platform) -> BoxedFilter<(impl warp::Reply + use<>,)> {
         // the mail worker's one endpoint: what it could not deliver
         report_undeliverable_route(
             platform.repos.contacts.clone(),
+            platform.repos.recipients.clone(),
             platform.repos.audit.clone(),
             platform.authenticator.clone()
         )

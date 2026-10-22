@@ -13,6 +13,7 @@ use crate::config::repository::ConfigRepository;
 use crate::constants::{
     MANAGE_TENANTS_PERMISSION, MAX_LIST_RESULTS, MAX_TEXT_BODY_SIZE, SWITCH_TENANT_PERMISSION,
 };
+use crate::recipients::repository::RecipientRepository;
 use crate::tenants::repository::TenantRepository;
 use crate::tenants::{Tenant, slugify};
 use crate::users::repository::{NewUser, UserRepository};
@@ -174,6 +175,7 @@ pub fn delete_tenant_route(
     tenants: Arc<dyn TenantRepository>,
     users: Arc<dyn UserRepository>,
     api_keys: Arc<dyn ApiKeyRepository>,
+    recipients: Arc<dyn RecipientRepository>,
     system_tenant_id: Option<String>,
     authenticator: Arc<Authenticator>,
 ) -> BoxedFilter<(impl warp::Reply,)> {
@@ -182,6 +184,7 @@ pub fn delete_tenant_route(
         .and(with_cloneable(tenants))
         .and(with_cloneable(users))
         .and(with_cloneable(api_keys))
+        .and(with_cloneable(recipients))
         .and(with_cloneable(system_tenant_id))
         .and(with_user_with_any_permission(
             authenticator,
@@ -254,6 +257,7 @@ async fn handle_delete_tenant_route(
     tenants: Arc<dyn TenantRepository>,
     users: Arc<dyn UserRepository>,
     api_keys: Arc<dyn ApiKeyRepository>,
+    recipients: Arc<dyn RecipientRepository>,
     system_tenant_id: Option<String>,
     caller: AuthUser,
 ) -> Result<impl warp::Reply, warp::Rejection> {
@@ -263,6 +267,7 @@ async fn handle_delete_tenant_route(
             tenants,
             users,
             api_keys,
+            recipients,
             system_tenant_id,
             caller,
         )
@@ -443,6 +448,7 @@ async fn delete_tenant(
     tenants: Arc<dyn TenantRepository>,
     users: Arc<dyn UserRepository>,
     api_keys: Arc<dyn ApiKeyRepository>,
+    recipients: Arc<dyn RecipientRepository>,
     system_tenant_id: Option<String>,
     caller: AuthUser,
 ) -> anyhow::Result<Value> {
@@ -483,6 +489,11 @@ async fn delete_tenant(
         );
     }
 
+    // External recipients go with the tenant rather than blocking the delete: unlike users and
+    // keys they are not somebody's account, only addresses the tenant registered, and nothing
+    // could reach them once the tenant is gone. First, so a failure leaves a live tenant whose
+    // retry converges rather than rows nothing can find again.
+    let _ = recipients.delete_all_for_tenant(&tenant_id).await?;
     tenants.delete_tenant(&tenant_id).await?;
     Ok(json!({ "status": "deleted" }))
 }
