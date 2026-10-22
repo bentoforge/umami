@@ -71,6 +71,46 @@ contact.verify.body:
     The link works once. If you did not request this, ignore this message — without confirmation the
     address will not be used.
 
+# ── External recipients ────────────────────────────────────────────────────────
+# The confirmation mail for a mailbox nobody logs in with (ADR 0021). It has to say who wants to
+# write and what about, because confirming *is* the consent: `context.tenantName` is the tenant,
+# `context.types` the chosen notification types, already joined into one line. Formal "Sie": the
+# reader is a stranger to umami. `recipient.manage.hint` is the line put above the management link
+# in every notification sent to a recipient.
+recipient.confirm.subject:
+  de: Bitte bestätigen Sie Benachrichtigungen von {{ context.tenantName }}
+  en: Please confirm notifications from {{ context.tenantName }}
+recipient.confirm.body:
+  de: |
+    Hallo {{ recipient.addressableName }},
+
+    {{ context.tenantName }} möchte diese E-Mail-Adresse für folgende Benachrichtigungen verwenden:
+
+    {{ context.types }}
+
+    Bitte bestätigen Sie das über diesen Link:
+
+    {{ context.link }}
+
+    Der Link gilt einmalig. Ohne Bestätigung wird an diese Adresse nichts gesendet. Wenn Sie das
+    nicht erwartet haben, ignorieren Sie diese Nachricht.
+  en: |
+    Hello {{ recipient.addressableName }},
+
+    {{ context.tenantName }} would like to use this email address for the following notifications:
+
+    {{ context.types }}
+
+    Please confirm using this link:
+
+    {{ context.link }}
+
+    The link works once. Without confirmation nothing is sent to this address. If you did not
+    expect this, ignore this message.
+recipient.manage.hint:
+  de: "Benachrichtigungen ändern oder abbestellen:"
+  en: "Change or unsubscribe from these notifications:"
+
 # ── Sign-in ────────────────────────────────────────────────────────────────────
 # Deliberately indistinguishable: the message must not reveal whether the username exists, the
 # password was wrong, or the account is locked. Keep them identical when adding a language.

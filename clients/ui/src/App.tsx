@@ -4,12 +4,15 @@ import { Loader } from "./components";
 import { AdminLayout } from "./pages/AdminLayout";
 import { AuditPage } from "./pages/AuditPage";
 import { ConfigPage } from "./pages/ConfigPage";
+import { ConfirmRecipientPage } from "./pages/ConfirmRecipientPage";
 import { CreateTenantPage } from "./pages/CreateTenantPage";
 import { EditTenantPage } from "./pages/EditTenantPage";
 import { EditUserPage } from "./pages/EditUserPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ProfilePage } from "./pages/ProfilePage";
 import { RateLimitsPage } from "./pages/RateLimitsPage";
+import { RecipientManagePage } from "./pages/RecipientManagePage";
+import { RecipientsPage } from "./pages/RecipientsPage";
 import { ResetPasswordPage } from "./pages/ResetPasswordPage";
 import { ServiceKeysPage } from "./pages/ServiceKeysPage";
 import { StartPage } from "./pages/StartPage";
@@ -26,6 +29,9 @@ export function App() {
   // the whole premise is that the user cannot sign in.
   if (pathname === "/verify-contact") return <VerifyContactPage />;
   if (pathname === "/reset-password") return <ResetPasswordPage />;
+  // An external recipient has no account at all, so these two never see the session gate.
+  if (pathname === "/confirm-recipient") return <ConfirmRecipientPage />;
+  if (pathname === "/recipient") return <RecipientManagePage />;
 
   if (loading) {
     return (
@@ -63,6 +69,10 @@ export function App() {
         <Route
           path="users/:userId"
           element={can("manage:users") ? <EditUserPage /> : <Navigate to="/" replace />}
+        />
+        <Route
+          path="recipients"
+          element={can("manage:recipients") ? <RecipientsPage /> : <Navigate to="/" replace />}
         />
         <Route
           path="service-keys"

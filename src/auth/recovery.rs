@@ -385,7 +385,7 @@ async fn reset_password(
     let config = deps.config.current().await?;
     config.validate_password(&request.new_password)?;
 
-    let mut user = match deps.users.get_user(&proven.user_id).await? {
+    let mut user = match deps.users.get_user(&proven.subject_id).await? {
         Some(user) if !user.locked => user,
         _ => status_bail!(StatusCode::NOT_FOUND, "This account is not active"),
     };
@@ -827,7 +827,7 @@ mod tests {
         let _ = challenges.expect_consume().returning(|_, _| {
             Box::pin(async {
                 Ok(Some(Proven {
-                    user_id: "user-1".to_owned(),
+                    subject_id: "user-1".to_owned(),
                     tenant_id: "tenant-1".to_owned(),
                     address: "jane@example.com".to_owned(),
                 }))

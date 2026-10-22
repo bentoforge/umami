@@ -2,14 +2,14 @@
 //!
 //! ## Why a bundle and not one argument per repository
 //!
-//! umami talks to its store through ten narrow repository traits, and every one of them is
+//! umami talks to its store through a dozen narrow repository traits, and every one of them is
 //! answered by the *same* backend (`dynamodb` or `postgres`). Nobody keeps users in DynamoDB and sessions in Postgres — a
 //! mixed set is not a deployment anyone wants, and pretending it is one costs a constructor
-//! argument at every call site (the boot path used to carry ten).
+//! argument at every call site (the boot path used to carry each one).
 //!
 //! Resolving them together also makes a second backend a bounded piece of work: implement the
 //! traits, return a [`Repositories`], and the compiler lists what is still missing. A backend that
-//! covers nine of ten ports does not compile, rather than starting and failing on the tenth.
+//! covers all ports but one does not compile, rather than starting and failing on the tenth.
 //!
 //! The repositories themselves stay independent traits — that is what keeps handlers mockable.
 //! This bundle exists for the wiring layer only.
@@ -30,6 +30,7 @@ use crate::auth::webauthn::repository::WebauthnRepository;
 use crate::contacts::repository::ContactRepository;
 use crate::limits::repository::LimitRepository;
 use crate::messaging::repository::MessagingRepository;
+use crate::recipients::repository::RecipientRepository;
 use crate::tenants::repository::TenantRepository;
 use crate::users::repository::UserRepository;
 use anyhow::Context;
@@ -48,7 +49,7 @@ const POSTGRES: &str = "postgres";
 const PROVIDERS: &[&str] = &[DYNAMODB, POSTGRES];
 /// Every repository umami needs, from one backend.
 ///
-/// Cloning clones ten `Arc`s and nothing else, so the wiring layer hands copies out freely.
+/// Cloning clones a dozen `Arc`s and nothing else, so the wiring layer hands copies out freely.
 #[derive(Clone)]
 pub struct Repositories {
     /// User identities, credentials and profiles.
@@ -73,6 +74,8 @@ pub struct Repositories {
     pub webauthn: Arc<dyn WebauthnRepository>,
     /// Per-tenant limit counters (consumable budgets + gauges).
     pub limits: Arc<dyn LimitRepository>,
+    /// External notification recipients: tenant-owned addresses with no identity.
+    pub recipients: Arc<dyn RecipientRepository>,
 }
 
 /// Resolves the storage backend and builds its repositories.

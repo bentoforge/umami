@@ -27,6 +27,7 @@ pub fn routes(platform: &Platform) -> BoxedFilter<(impl warp::Reply + use<>,)> {
             platform.repos.tenants.clone(),
             platform.repos.users.clone(),
             platform.repos.api_keys.clone(),
+            platform.repos.recipients.clone(),
             platform.system_tenant_id.clone(),
             platform.authenticator.clone()
         ),

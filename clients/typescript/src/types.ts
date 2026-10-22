@@ -654,6 +654,10 @@ export interface NotificationTypeDef {
    * `is:system-tenant{,-member}`. Not the session markers (`is:2fa`, …): a notification has no
    * session, so an expression naming one would never match. */
   eligibleIf?: string;
+  /** Whether a tenant's **external recipients** — addresses with no login — may subscribe to this
+   * type. Off by default. A type with this flag may gate on `feature:*` but not on `role:*`: a
+   * recipient has no roles, and `PUT /config` refuses the combination. */
+  recipients?: boolean;
 }
 
 /** One type as the profile screen sees it. */
@@ -678,9 +682,14 @@ export interface MyNotificationsResponse {
 }
 
 /** One resolved recipient. Carries **no address** — enough to write a message, not to harvest a
- * list. Hand the `userId` back to {@link UmamiClient.sendNotifications} and umami resolves it. */
+ * list. Hand the entry back to {@link UmamiClient.sendNotifications} and umami resolves it.
+ *
+ * Exactly one of `userId` and `recipientId` is set: a user, or one of the tenant's **external
+ * recipients** — a mailbox with no login that the tenant registered and that confirmed. Spread the
+ * whole entry into your message (`{ ...recipient, subject, body }`) and both kinds just work. */
 export interface NotificationRecipient {
-  userId: string;
+  userId?: string;
+  recipientId?: string;
   addressableName: string;
   locale: string;
   /** Which of the firing's cadences matched, or absent for a type with no rhythm. Ignorable when
@@ -699,9 +708,14 @@ export interface AudienceResponse {
  *
  * At least one of the two is required: a message with neither `subject`/`body` nor `template` is a
  * 400, and so is `subject` without `body`. Sending both is the robust combination — a worker that
- * does not know the layout name still has something to deliver. */
+ * does not know the layout name still has something to deliver.
+ *
+ * Exactly one of `userId` and `recipientId`, straight from the audience entry. A message with
+ * neither — the shape a caller produces when it copies `userId` by name and meets its first
+ * external recipient — fails the whole batch with a 400 rather than silently skipping someone. */
 export interface NotificationMessage {
-  userId: string;
+  userId?: string;
+  recipientId?: string;
   /** Subject line. Goes together with `body`; omit both only when `template` is given. */
   subject?: string;
   /** Plain-text body. Goes together with `subject`. */
@@ -727,9 +741,89 @@ export interface NotificationMessage {
 
 /** Per-recipient outcome of a send. Partial success is the normal case. */
 export interface NotificationSendResult {
-  userId: string;
+  /** Whichever id the message named, echoed back. */
+  userId?: string;
+  recipientId?: string;
   status: "queued" | "no-address" | "failed";
   messageId?: string;
+}
+
+// ── External recipients ───────────────────────────────────────────────────────
+
+/** A tenant-owned notification address with no identity behind it: a shared mailbox nobody logs
+ * in with, registered by a tenant admin and confirmed by the mailbox itself. No role, no password,
+ * no seat — only an address, a display name, a language and a choice per notification type.
+ *
+ * Unconfirmed, it is in no audience. Its choices are **explicit**: a type absent from `choices` is
+ * off, whatever the type's `default` says, because nobody ever showed the mailbox a default. */
+export interface ExternalRecipient {
+  recipientId: string;
+  tenantId: string;
+  address: string;
+  displayName: string;
+  /** The language mail to this recipient is written in. */
+  locale: string;
+  /** Type code → `"on"`, `"off"` or a cadence code. */
+  choices: Record<string, Choice>;
+  confirmed: boolean;
+  confirmedAt?: string;
+  /** The admin who registered the address, and their name as the listing resolves it. */
+  createdBy?: string;
+  createdByName?: string;
+  created: string;
+  lastUpdated: string;
+}
+
+/** One notification type open to external recipients, labelled in the reader's language. */
+export interface RecipientTypeView {
+  code: string;
+  name: string;
+  description?: string;
+  cadences: CadenceView[];
+  /** Every value the type accepts, `"off"` first. */
+  allowed: Choice[];
+}
+
+/** The admin's list: the tenant's recipients, the types they may subscribe to, and whether a
+ * confirmation mail can go out at all. */
+export interface RecipientsResponse {
+  recipients: ExternalRecipient[];
+  types: RecipientTypeView[];
+  verificationAvailable: boolean;
+}
+
+export interface CreateRecipientRequest {
+  address: string;
+  displayName: string;
+  locale: string;
+  /** At least one has to be something other than `"off"`: the confirmation mail says what the
+   * mailbox is agreeing to. */
+  choices: Record<string, Choice>;
+}
+
+/** Every field optional; the address is never among them — a different mailbox is a different
+ * recipient and starts with its own confirmation. */
+export interface PatchRecipientRequest {
+  displayName?: string;
+  locale?: string;
+  choices?: Record<string, Choice>;
+}
+
+/** A freshly created recipient, plus whether its confirmation mail went out. */
+export interface CreatedRecipient extends ExternalRecipient {
+  /** `false` when the deployment cannot send mail or the admin is over the hourly cap. The row
+   * exists either way — offer "send again". */
+  verificationSent: boolean;
+}
+
+/** What a recipient sees behind the management link in its mails. */
+export interface RecipientManageView {
+  tenantName: string;
+  displayName: string;
+  locale: string;
+  confirmed: boolean;
+  choices: Record<string, Choice>;
+  types: RecipientTypeView[];
 }
 
 // ── Contacts (email) ──────────────────────────────────────────────────────────

@@ -53,6 +53,9 @@ pub enum Purpose {
     ConfirmAddress,
     /// Authorizes setting a new password on the account.
     ResetPassword,
+    /// Proves the holder can read mail at an external recipient's address (ADR 0021). Its own
+    /// purpose, so a contact confirmation is never redeemable as a recipient confirmation.
+    ConfirmRecipient,
 }
 
 /// A pending challenge.
@@ -61,9 +64,12 @@ pub enum Purpose {
 struct Challenge {
     /// `sha256(secret)`, hex — the hash key. The secret itself is never stored.
     secret_hash: String,
-    /// The user the address belongs to.
-    user_id: String,
-    /// That user's tenant.
+    /// Whose address it is: the user, or — for [`Purpose::ConfirmRecipient`] — the external
+    /// recipient. Stored under the name the field had when it held users only, so a challenge
+    /// in flight across a deploy still reads.
+    #[serde(rename = "userId")]
+    subject_id: String,
+    /// The tenant the subject belongs to.
     tenant_id: String,
     /// What this secret authorizes.
     purpose: Purpose,
@@ -78,9 +84,9 @@ struct Challenge {
 /// What a consumed challenge proves.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Proven {
-    /// The user whose address it is.
-    pub user_id: String,
-    /// That user's tenant.
+    /// Whose address it is: the user, or for [`Purpose::ConfirmRecipient`] the recipient.
+    pub subject_id: String,
+    /// The subject's tenant.
     pub tenant_id: String,
     /// The address the secret was mailed to.
     pub address: String,
@@ -94,7 +100,7 @@ pub trait ChallengeRepository: Send + Sync {
     async fn issue(
         &self,
         purpose: Purpose,
-        user_id: &str,
+        subject_id: &str,
         tenant_id: &str,
         address: &str,
         ttl_secs: i64,
@@ -140,12 +146,12 @@ pub async fn confirm_address(
     proven: &Proven,
 ) -> anyhow::Result<bool> {
     match contacts
-        .get_contact(&proven.user_id, &proven.address)
+        .get_contact(&proven.subject_id, &proven.address)
         .await?
     {
         Some(_) => {
             contacts
-                .mark_verified(&proven.user_id, &proven.address)
+                .mark_verified(&proven.subject_id, &proven.address)
                 .await?;
             Ok(true)
         }

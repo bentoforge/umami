@@ -69,7 +69,7 @@ impl ChallengeRepository for PostgresChallengeRepository {
     async fn issue(
         &self,
         purpose: Purpose,
-        user_id: &str,
+        subject_id: &str,
         tenant_id: &str,
         address: &str,
         ttl_secs: i64,
@@ -79,7 +79,7 @@ impl ChallengeRepository for PostgresChallengeRepository {
         let expires_at = now + Duration::seconds(ttl_secs);
         let challenge = Challenge {
             secret_hash: hash_secret(&secret),
-            user_id: user_id.to_owned(),
+            subject_id: subject_id.to_owned(),
             tenant_id: tenant_id.to_owned(),
             purpose,
             address: address.to_owned(),
@@ -126,7 +126,7 @@ impl ChallengeRepository for PostgresChallengeRepository {
         Ok(challenge.and_then(|challenge| {
             if redeemable(challenge.purpose, purpose, challenge.ttl, now) {
                 Some(Proven {
-                    user_id: challenge.user_id,
+                    subject_id: challenge.subject_id,
                     tenant_id: challenge.tenant_id,
                     address: challenge.address,
                 })
@@ -169,7 +169,7 @@ mod tests {
         assert_eq!(
             proven,
             Proven {
-                user_id: "u1".to_owned(),
+                subject_id: "u1".to_owned(),
                 tenant_id: "t1".to_owned(),
                 address: "a@example.com".to_owned(),
             }
@@ -263,7 +263,7 @@ mod tests {
         // An expired row left behind is removed by the next write.
         let stale = Challenge {
             secret_hash: "stale".to_owned(),
-            user_id: "u1".to_owned(),
+            subject_id: "u1".to_owned(),
             tenant_id: "t1".to_owned(),
             purpose: Purpose::ResetPassword,
             address: "a@example.com".to_owned(),

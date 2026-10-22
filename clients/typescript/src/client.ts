@@ -16,7 +16,9 @@ import type {
   ContactsResponse,
   CreateApiKeyRequest,
   CreateApiKeyResponse,
+  CreatedRecipient,
   CreatePatRequest,
+  CreateRecipientRequest,
   CreateTenantRequest,
   CreateTenantResponse,
   CreateUserRequest,
@@ -24,6 +26,7 @@ import type {
   CustomFieldsSchema,
   DeletedUserCounts,
   ExchangeResponse,
+  ExternalRecipient,
   GaugeReport,
   HomeResponse,
   LedgerPage,
@@ -41,9 +44,12 @@ import type {
   NameInput,
   NotificationMessage,
   NotificationSendResult,
+  PatchRecipientRequest,
   PatchUserRequest,
   RateLimitBlockPage,
   RateLimitState,
+  RecipientManageView,
+  RecipientsResponse,
   ResetPasswordResponse,
   ResolvedMessagingUser,
   SessionView,
@@ -672,7 +678,9 @@ export class UmamiClient {
    * Only permanent failures and complaints belong here: a full mailbox or a greylisting is the
    * worker's to retry and says nothing about whether the address is still the user's. */
   reportUndeliverable(report: {
-    userId: string;
+    /** Exactly one of the two, as the payload carried it. */
+    userId?: string;
+    recipientId?: string;
     address: string;
     event: "bounced" | "complained";
     messageId?: string;
@@ -774,6 +782,89 @@ export class UmamiClient {
   async listUserContacts(userId: string): Promise<Contact[]> {
     const data = await this.request<{ contacts: Contact[] }>(`/users/${enc(userId)}/contacts`);
     return data.contacts;
+  }
+
+  // ── external recipients ─────────────────────────────────────────────────────
+
+  /** A tenant's external recipients and the types open to them (`manage:recipients`; own
+   * tenant). */
+  listRecipients(tenantId: string): Promise<RecipientsResponse> {
+    return this.request<RecipientsResponse>(`/tenants/${enc(tenantId)}/recipients`);
+  }
+  /** Register an address, unconfirmed, and mail its confirmation straight away. The mail names the
+   * tenant and the chosen types — confirming is the mailbox's consent to exactly that. A duplicate
+   * address in the tenant is a 409. */
+  createRecipient(tenantId: string, request: CreateRecipientRequest): Promise<CreatedRecipient> {
+    return this.request<CreatedRecipient>(`/tenants/${enc(tenantId)}/recipients`, {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+  }
+  /** Change a recipient's display name, language or choices. Never the address. */
+  patchRecipient(
+    tenantId: string,
+    recipientId: string,
+    request: PatchRecipientRequest,
+  ): Promise<ExternalRecipient> {
+    return this.request<ExternalRecipient>(
+      `/tenants/${enc(tenantId)}/recipients/${enc(recipientId)}`,
+      { method: "PATCH", body: JSON.stringify(request) },
+    );
+  }
+  /** Remove a recipient. */
+  deleteRecipient(tenantId: string, recipientId: string): Promise<{ status: string }> {
+    return this.request<{ status: string }>(
+      `/tenants/${enc(tenantId)}/recipients/${enc(recipientId)}`,
+      { method: "DELETE" },
+    );
+  }
+  /** Mail the confirmation again. Free for an already-confirmed recipient; `503` with no mail
+   * path; `429` with `Retry-After` over the admin's hourly cap. */
+  resendRecipientConfirmation(
+    tenantId: string,
+    recipientId: string,
+  ): Promise<{ status: "sent" | "already-confirmed" }> {
+    return this.request<{ status: "sent" | "already-confirmed" }>(
+      `/tenants/${enc(tenantId)}/recipients/${enc(recipientId)}/verify`,
+      { method: "POST" },
+    );
+  }
+  /** Finish a recipient's confirmation with the secret from its mail. **Unauthenticated** — the
+   * reader has no umami account and never will; the token is the proof. */
+  confirmRecipient(token: string): Promise<{ status: string; tenantName: string }> {
+    return this.request<{ status: string; tenantName: string }>(
+      "/recipients/confirm",
+      { method: "POST", body: JSON.stringify({ token }) },
+      false,
+    );
+  }
+  /** What a recipient sees behind the management link in its mails. Unauthenticated; the token
+   * is the recipient's own long-lived secret and travels in the body, never in a URL umami logs. */
+  recipientManageView(token: string): Promise<RecipientManageView> {
+    return this.request<RecipientManageView>(
+      "/recipients/manage",
+      { method: "POST", body: JSON.stringify({ token }) },
+      false,
+    );
+  }
+  /** The recipient changes its own choices. Same validation as the admin's. */
+  setRecipientChoices(
+    token: string,
+    choices: Record<string, Choice>,
+  ): Promise<RecipientManageView> {
+    return this.request<RecipientManageView>(
+      "/recipients/manage",
+      { method: "PUT", body: JSON.stringify({ token, choices }) },
+      false,
+    );
+  }
+  /** The recipient removes itself: unsubscribed from everything, row gone. */
+  unsubscribeRecipient(token: string): Promise<{ status: string }> {
+    return this.request<{ status: string }>(
+      "/recipients/manage",
+      { method: "DELETE", body: JSON.stringify({ token }) },
+      false,
+    );
   }
 
   // ── messaging links ─────────────────────────────────────────────────────────

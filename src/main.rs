@@ -56,6 +56,7 @@ mod home;
 mod limits;
 mod messaging;
 mod notify;
+mod recipients;
 mod search;
 // Dev-only limit-data seeder behind the `seed-limits` subcommand; never built into a release binary.
 #[cfg(debug_assertions)]

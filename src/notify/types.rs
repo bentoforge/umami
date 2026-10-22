@@ -145,6 +145,18 @@ pub struct NotificationTypeDef {
     /// failure this whole file keeps trying to avoid.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub eligible_if: Option<String>,
+    /// Whether a tenant's **external recipients** — addresses with no login (ADR 0021) — may
+    /// subscribe to this type. `false` by default, so no type reaches outside the tenant's members
+    /// until the catalogue says so.
+    ///
+    /// An explicit flag rather than a reading of `eligibleIf`: a recipient has no roles, and
+    /// "treat `role:*` as unfulfilled" reads well for `role:editor` and wrong for `!role:readonly`,
+    /// which would then admit every mailbox. Whether a type's content may leave the member circle
+    /// is a decision the catalogue should state. For a recipient, `eligibleIf` is evaluated over
+    /// the tenant's subjects only (`feature:*`, `is:system-tenant*`); naming a `role:*` on a type
+    /// with this flag is refused by [`validate_catalogue`].
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub recipients: bool,
 }
 
 impl NotificationTypeDef {
@@ -223,6 +235,16 @@ pub fn validate_catalogue(types: &[NotificationTypeDef]) -> anyhow::Result<()> {
                 client_bail!("Notification type '{code}' lists cadence '{value}' twice");
             }
         }
+        if type_def.recipients
+            && let Some(expression) = type_def.eligible_if.as_deref()
+            && let Some(term) = role_term(expression)
+        {
+            client_bail!(
+                "Notification type '{code}' allows external recipients but gates on '{term}' — a \
+                 recipient has no roles, so the expression cannot mean the same thing for it. Gate \
+                 on the tenant's features instead, or drop 'recipients'"
+            );
+        }
         if let Some(default) = type_def.default.as_deref()
             && !type_def.accepts(default)
         {
@@ -234,6 +256,18 @@ pub fn validate_catalogue(types: &[NotificationTypeDef]) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+/// The first `role:*` term in an eligibility expression, if any.
+///
+/// The DSL is `,` for OR, `+` for AND and a leading `!` for NOT, so the terms are what is left
+/// between the operators. Negated or not makes no difference here: either way the expression
+/// asks something about roles, which a recipient cannot answer.
+fn role_term(expression: &str) -> Option<&str> {
+    expression
+        .split([',', '+'])
+        .map(|term| term.trim().trim_start_matches('!').trim())
+        .find(|term| term.starts_with("role:"))
 }
 
 /// The outcome of matching one user against one firing.
@@ -299,6 +333,7 @@ mod tests {
             ],
             default: default.map(str::to_owned),
             eligible_if: None,
+            recipients: false,
         }
     }
 
@@ -311,6 +346,7 @@ mod tests {
             cadences: Vec::new(),
             default: default.map(str::to_owned),
             eligible_if: None,
+            recipients: false,
         }
     }
 
@@ -498,6 +534,41 @@ mod tests {
             validate_catalogue(&[unnamed]).is_err(),
             "a switch with no words on it is not one anybody can find"
         );
+    }
+
+    /// A recipient has no roles, so a type open to recipients must not ask about them — negated
+    /// or not, because `!role:readonly` would otherwise admit every mailbox.
+    #[test]
+    fn a_type_open_to_recipients_cannot_gate_on_a_role() {
+        let open = NotificationTypeDef {
+            recipients: true,
+            eligible_if: Some("feature:forms".to_owned()),
+            ..plain(Some(CHOICE_ON))
+        };
+        assert!(validate_catalogue(std::slice::from_ref(&open)).is_ok());
+
+        for expression in [
+            "role:editor",
+            "feature:forms + !role:readonly",
+            "feature:x, role:y",
+        ] {
+            let gated = NotificationTypeDef {
+                eligible_if: Some(expression.to_owned()),
+                ..open.clone()
+            };
+            assert!(
+                validate_catalogue(&[gated]).is_err(),
+                "'{expression}' asks about roles"
+            );
+        }
+
+        // Without the flag a role gate is what it always was.
+        let members_only = NotificationTypeDef {
+            recipients: false,
+            eligible_if: Some("role:editor".to_owned()),
+            ..plain(Some(CHOICE_ON))
+        };
+        assert!(validate_catalogue(&[members_only]).is_ok());
     }
 
     #[test]

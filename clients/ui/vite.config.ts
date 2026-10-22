@@ -17,6 +17,8 @@ const apiPaths = [
   "/info",
   "/user-info",
   "/rate-limits",
+  "/notifications",
+  "/recipients",
   "/.well-known",
 ];
 // Branding assets are served by umami itself under /app (see src/web_ui.rs). They live under Vite's

@@ -35,6 +35,7 @@ use crate::messaging::service::ResolveDeps;
 use crate::notify;
 use crate::notify::Notifier;
 use crate::notify::service::NotifyDeps;
+use crate::recipients::service::RecipientDeps;
 use crate::storage::{self, Repositories};
 use crate::users::service::DeleteUserDeps;
 use std::env;
@@ -183,10 +184,30 @@ impl Platform {
             users: self.repos.users.clone(),
             tenants: self.repos.tenants.clone(),
             contacts: self.repos.contacts.clone(),
+            recipients: self.repos.recipients.clone(),
+            secrets: self.mfa.clone(),
             config: self.config.clone(),
             notifier: self.notifier.clone(),
             system_tenant_id: self.system_tenant_id.clone(),
             public_base_url: self.public_base_url.clone(),
+        }
+    }
+
+    /// Dependencies of the external-recipient routes.
+    pub fn recipient_deps(&self) -> RecipientDeps {
+        RecipientDeps {
+            recipients: self.repos.recipients.clone(),
+            tenants: self.repos.tenants.clone(),
+            users: self.repos.users.clone(),
+            challenges: self.repos.challenges.clone(),
+            config: self.config.clone(),
+            notifier: self.notifier.clone(),
+            rate_limiter: self.rate_limiter.clone(),
+            // The same box that keeps TOTP seeds: one key for everything umami must be able to
+            // read back, rather than a second variable that must be set and rotated in step.
+            secrets: self.mfa.clone(),
+            public_base_url: self.public_base_url.clone(),
+            system_tenant_id: self.system_tenant_id.clone(),
         }
     }
 

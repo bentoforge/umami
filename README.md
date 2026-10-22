@@ -273,7 +273,7 @@ Full reference: **[docs/CONFIG.md](docs/CONFIG.md)**.
 | [docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md) | Notification types, cadences, and who a firing reaches. |
 | [docs/SEAMS.md](docs/SEAMS.md) | Selectable backends (storage, config store, keys, mail) and how umami picks one. |
 | [docs/LIMITS.md](docs/LIMITS.md) | Per-tenant limits: catalogue, values, booking, ledger and history (German). |
-| [docs/adr/](docs/adr/) | Architecture decision records: why the design above is the way it is. |
+| [docs/adr/](docs/adr/README.md) | Architecture decision records: why the design above is the way it is. |
 
 The identity/tenancy data model lives in the code: the entity structs (`User`, `Tenant`, `Session`,
 …) are the schema, and the model's design rationale is the module doc on

@@ -46,6 +46,7 @@ export function AdminLayout() {
     { to: "/", label: t("nav.start"), show: true, end: true },
     { to: "/tenants", label: t("nav.tenants"), show: can("manage:tenants") },
     { to: "/users", label: t("nav.users"), show: can("manage:users") },
+    { to: "/recipients", label: t("nav.recipients"), show: can("manage:recipients") },
     { to: "/service-keys", label: t("nav.serviceKeys"), show: can("manage:service-keys") },
   ].filter((item) => item.show);
 

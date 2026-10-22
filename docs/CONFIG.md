@@ -229,13 +229,17 @@ not administering the deployment.
     { "code": "monthly", "name": "Monatlich" }
   ],
   "default": "weekly",              // "on", a cadence code, or omitted for off
-  "eligibleIf": "role:editor" } // DSL over role:*/feature:*/is:system-tenant{,-member}
+  "eligibleIf": "role:editor",   // DSL over role:*/feature:*/is:system-tenant{,-member}
+  "recipients": false }             // open to the tenant's external recipients? (default false)
 //   Omit `cadences` entirely for a type with no rhythm of its own: the choice is then "on"/"off".
 //   `off` and `on` are reserved and cannot be cadence codes. A user can always choose `off`,
 //   whether or not the type has a rhythm.
 //   eligibleIf is the INPUT vocabulary, not permissions. Session markers (is:2fa, is:passkey,
 //   is:totp) describe how a session authenticated and a notification has no session — naming one
 //   would simply never match, with nothing to explain why.
+//   `recipients: true` opens the type to a tenant's external recipients (mailboxes with no login,
+//   NOTIFICATIONS.md §7). Such a type may gate on feature:* but not on role:* — a recipient has no
+//   roles — and PUT /config refuses the combination.
 
 // BrandingConfig — white-label the UI at runtime (all optional; empty → built-in defaults). umami
 //   serves these at /app/branding.css, /app/logo, /app/favicon. logo/favicon may be a data: URI
@@ -347,6 +351,7 @@ define their own.
 | `manage:personal-tokens` | own personal access tokens under `/auth/me/api-keys` |
 | `manage:sessions` | see/revoke own sessions — `GET /auth/sessions`, `DELETE /auth/sessions/{id}`, `POST /auth/logout-all` |
 | `manage:contacts` | own email addresses — `GET`/`POST /auth/me/contacts`, `DELETE /auth/me/contacts/{address}`, `PUT /auth/me/preferred-contact` — and own notification choices under `/auth/me/notifications` |
+| `manage:recipients` | a tenant's external notification recipients — `/tenants/{id}/recipients…` (own tenant); see [NOTIFICATIONS.md](NOTIFICATIONS.md) §7 |
 | `notifications:audience` | `POST /notifications/audience` (who hears about one firing) |
 | `notifications:send` | `POST /notifications/send` (hand finished messages over) |
 | `notifications:report` | `POST /notifications/undeliverable` (the mail worker reports a hard bounce) |
@@ -370,7 +375,8 @@ passkey-login ceremonies.
 **Unauthenticated** (no token at all): `GET /auth/capabilities` — what the sign-in screen may offer,
 currently `{ "passwordRecovery": bool }` — plus the three ceremonies whose proof *is* the mailed
 secret: `POST /auth/contacts/verify`, `POST /auth/forgot-password`, `POST /auth/reset-password`. See
-[CONTACTS.md](CONTACTS.md) for why those cannot require a session.
+[CONTACTS.md](CONTACTS.md) for why those cannot require a session. The same goes for an external
+recipient's own endpoints under `/recipients/…`, whose reader has no account at all.
 
 ---
 
@@ -384,7 +390,7 @@ matrix; see [§6](#6-proposed-standard-config) for that. The default `apis[0]` (
 | `when` | `grant` |
 |--------|---------|
 | *(empty — always)* | `manage:profile`, `manage:passwords`, `manage:personal-tokens`, `manage:sessions`, `manage:contacts` |
-| `role:platform-admin` | `view:audit`, `manage:users`, `manage:service-keys`, `manage:config` |
+| `role:platform-admin` | `view:audit`, `manage:users`, `manage:recipients`, `manage:service-keys`, `manage:config` |
 | `is:system-tenant-member` | `manage:tenants`, `switch:tenant`, `view:ratelimits` |
 | `scope:messaging-linker + is:system-tenant` | `messaging:link` |
 | `scope:messaging-resolver + is:system-tenant` | `messaging:resolve` |
@@ -453,8 +459,8 @@ feature/scope and a product-API entry with eligibility + claims. Copy, adjust, `
     {
       "code": "umami", "audience": "umami",
       "permissions": [
-        { "when": "role:owner",  "grant": ["admin:tenant","manage:users","manage:service-keys","manage:config"] },
-        { "when": "role:admin",  "grant": ["manage:users","manage:service-keys"] },
+        { "when": "role:owner",  "grant": ["admin:tenant","manage:users","manage:recipients","manage:service-keys","manage:config"] },
+        { "when": "role:admin",  "grant": ["manage:users","manage:recipients","manage:service-keys"] },
         { "when": "is:system-tenant", "grant": ["manage:tenants","switch:tenant","view:ratelimits"] },
         // Granular self-service for every non-read-only user (a read-only role is simply excluded —
         // there is no separate deny marker).

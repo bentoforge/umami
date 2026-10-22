@@ -15,8 +15,13 @@ pub struct StaticConfigRepository {
 impl StaticConfigRepository {
     /// Creates a repository seeded with [`Config::default`].
     pub fn with_default() -> Self {
+        Self::with_config(Config::default())
+    }
+
+    /// Creates a repository seeded with `config` — for tests that need a catalogue.
+    pub fn with_config(config: Config) -> Self {
         Self {
-            config: RwLock::new(Arc::new(Config::default())),
+            config: RwLock::new(Arc::new(config)),
         }
     }
 }

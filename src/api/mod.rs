@@ -31,6 +31,7 @@ pub mod limits;
 pub mod messaging;
 pub mod notify;
 pub mod ratelimit;
+pub mod recipients;
 pub mod tenants;
 pub mod users;
 
@@ -58,6 +59,7 @@ pub async fn serve(platform: &Platform) -> anyhow::Result<()> {
         apikeys::routes(platform),
         contacts::routes(platform),
         notify::routes(platform),
+        recipients::routes(platform),
         messaging::routes(platform),
         tenants::routes(platform),
         users::routes(platform),
