@@ -1,4 +1,4 @@
-// Theme management: light / dark / auto. Tailwind is in `class` dark mode (tailwind.config.cjs),
+// Theme management: light / dark / auto. Tailwind's `dark` variant keys on a class (src/index.css),
 // so we toggle a `dark` class on <html>. "auto" follows the OS `prefers-color-scheme`.
 
 export type Theme = "light" | "dark" | "auto";

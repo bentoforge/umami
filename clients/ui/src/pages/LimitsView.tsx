@@ -220,7 +220,7 @@ function AdminNote({ note, compact = false }: { note: string; compact?: boolean 
   const { t } = useTranslation();
   return (
     <div
-      className={`${compact ? "mt-1 max-w-xs px-2 py-1 text-xs" : "px-3 py-2 text-sm"} whitespace-normal rounded border border-sky-200 bg-sky-50 text-sky-800 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-300`}
+      className={`${compact ? "mt-1 max-w-xs px-2 py-1 text-xs" : "px-3 py-2 text-sm"} whitespace-normal rounded-sm border border-sky-200 bg-sky-50 text-sky-800 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-300`}
     >
       <span className="font-semibold">{t("limits.adminNote")}:</span> {note}
     </div>

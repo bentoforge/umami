@@ -269,7 +269,7 @@ function KeyDetails({
         <div className="mb-2 text-sm font-medium text-slate-800 dark:text-slate-200">
           {t("rateLimits.title")}
           {apiKey.rateLimit && (
-            <span className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-slate-500 dark:bg-slate-700 dark:text-slate-300">
+            <span className="ml-2 rounded-sm bg-slate-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-slate-500 dark:bg-slate-700 dark:text-slate-300">
               {t("rateLimits.override")}
             </span>
           )}
