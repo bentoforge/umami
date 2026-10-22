@@ -358,7 +358,6 @@
     "address": "Email address",
     "displayName": "Display name",
     "locale": "Language",
-    "choicesLabel": "Notifications",
     "consentHint": "The confirmation mail names these notifications. Nothing is sent until the mailbox confirms.",
     "create": "Create and send confirmation",
     "createdMailed": "{{address}} saved. The confirmation link is on its way.",

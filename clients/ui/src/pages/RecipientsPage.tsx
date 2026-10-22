@@ -9,7 +9,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useUmami } from "../auth/UmamiProvider";
 import { Banner, DropdownMenu, errMsg, Field, formatDateTime, Loader, Tag } from "../components";
-import { card, input, primaryButton, spanSixth, spanThird } from "../ui";
+import { card, input, primaryButton } from "../ui";
 
 /** Own-tenant screen for external recipients: mailboxes with no login that receive notifications.
  *
@@ -321,8 +321,9 @@ function CreateForm({
       <h2 className="font-medium text-slate-800 dark:text-slate-200">
         {t("recipients.createTitle")}
       </h2>
-      <div className="grid grid-cols-12 gap-3">
-        <Field label={t("recipients.address")} className={spanSixth}>
+      {/* One row at xl, filled 40:40:20; stacked below that. */}
+      <div className="grid grid-cols-1 xl:grid-cols-[2fr_2fr_1fr] gap-3">
+        <Field label={t("recipients.address")}>
           <input
             className={input}
             type="email"
@@ -331,7 +332,7 @@ function CreateForm({
             onChange={(e) => setAddress(e.target.value)}
           />
         </Field>
-        <Field label={t("recipients.displayName")} className={spanThird}>
+        <Field label={t("recipients.displayName")}>
           <input
             className={input}
             required
@@ -339,7 +340,7 @@ function CreateForm({
             onChange={(e) => setDisplayName(e.target.value)}
           />
         </Field>
-        <Field label={t("recipients.locale")} className={spanSixth}>
+        <Field label={t("recipients.locale")}>
           <select className={input} value={locale} onChange={(e) => setLocale(e.target.value)}>
             {locales.map((code) => (
               <option key={code} value={code}>
@@ -349,16 +350,11 @@ function CreateForm({
           </select>
         </Field>
       </div>
-      <div>
-        <div className="text-sm text-slate-600 dark:text-slate-400">
-          {t("recipients.choicesLabel")}
-        </div>
-        <ChoicePickers
-          types={types}
-          choices={choices}
-          onChange={(code, value) => setChoices((c) => ({ ...c, [code]: value }))}
-        />
-      </div>
+      <ChoicePickers
+        types={types}
+        choices={choices}
+        onChange={(code, value) => setChoices((c) => ({ ...c, [code]: value }))}
+      />
       <p className="text-xs text-slate-500">{t("recipients.consentHint")}</p>
       <button className={primaryButton} type="submit" disabled={busy}>
         {t("recipients.create")}

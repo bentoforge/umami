@@ -358,7 +358,6 @@
     "address": "E-Mail-Adresse",
     "displayName": "Anzeigename",
     "locale": "Sprache",
-    "choicesLabel": "Benachrichtigungen",
     "consentHint": "Die Bestätigungsmail nennt diese Benachrichtigungen. Bis das Postfach bestätigt, wird nichts gesendet.",
     "create": "Anlegen und Bestätigung senden",
     "createdMailed": "{{address}} gespeichert. Der Bestätigungslink ist unterwegs.",
