@@ -71,7 +71,7 @@ function AppTile({ app }: { app: AppCard }) {
       href={app.url}
       target="_blank"
       rel="noopener noreferrer"
-      className={`${card} group flex flex-col gap-1 transition hover:border-primary hover:shadow-sm`}
+      className={`${card} group flex flex-col gap-1 transition hover:border-primary hover:shadow-xs`}
     >
       <div className="flex items-start justify-between gap-2">
         <h3 className="font-semibold text-slate-900 dark:text-white">{app.name}</h3>
@@ -92,7 +92,7 @@ function TaskTile({ task }: { task: TaskCard }) {
   return (
     <Link
       to={task.url}
-      className={`${card} flex flex-col gap-1 transition hover:shadow-sm ${emphasis}`}
+      className={`${card} flex flex-col gap-1 transition hover:shadow-xs ${emphasis}`}
     >
       <h3 className="font-semibold text-slate-900 dark:text-white">{task.label}</h3>
       <p className="text-sm text-slate-500">{task.description}</p>

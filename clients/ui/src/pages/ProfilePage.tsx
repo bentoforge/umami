@@ -148,7 +148,7 @@ function SessionsPanel() {
                 <div className="text-sm font-medium text-slate-900 dark:text-white truncate">
                   {session.userAgent || t("sessions.unknownDevice")}
                   {session.current && (
-                    <span className="ml-2 rounded bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 px-1.5 py-0.5 text-[10px] align-middle">
+                    <span className="ml-2 rounded-sm bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 px-1.5 py-0.5 text-[10px] align-middle">
                       {t("sessions.current")}
                     </span>
                   )}
@@ -884,7 +884,7 @@ function SecurityAction({
       >
         {label}
         {badge && (
-          <span className="rounded bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 px-1.5 py-0.5 text-[10px]">
+          <span className="rounded-sm bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 px-1.5 py-0.5 text-[10px]">
             {badge}
           </span>
         )}
@@ -1032,14 +1032,14 @@ function TotpSection({
           <p className="text-sm text-slate-500">{t("profile.totpSetupHint")}</p>
           {setup?.qrSvg && (
             <img
-              className="h-44 w-44 rounded bg-white p-2"
+              className="h-44 w-44 rounded-sm bg-white p-2"
               alt={t("profile.totpQrAlt")}
               src={`data:image/svg+xml;utf8,${encodeURIComponent(setup.qrSvg)}`}
             />
           )}
           <div>
             <div className="text-xs text-slate-500 mb-1">{t("profile.totpSecret")}</div>
-            <code className="block break-all rounded bg-slate-100 dark:bg-slate-900 px-3 py-2 text-sm font-mono tracking-wider text-slate-900 dark:text-white">
+            <code className="block break-all rounded-sm bg-slate-100 dark:bg-slate-900 px-3 py-2 text-sm font-mono tracking-wider text-slate-900 dark:text-white">
               {setup?.secret ?? "…"}
             </code>
           </div>

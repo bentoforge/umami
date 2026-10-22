@@ -1,6 +1,71 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+/* Dark mode is toggled by a `dark` class on <html> (see src/theme.ts): light / dark / auto. */
+@custom-variant dark (&:is(.dark *));
+
+/* The colours come from CSS variables holding space-separated RGB channels, set in index.html and
+   overridable at runtime by /app/branding.css (config `branding.customCss`). Operators already
+   write that channel format, so it stays the contract; opacity modifiers (`bg-brand/10`) keep
+   working through color-mix.
+
+   `inline` makes each utility carry `rgb(var(--x))` itself instead of pointing at a `--color-*`
+   resolved once on :root, so a `customCss` that sets a variable on an inner element still takes
+   effect there. */
+@theme inline {
+  /* Primary = the functional action color (buttons, focus, selection) — a serious blue. */
+  --color-primary: rgb(var(--primary));
+  --color-primary-dark: rgb(var(--primary-dark));
+
+  /* Brand = the identity accent, used sparingly (nav highlights, small badges). */
+  --color-brand: rgb(var(--brand));
+  --color-brand-dark: rgb(var(--brand-dark));
+
+  /* Header chrome, so the top bar can be rebranded on its own.
+
+     `muted` and `hover` are their own colours rather than `text` at reduced opacity: 70% of a dark
+     grey on white reads as restrained, 70% of white on a dark bar reads as washed out, and the same
+     goes for a 10% hover wash. Opacity does not carry across backgrounds, so whoever recolours the
+     bar needs to set these too. */
+  --color-header-bg: rgb(var(--header-bg));
+  --color-header-text: rgb(var(--header-text));
+  --color-header-muted: rgb(var(--header-text-muted));
+  --color-header-hover: rgb(var(--header-hover));
+  --color-header-accent: rgb(var(--header-accent));
+  --color-header-border: rgb(var(--header-border));
+
+  /* Sign-in screen. Button hovers are element-level opacity rather than more tokens: unlike a
+     colour wash, that behaves the same whatever is behind. */
+  --color-login-bg: rgb(var(--login-bg));
+  --color-login-card: rgb(var(--login-card));
+  --color-login-text: rgb(var(--login-text));
+  --color-login-primary: rgb(var(--login-primary));
+  --color-login-primary-text: rgb(var(--login-primary-text));
+  --color-login-secondary: rgb(var(--login-secondary));
+  --color-login-secondary-text: rgb(var(--login-secondary-text));
+}
+
+/* Preflight defaults that changed in Tailwind 4 and that the markup relies on: a bare `border`
+   was slate-ish grey rather than the text colour, placeholders were a fixed grey rather than a
+   faded text colour, and buttons showed a pointer. */
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--color-gray-400);
+  }
+
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+}
 
 /* The UA paints things the app cannot reach — a button's own surface, scrollbars, autofill, the
    canvas behind the page — and `color-scheme` is what tells it which palette to use. Declaring

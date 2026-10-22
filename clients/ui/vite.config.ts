@@ -1,3 +1,4 @@
+import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
@@ -27,7 +28,7 @@ const target = process.env.VITE_UMAMI_PROXY ?? "http://localhost:8093";
 export default defineConfig({
   // Served by umami itself under /app (see src/web_ui.rs). The router basename derives from this.
   base: "/app/",
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   server: {
     // Fixed, and a hard failure when it is taken. umami's `CORS_ALLOWED_ORIGINS` names this dev
     // server by origin, so a silent move to the next free port turns every call into a 403 that
