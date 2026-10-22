@@ -120,7 +120,7 @@ export function RecipientsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex items-start justify-between gap-8">
         <div>
           <h1 className="text-xl font-semibold text-slate-900 dark:text-white">
             {t("recipients.title")}
@@ -128,7 +128,10 @@ export function RecipientsPage() {
           <p className="text-sm text-slate-500">{t("recipients.intro")}</p>
         </div>
         {types.length > 0 && (
-          <button className={primaryButton} onClick={() => setCreating((v) => !v)}>
+          <button
+            className={`${primaryButton} shrink-0 whitespace-nowrap`}
+            onClick={() => setCreating((v) => !v)}
+          >
             {creating ? t("recipients.cancel") : t("recipients.new")}
           </button>
         )}
@@ -160,23 +163,11 @@ export function RecipientsPage() {
       ) : (
         <ul className="space-y-3">
           {data.recipients.map((recipient) => (
-            <li key={recipient.recipientId} className={`${card} space-y-3`}>
+            <li key={recipient.recipientId} className={`${card} space-y-4`}>
               <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0 space-y-1">
-                  <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-slate-900 dark:text-white">
-                    <span className="truncate">{recipient.displayName}</span>
-                    <span className="text-slate-400">{recipient.address}</span>
-                    {recipient.confirmed ? (
-                      <Tag tone="info">{t("recipients.confirmed")}</Tag>
-                    ) : (
-                      <Tag tone="warn">{t("recipients.unconfirmed")}</Tag>
-                    )}
-                  </div>
-                  <div className="text-slate-400">
-                    {t("recipients.addedOn")}: {formatDateTime(recipient.created)} ·{" "}
-                    {t(`locale.${recipient.locale}`, { defaultValue: recipient.locale })}
-                  </div>
-                </div>
+                <h2 className="min-w-0 truncate font-medium text-slate-900 dark:text-white">
+                  {recipient.displayName || recipient.address}
+                </h2>
                 <DropdownMenu
                   label={t("recipients.menu")}
                   actions={[
@@ -198,6 +189,7 @@ export function RecipientsPage() {
                   ]}
                 />
               </div>
+              <RecipientFacts recipient={recipient} />
               <ChoicePickers
                 types={types}
                 choices={recipient.choices}
@@ -209,6 +201,46 @@ export function RecipientsPage() {
         </ul>
       )}
     </div>
+  );
+}
+
+/** The facts about one recipient, as label/value pairs in a two-row grid. The address is listed
+ * only when the title already shows the display name; otherwise it *is* the title. */
+function RecipientFacts({ recipient }: { recipient: ExternalRecipient }) {
+  const { t } = useTranslation();
+  // Plain data, rendered below: JSX inside an array literal is what the key lint rightly flags.
+  const facts: { label: string; value?: string; status?: boolean }[] = [
+    { label: t("recipients.createdAt"), value: formatDateTime(recipient.created) },
+    {
+      label: t("recipients.createdBy"),
+      value: recipient.createdByName ?? recipient.createdBy ?? "—",
+    },
+    {
+      label: t("recipients.locale"),
+      value: t(`locale.${recipient.locale}`, { defaultValue: recipient.locale }),
+    },
+    ...(recipient.displayName
+      ? [{ label: t("recipients.address"), value: recipient.address }]
+      : []),
+    { label: t("recipients.status"), status: recipient.confirmed },
+  ];
+  return (
+    <dl className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-2 text-sm">
+      {facts.map((fact) => (
+        <div key={fact.label} className="min-w-0">
+          <dt className="text-xs text-slate-400">{fact.label}</dt>
+          <dd className="truncate text-slate-800 dark:text-slate-200">
+            {fact.status === undefined ? (
+              fact.value
+            ) : fact.status ? (
+              <Tag tone="info">{t("recipients.confirmed")}</Tag>
+            ) : (
+              <Tag tone="warn">{t("recipients.unconfirmed")}</Tag>
+            )}
+          </dd>
+        </div>
+      ))}
+    </dl>
   );
 }
 
@@ -236,7 +268,7 @@ export function ChoicePickers({
         <li key={type.code} className="flex flex-wrap items-center justify-between gap-3 py-2">
           <div className="min-w-0">
             <div className="text-sm font-medium text-slate-900 dark:text-white">{type.name}</div>
-            {type.description && <div className="text-slate-400">{type.description}</div>}
+            {type.description && <div className="text-xs text-slate-400">{type.description}</div>}
           </div>
           <select
             className={`${input} w-auto`}

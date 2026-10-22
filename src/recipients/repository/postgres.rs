@@ -209,6 +209,7 @@ mod tests {
             confirmed: false,
             confirmed_at: None,
             manage_secret: "encrypted".to_owned(),
+            created_by: None,
             created: now,
             last_updated: now,
         }

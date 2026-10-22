@@ -198,6 +198,7 @@ impl Platform {
         RecipientDeps {
             recipients: self.repos.recipients.clone(),
             tenants: self.repos.tenants.clone(),
+            users: self.repos.users.clone(),
             challenges: self.repos.challenges.clone(),
             config: self.config.clone(),
             notifier: self.notifier.clone(),

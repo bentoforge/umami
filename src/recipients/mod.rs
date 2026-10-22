@@ -87,6 +87,9 @@ pub struct ExternalRecipient {
     /// The management secret, **encrypted** with the deployment's secret box. See the module docs
     /// for why it is not a hash.
     pub manage_secret: String,
+    /// The admin who registered the address. Only ever an admin: a recipient cannot create itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_by: Option<String>,
     /// RFC 3339 creation timestamp.
     pub created: DateTime<Utc>,
     /// RFC 3339 timestamp of the last change.
@@ -106,6 +109,11 @@ pub struct RecipientView {
     pub confirmed: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub confirmed_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_by: Option<String>,
+    /// The creator's display name, resolved by the listing for the screen that shows it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_by_name: Option<String>,
     pub created: DateTime<Utc>,
     pub last_updated: DateTime<Utc>,
 }
@@ -121,6 +129,8 @@ impl From<&ExternalRecipient> for RecipientView {
             choices: recipient.choices.clone(),
             confirmed: recipient.confirmed,
             confirmed_at: recipient.confirmed_at,
+            created_by: recipient.created_by.clone(),
+            created_by_name: None,
             created: recipient.created,
             last_updated: recipient.last_updated,
         }
@@ -217,6 +227,7 @@ mod tests {
             confirmed: false,
             confirmed_at: None,
             manage_secret: "encrypted".to_owned(),
+            created_by: None,
             created: Utc::now(),
             last_updated: Utc::now(),
         };

@@ -1392,6 +1392,7 @@ mod tests {
             confirmed: true,
             confirmed_at: None,
             manage_secret: String::new(),
+            created_by: None,
             created: now,
             last_updated: now,
         };

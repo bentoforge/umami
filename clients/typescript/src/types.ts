@@ -767,6 +767,9 @@ export interface ExternalRecipient {
   choices: Record<string, Choice>;
   confirmed: boolean;
   confirmedAt?: string;
+  /** The admin who registered the address, and their name as the listing resolves it. */
+  createdBy?: string;
+  createdByName?: string;
   created: string;
   lastUpdated: string;
 }

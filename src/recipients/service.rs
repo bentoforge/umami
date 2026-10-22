@@ -30,6 +30,7 @@ use crate::recipients::{
 };
 use crate::tenants::Tenant;
 use crate::tenants::repository::TenantRepository;
+use crate::users::repository::UserRepository;
 use anyhow::Context;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -59,6 +60,8 @@ pub struct RecipientDeps {
     /// Tenant store (the name the confirmation mail says is asking, and the features eligibility
     /// is judged on).
     pub tenants: Arc<dyn TenantRepository>,
+    /// User store, to put a name on "created by" in the admin's list.
+    pub users: Arc<dyn UserRepository>,
     /// Pending-challenge store, for the confirmation link.
     pub challenges: Arc<dyn ChallengeRepository>,
     /// Config (the type catalogue, TTLs, the send policy).
@@ -583,13 +586,33 @@ async fn list_recipients(
     let config = deps.config.current().await?;
     let tenant = tenant(&deps, &tenant_id).await?;
     let subjects = subjects_of(&deps, &tenant);
-    let recipients = deps
+    let mut recipients: Vec<RecipientView> = deps
         .recipients
         .list_recipients(&tenant_id)
         .await?
         .iter()
         .map(RecipientView::from)
         .collect();
+    // One read per distinct creator, so a list of fifty rows by one admin costs one lookup. A
+    // creator who has since been deleted simply has no name; the id stays.
+    let mut names: BTreeMap<String, Option<String>> = BTreeMap::new();
+    for view in &mut recipients {
+        let Some(creator) = view.created_by.clone() else {
+            continue;
+        };
+        if !names.contains_key(&creator) {
+            let name = deps.users.get_user(&creator).await?.map(|user| {
+                let names = user.display_names(&config.default_locale);
+                if names.name.is_empty() {
+                    user.username
+                } else {
+                    names.name
+                }
+            });
+            let _ = names.insert(creator.clone(), name);
+        }
+        view.created_by_name = names.get(&creator).cloned().flatten();
+    }
     Ok(ListResponse {
         recipients,
         types: recipient_types(&config, &subjects, caller.locale()),
@@ -638,6 +661,7 @@ async fn create_recipient(
             .secrets
             .encrypt(secret.as_bytes())
             .context("Failed to encrypt the management secret")?,
+        created_by: Some(admin_id.to_owned()),
         created: now,
         last_updated: now,
     };
@@ -1124,6 +1148,7 @@ mod tests {
     use crate::notify::types::{CadenceDef, NotificationTypeDef};
     use crate::recipients::repository::MockRecipientRepository;
     use crate::tenants::repository::MockTenantRepository;
+    use crate::users::repository::MockUserRepository;
     use async_trait::async_trait;
     use std::sync::Mutex;
     use wasabi::web::auth::user::User as WasabiUser;
@@ -1237,6 +1262,7 @@ mod tests {
             confirmed,
             confirmed_at: None,
             manage_secret: secrets.encrypt(secret.as_bytes()).unwrap(),
+            created_by: Some("admin-1".to_owned()),
             created: now,
             last_updated: now,
         }
@@ -1280,6 +1306,7 @@ mod tests {
         let deps = RecipientDeps {
             recipients: Arc::new(recipients),
             tenants: Arc::new(tenants),
+            users: Arc::new(MockUserRepository::new()),
             challenges: Arc::new(challenges),
             config: Arc::new(StaticConfigRepository::with_config(config())),
             notifier: notifier.clone(),
