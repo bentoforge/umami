@@ -356,6 +356,17 @@
     "retryHint": "Request a fresh link from your profile.",
     "continue": "Continue"
   },
+  "resetPassword": {
+    "title": "Reset password",
+    "newPassword": "New password",
+    "repeat": "Repeat new password",
+    "submit": "Set password",
+    "mismatch": "The two passwords do not match.",
+    "missingToken": "This link is incomplete — it carries no reset token.",
+    "done": "Your password has been changed.",
+    "sessionsEnded": "For your security, every existing session has been signed out.",
+    "toSignIn": "Go to sign-in"
+  },
   "messaging": {
     "linksTitle": "Messaging links",
     "empty": "No links.",
