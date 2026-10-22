@@ -1,7 +1,7 @@
 import type { CustomFieldView } from "@bentoforge/umami-iam";
 import { useEffect, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { useUmami } from "../auth/UmamiProvider";
 import { Banner, CustomFieldsForm, errMsg, Field } from "../components";
 import { card, ghostButton, input, primaryButton } from "../ui";

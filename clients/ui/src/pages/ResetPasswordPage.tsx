@@ -1,6 +1,6 @@
 import { type FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router";
 import { useUmami } from "../auth/UmamiProvider";
 import { Banner, errMsg, Field } from "../components";
 import { card, input, primaryButton } from "../ui";

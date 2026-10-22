@@ -2,7 +2,7 @@ import type { CatalogueEntry, CustomFieldView, Salutation, UserView } from "@ben
 import { KeyIcon, LockClosedIcon, LockOpenIcon, TrashIcon } from "@heroicons/react/24/outline";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import { useUmami } from "../auth/UmamiProvider";
 import {
   Banner,
