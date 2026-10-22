@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router";
 import { useUmami } from "../auth/UmamiProvider";
 import { Banner, errMsg, Loader } from "../components";
 import { card, primaryButton } from "../ui";

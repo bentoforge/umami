@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router";
 import { useUmami } from "./auth/UmamiProvider";
 import { Loader } from "./components";
 import { AdminLayout } from "./pages/AdminLayout";

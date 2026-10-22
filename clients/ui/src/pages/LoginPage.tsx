@@ -1,7 +1,7 @@
 import { UmamiError } from "@bentoforge/umami-iam";
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router";
 import { useUmami } from "../auth/UmamiProvider";
 import { Footer, Logo } from "../components";
 import { errorBox, noticeBox } from "../ui";

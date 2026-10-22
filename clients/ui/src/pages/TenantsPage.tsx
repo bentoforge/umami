@@ -2,7 +2,7 @@ import type { CustomFieldView, Tenant } from "@bentoforge/umami-iam";
 import { ArrowsRightLeftIcon, TrashIcon } from "@heroicons/react/24/outline";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router";
 import { useUmami } from "../auth/UmamiProvider";
 import {
   Banner,

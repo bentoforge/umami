@@ -2,7 +2,7 @@ import type { AppCard, TaskCard } from "@bentoforge/umami-iam";
 import { ArrowTopRightOnSquareIcon } from "@heroicons/react/24/outline";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import { useUmami } from "../auth/UmamiProvider";
 import { Banner, errMsg } from "../components";
 import { card } from "../ui";
@@ -54,9 +54,11 @@ export function StartPage() {
             {t("start.tasks")}
           </h2>
           <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-            {tasks.map((task) => (
-              <TaskTile key={task.url + task.label} task={task} />
-            ))}
+            {tasks
+              .filter((task) => isInAppPath(task.url))
+              .map((task) => (
+                <TaskTile key={task.url + task.label} task={task} />
+              ))}
           </div>
         </section>
       )}
@@ -81,6 +83,16 @@ function AppTile({ app }: { app: AppCard }) {
       <span className="mt-2 truncate font-mono text-slate-400">{app.url}</span>
     </a>
   );
+}
+
+/**
+ * Whether a server-sent task URL is a path inside this app. The router resolves `to` against the
+ * basename, but a value with a scheme or authority (`https://…`, `//host`) or a backslash (which
+ * browsers normalise into `//`) would leave the origin — so a card that is not plainly in-app is
+ * dropped rather than followed.
+ */
+function isInAppPath(url: string): boolean {
+  return url.startsWith("/") && !url.startsWith("//") && !url.includes("\\");
 }
 
 /** An account-hygiene task. Links inside umami (same tab). An `important` task is highlighted —

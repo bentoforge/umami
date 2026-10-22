@@ -11,7 +11,7 @@ import {
 } from "@heroicons/react/24/outline";
 import { Fragment, type SVGProps, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet } from "react-router";
 import { useUmami } from "../auth/UmamiProvider";
 import { errMsg, Footer, Logo } from "../components";
 import { getTheme, setTheme, type Theme } from "../theme";
