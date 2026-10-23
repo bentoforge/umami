@@ -650,14 +650,16 @@ export interface NotificationTypeDef {
   cadences?: CadenceDef[];
   /** Applies to a user who never chose: `"on"`, a cadence code, or omitted for off. */
   default?: Choice | null;
-  /** DSL over the recipient's **offline** subject set — `role:*`, `feature:*`,
-   * `is:system-tenant{,-member}`. Not the session markers (`is:2fa`, …): a notification has no
-   * session, so an expression naming one would never match. */
+  /** Which of the tenant's **members** may hear about this type: DSL over the user's **offline**
+   * subject set — `role:*`, `feature:*`, `is:system-tenant{,-member}`. Not the session markers
+   * (`is:2fa`, …): a notification has no session, so an expression naming one would never match.
+   * Says nothing about external recipients; that is `recipientsIf`. */
   eligibleIf?: string;
-  /** Whether a tenant's **external recipients** — addresses with no login — may subscribe to this
-   * type. Off by default. A type with this flag may gate on `feature:*` but not on `role:*`: a
-   * recipient has no roles, and `PUT /config` refuses the combination. */
-  recipients?: boolean;
+  /** In which tenants the **external recipients** — addresses with no login — may subscribe to
+   * this type, as DSL over the tenant's subjects (`feature:*`, `is:system-tenant*`). Absent =
+   * closed to every recipient; `""` = open in every tenant. `PUT /config` refuses a `role:*`
+   * here: a recipient has no roles. Narrow the members by role in `eligibleIf` instead. */
+  recipientsIf?: string;
 }
 
 /** One type as the profile screen sees it. */

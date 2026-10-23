@@ -27,7 +27,8 @@ earlier one's status changes to `superseded`.
 | [0018](0018-limits-pure-accounting-core-thin-repository.md) | Limits: pure accounting core, thin repository, one bounded OCC loop | accepted |
 | [0019](0019-limits-booking-cascade-and-overrun-policy.md) | Limits booking cascade and overrun policies | accepted |
 | [0020](0020-limits-daily-throttle-reconciled-mid-day.md) | Limits: the daily throttle is reconciled mid-day | accepted |
-| [0021](0021-external-recipients-without-identity.md) | External recipients: a notification address without an identity | accepted |
+| [0021](0021-external-recipients-without-identity.md) | External recipients: a notification address without an identity | accepted, amended by 0022 |
+| [0022](0022-recipients-get-their-own-gate.md) | External recipients get their own gate: `recipientsIf` | accepted |
 
 The topic docs under `docs/` link the decisions behind them at their top, so a reader of
 [NOTIFICATIONS.md](../NOTIFICATIONS.md) or [LIMITS.md](../LIMITS.md) finds the relevant ones

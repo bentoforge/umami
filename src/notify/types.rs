@@ -111,7 +111,7 @@ pub struct CadenceDef {
 /// The **type** is what a user subscribes to, so its code has to stay stable. Which template renders
 /// it is the app's business; umami only decides who hears about it.
 #[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", try_from = "RawNotificationTypeDef")]
 pub struct NotificationTypeDef {
     /// Stable code the app names when it fires, and the key a user's preference is stored under.
     pub code: String,
@@ -135,28 +135,86 @@ pub struct NotificationTypeDef {
     /// for off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default: Option<String>,
-    /// DSL over the recipient's **offline** subject set — `feature:*` (their tenant's),
-    /// `role:*` (theirs), plus `is:system-tenant` / `is:system-tenant-member`. `None` = everyone.
+    /// Who among the tenant's **members** may hear about this type: a DSL over the user's
+    /// **offline** subject set — `feature:*` (their tenant's), `role:*` (theirs), plus
+    /// `is:system-tenant` / `is:system-tenant-member`. `None` = every member.
     ///
     /// Deliberately *not* the permission set: permissions are the output of the `apis` mapping, and
     /// this is the input vocabulary. And deliberately not the session markers (`is:2fa`,
     /// `is:passkey`, `is:totp`) — those describe how a *session* authenticated, and a notification
     /// has no session. An expression naming one would simply never match, which is the silent
     /// failure this whole file keeps trying to avoid.
+    ///
+    /// Says nothing about external recipients; that is [`Self::recipients_if`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub eligible_if: Option<String>,
-    /// Whether a tenant's **external recipients** — addresses with no login (ADR 0021) — may
-    /// subscribe to this type. `false` by default, so no type reaches outside the tenant's members
-    /// until the catalogue says so.
+    /// In which tenants the **external recipients** — addresses with no login (ADR 0021) — may
+    /// subscribe to this type. `None` = closed to every recipient, so no
+    /// type reaches outside the tenant's members until the catalogue says so. `Some("")` = open
+    /// in every tenant.
     ///
-    /// An explicit flag rather than a reading of `eligibleIf`: a recipient has no roles, and
-    /// "treat `role:*` as unfulfilled" reads well for `role:editor` and wrong for `!role:readonly`,
-    /// which would then admit every mailbox. Whether a type's content may leave the member circle
-    /// is a decision the catalogue should state. For a recipient, `eligibleIf` is evaluated over
-    /// the tenant's subjects only (`feature:*`, `is:system-tenant*`); naming a `role:*` on a type
-    /// with this flag is refused by [`validate_catalogue`].
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub recipients: bool,
+    /// Its own expression rather than a reading of `eligibleIf`: the members of a tenant are
+    /// usually narrowed by role, and a recipient has none. Evaluated over the **tenant's** subjects
+    /// only (`feature:*`, `is:system-tenant*`); naming a `role:*` here is refused by
+    /// [`validate_catalogue`], negated or not, because `!role:readonly` would otherwise admit every
+    /// mailbox.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recipients_if: Option<String>,
+}
+
+/// What a catalogue entry may look like on the way in: the current shape plus the boolean
+/// `recipients` of the first version of ADR 0021.
+///
+/// A stored catalogue that still says `"recipients": true` has to keep reaching the same
+/// mailboxes after an upgrade; dropping the field silently would close the type to every
+/// recipient with no error anywhere. Back then `eligibleIf` had to be free of roles for such a
+/// type, so it is exactly the recipient gate and becomes `recipientsIf`. The next write stores the
+/// current shape.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawNotificationTypeDef {
+    code: String,
+    name: LocalizedText,
+    #[serde(default)]
+    description: Option<LocalizedText>,
+    #[serde(default)]
+    cadences: Vec<CadenceDef>,
+    #[serde(default)]
+    default: Option<String>,
+    #[serde(default)]
+    eligible_if: Option<String>,
+    #[serde(default)]
+    recipients_if: Option<String>,
+    #[serde(default)]
+    recipients: Option<bool>,
+}
+
+impl TryFrom<RawNotificationTypeDef> for NotificationTypeDef {
+    type Error = String;
+
+    fn try_from(raw: RawNotificationTypeDef) -> Result<Self, Self::Error> {
+        let recipients_if = match (raw.recipients, raw.recipients_if) {
+            (Some(_), Some(_)) => {
+                return Err(format!(
+                    "Notification type '{}' sets both 'recipients' and 'recipientsIf' — keep \
+                     'recipientsIf' only",
+                    raw.code
+                ));
+            }
+            (Some(true), None) => Some(raw.eligible_if.clone().unwrap_or_default()),
+            (Some(false), None) => None,
+            (None, recipients_if) => recipients_if,
+        };
+        Ok(Self {
+            code: raw.code,
+            name: raw.name,
+            description: raw.description,
+            cadences: raw.cadences,
+            default: raw.default,
+            eligible_if: raw.eligible_if,
+            recipients_if,
+        })
+    }
 }
 
 impl NotificationTypeDef {
@@ -235,14 +293,13 @@ pub fn validate_catalogue(types: &[NotificationTypeDef]) -> anyhow::Result<()> {
                 client_bail!("Notification type '{code}' lists cadence '{value}' twice");
             }
         }
-        if type_def.recipients
-            && let Some(expression) = type_def.eligible_if.as_deref()
+        if let Some(expression) = type_def.recipients_if.as_deref()
             && let Some(term) = role_term(expression)
         {
             client_bail!(
-                "Notification type '{code}' allows external recipients but gates on '{term}' — a \
-                 recipient has no roles, so the expression cannot mean the same thing for it. Gate \
-                 on the tenant's features instead, or drop 'recipients'"
+                "Notification type '{code}' gates its external recipients on '{term}' — a \
+                 recipient has no roles, so 'recipientsIf' may only name the tenant's features. \
+                 Narrow the members by role in 'eligibleIf' instead"
             );
         }
         if let Some(default) = type_def.default.as_deref()
@@ -333,7 +390,7 @@ mod tests {
             ],
             default: default.map(str::to_owned),
             eligible_if: None,
-            recipients: false,
+            recipients_if: None,
         }
     }
 
@@ -346,7 +403,7 @@ mod tests {
             cadences: Vec::new(),
             default: default.map(str::to_owned),
             eligible_if: None,
-            recipients: false,
+            recipients_if: None,
         }
     }
 
@@ -536,13 +593,13 @@ mod tests {
         );
     }
 
-    /// A recipient has no roles, so a type open to recipients must not ask about them — negated
-    /// or not, because `!role:readonly` would otherwise admit every mailbox.
+    /// A recipient has no roles, so the recipient gate must not ask about them — negated or not,
+    /// because `!role:readonly` would otherwise admit every mailbox. The member gate may.
     #[test]
-    fn a_type_open_to_recipients_cannot_gate_on_a_role() {
+    fn only_the_member_gate_may_ask_about_roles() {
         let open = NotificationTypeDef {
-            recipients: true,
-            eligible_if: Some("feature:forms".to_owned()),
+            eligible_if: Some("feature:forms + role:editor".to_owned()),
+            recipients_if: Some("feature:forms".to_owned()),
             ..plain(Some(CHOICE_ON))
         };
         assert!(validate_catalogue(std::slice::from_ref(&open)).is_ok());
@@ -553,7 +610,7 @@ mod tests {
             "feature:x, role:y",
         ] {
             let gated = NotificationTypeDef {
-                eligible_if: Some(expression.to_owned()),
+                recipients_if: Some(expression.to_owned()),
                 ..open.clone()
             };
             assert!(
@@ -561,14 +618,37 @@ mod tests {
                 "'{expression}' asks about roles"
             );
         }
+    }
 
-        // Without the flag a role gate is what it always was.
-        let members_only = NotificationTypeDef {
-            recipients: false,
-            eligible_if: Some("role:editor".to_owned()),
-            ..plain(Some(CHOICE_ON))
-        };
-        assert!(validate_catalogue(&[members_only]).is_ok());
+    /// The boolean of the first ADR 0021 version still opens the type, gated as it was: back then
+    /// `eligibleIf` was the recipient gate too.
+    #[test]
+    fn the_old_recipients_flag_becomes_recipients_if() {
+        let parse = |json: &str| serde_json::from_str::<NotificationTypeDef>(json);
+
+        let flagged = parse(
+            r#"{ "code": "form-submission", "name": "Forms", "eligibleIf": "feature:forms",
+                 "recipients": true }"#,
+        )
+        .expect("the old shape");
+        assert_eq!(flagged.recipients_if.as_deref(), Some("feature:forms"));
+        assert_eq!(flagged.eligible_if.as_deref(), Some("feature:forms"));
+
+        let ungated = parse(r#"{ "code": "x", "name": "X", "recipients": true }"#).unwrap();
+        assert_eq!(ungated.recipients_if.as_deref(), Some(""));
+
+        let closed = parse(r#"{ "code": "x", "name": "X", "recipients": false }"#).unwrap();
+        assert_eq!(closed.recipients_if, None);
+
+        assert!(
+            parse(r#"{ "code": "x", "name": "X", "recipients": true, "recipientsIf": "" }"#)
+                .is_err(),
+            "two answers to one question"
+        );
+
+        let written = serde_json::to_value(&flagged).unwrap();
+        assert!(written.get("recipients").is_none(), "{written}");
+        assert_eq!(written["recipientsIf"], "feature:forms");
     }
 
     #[test]

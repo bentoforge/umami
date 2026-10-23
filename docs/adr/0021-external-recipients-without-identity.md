@@ -6,6 +6,8 @@
   [ADR 0015](0015-app-owns-notification-clock.md)
 - **Builds on:** [ADR 0011](0011-contacts-as-verified-list.md),
   [ADR 0012](0012-mail-worker-outbound-seam.md)
+- **Amended by:** [ADR 0022](0022-recipients-get-their-own-gate.md) — the boolean `recipients` is
+  replaced by the expression `recipientsIf`, and `eligibleIf` applies to members only
 
 ## Context
 
@@ -85,6 +87,10 @@ and carrying no identity.
   are audited. The recipient's own recourse is the link below.
 
 ### Which types a recipient may subscribe to: `recipients: true` on the type
+
+> Amended by [ADR 0022](0022-recipients-get-their-own-gate.md): the flag is now an expression of
+> its own, `recipientsIf`, and `eligibleIf` no longer applies to recipients. The text below records
+> the decision as first taken.
 
 `eligibleIf` is evaluated over a user's offline subject set — their roles, their tenant's features
 and the system-tenant markers. A recipient has no roles, so the expression cannot mean the same
