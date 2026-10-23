@@ -157,7 +157,12 @@ struct AudienceRequest {
     #[serde(rename = "type")]
     type_code: String,
     /// The cadences **this firing** represents. A Friday run is typically `["daily","weekly"]`.
-    cadences: Vec<String>,
+    ///
+    /// Optional, and `null` counts as absent, so a type with no rhythm (case 2) can be fired with
+    /// `{ tenantId, type }` alone — the shape the docs and the SDK promise. The strictness lives in
+    /// [`parse_firing`], not here: a rhythmic type still refuses an empty firing.
+    #[serde(default)]
+    cadences: Option<Vec<String>>,
 }
 
 /// One resolved recipient. Deliberately carries no address.
@@ -680,7 +685,8 @@ async fn audience(
     let config = deps.config.current().await?;
     let type_def = notification_type(&config, &request.type_code)?;
 
-    let firing = parse_firing(&request.cadences, type_def)?;
+    let cadences = request.cadences.unwrap_or_default();
+    let firing = parse_firing(&cadences, type_def)?;
     let features = tenant_features(&deps, &request.tenant_id).await?;
     // Every user of the tenant; the cap is the admin list cap, and the query is a firing rather
     // than a search, so there is nothing to narrow by.
@@ -758,7 +764,7 @@ async fn audience(
             format!(
                 "Audience resolved for '{}' [{}]: {} recipient(s)",
                 type_def.code,
-                request.cadences.join(","),
+                cadences.join(","),
                 recipients.len()
             ),
         ),
@@ -1201,7 +1207,18 @@ fn parse_firing(raw: &[String], type_def: &NotificationTypeDef) -> anyhow::Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::audit::repository::MockAuditRepository;
+    use crate::config::repository::memory::StaticConfigRepository;
+    use crate::contacts::Contact;
+    use crate::contacts::repository::MockContactRepository;
+    use crate::notify::NoopNotifier;
     use crate::notify::types::CadenceDef;
+    use crate::recipients::repository::MockRecipientRepository;
+    use crate::tenants::Tenant;
+    use crate::tenants::repository::MockTenantRepository;
+    use crate::users::repository::MockUserRepository;
+    use chrono::Utc;
+    use wasabi::web::error::ApiError;
 
     /// A type with a rhythm, to check a send against.
     fn rhythmic() -> NotificationTypeDef {
@@ -1448,5 +1465,186 @@ mod tests {
         assert_eq!(meta.cadence.as_deref(), Some("weekly"));
 
         assert!(notification_meta(&type_def, None).cadence.is_none());
+    }
+    /// A type with no rhythm of its own (case 2), fired without naming any cadence.
+    fn plain() -> NotificationTypeDef {
+        NotificationTypeDef {
+            code: "form-submission".to_owned(),
+            name: "Form submissions".into(),
+            cadences: Vec::new(),
+            default: Some("on".to_owned()),
+            ..rhythmic()
+        }
+    }
+
+    fn a_user() -> User {
+        let now = Utc::now();
+        User {
+            user_id: "user-1".to_owned(),
+            tenant_id: "tenant-1".to_owned(),
+            roles: Vec::new(),
+            username: "jane".to_owned(),
+            title: None,
+            locale: None,
+            salutation: crate::users::Salutation::Unspecified,
+            firstname: Some("Jane".to_owned()),
+            lastname: Some("Doe".to_owned()),
+            password_hash: None,
+            locked: false,
+            token_version: 1,
+            totp_secret: None,
+            totp_pending: None,
+            custom_fields: Default::default(),
+            created: now,
+            last_updated: now,
+            last_seen: None,
+            last_active_or_created: now,
+            last_password_reset: None,
+            last_password_change: None,
+            has_passkey: false,
+            created_by: None,
+            last_changed_by: None,
+            preferred_contact: None,
+            notification_choices: Default::default(),
+        }
+    }
+
+    fn a_tenant() -> Tenant {
+        let now = Utc::now();
+        Tenant {
+            tenant_id: "tenant-1".to_owned(),
+            version: 1,
+            features: Vec::new(),
+            custom_fields: Default::default(),
+            limits: Default::default(),
+            name: "Example Ltd".to_owned(),
+            slug: "example-ltd".to_owned(),
+            created: now,
+            last_updated: now,
+            last_active: None,
+            last_active_or_created: now,
+            created_by: None,
+            last_changed_by: None,
+        }
+    }
+
+    /// Dependencies for resolving an audience: one tenant with one user who has a confirmed
+    /// address, and a catalogue holding a plain and a rhythmic type.
+    fn audience_deps() -> (NotifyDeps, Arc<dyn AuditRepository>) {
+        let mut config = Config::default();
+        config.notification_types = vec![plain(), rhythmic()];
+
+        let mut users = MockUserRepository::new();
+        let _ = users
+            .expect_find_users()
+            .returning(|_, _, _| Box::pin(async { Ok((vec![a_user()], false)) }));
+        let mut tenants = MockTenantRepository::new();
+        let _ = tenants
+            .expect_get_tenant()
+            .returning(|_| Box::pin(async { Ok(Some(a_tenant())) }));
+        let mut contacts = MockContactRepository::new();
+        let _ = contacts.expect_list_contacts().returning(|user_id| {
+            let contact = Contact {
+                user_id: user_id.to_owned(),
+                address: "jane@example.com".to_owned(),
+                tenant_id: "tenant-1".to_owned(),
+                label: None,
+                verified: true,
+                verified_at: None,
+                created: Utc::now(),
+            };
+            Box::pin(async move { Ok(vec![contact]) })
+        });
+        let mut audit = MockAuditRepository::new();
+        let _ = audit
+            .expect_record()
+            .returning(|_| Box::pin(async { Ok(()) }));
+
+        let deps = NotifyDeps {
+            users: Arc::new(users),
+            tenants: Arc::new(tenants),
+            contacts: Arc::new(contacts),
+            recipients: Arc::new(MockRecipientRepository::new()),
+            secrets: Arc::new(crate::auth::secretbox::SecretBox::with_test_key()),
+            config: Arc::new(StaticConfigRepository::with_config(config)),
+            notifier: Arc::new(NoopNotifier),
+            system_tenant_id: None,
+            public_base_url: "https://umami.example.com/".to_owned(),
+        };
+        (deps, Arc::new(audit))
+    }
+
+    /// The request as it arrives over the wire, so the test covers the body shape and not only
+    /// the handler.
+    fn audience_request(body: &str) -> AudienceRequest {
+        serde_json::from_str(body).expect("a well-formed audience request")
+    }
+
+    fn status_of(error: &anyhow::Error) -> Option<StatusCode> {
+        error.downcast_ref::<ApiError>().map(|api| api.status)
+    }
+
+    /// The docs promise `{ tenantId, type }` alone for a type with no rhythm, and the SDK types
+    /// `cadences` as optional — so a body without it, or with `null`, resolves the audience
+    /// instead of failing to parse.
+    #[tokio::test]
+    async fn a_plain_type_is_fired_without_cadences() {
+        for body in [
+            r#"{ "tenantId": "tenant-1", "type": "form-submission" }"#,
+            r#"{ "tenantId": "tenant-1", "type": "form-submission", "cadences": null }"#,
+            r#"{ "tenantId": "tenant-1", "type": "form-submission", "cadences": [] }"#,
+        ] {
+            let (deps, audit) = audience_deps();
+            let response = audience(audience_request(body), deps, audit)
+                .await
+                .unwrap_or_else(|error| panic!("{body}: {error}"));
+            let recipients = response["recipients"]
+                .as_array()
+                .expect("a recipients array");
+            assert_eq!(recipients.len(), 1, "{body}");
+            assert_eq!(recipients[0]["userId"], "user-1", "{body}");
+            assert!(recipients[0].get("cadence").is_none(), "{body}");
+        }
+    }
+
+    /// Making the field optional must not soften the checks that tell the two kinds of type
+    /// apart: naming a cadence on a plain type, or none on a rhythmic one, is still a `400`.
+    #[tokio::test]
+    async fn an_optional_field_does_not_relax_the_firing_checks() {
+        let (deps, audit) = audience_deps();
+        let error = audience(
+            audience_request(
+                r#"{ "tenantId": "tenant-1", "type": "form-submission", "cadences": ["weekly"] }"#,
+            ),
+            deps,
+            audit,
+        )
+        .await
+        .expect_err("a cadence on a type with no rhythm");
+        assert_eq!(status_of(&error), Some(StatusCode::BAD_REQUEST));
+
+        for body in [
+            r#"{ "tenantId": "tenant-1", "type": "new-content" }"#,
+            r#"{ "tenantId": "tenant-1", "type": "new-content", "cadences": null }"#,
+            r#"{ "tenantId": "tenant-1", "type": "new-content", "cadences": [] }"#,
+        ] {
+            let (deps, audit) = audience_deps();
+            let error = audience(audience_request(body), deps, audit)
+                .await
+                .expect_err("a rhythmic type fired without a cadence");
+            assert_eq!(status_of(&error), Some(StatusCode::BAD_REQUEST), "{body}");
+        }
+
+        let (deps, audit) = audience_deps();
+        let response = audience(
+            audience_request(
+                r#"{ "tenantId": "tenant-1", "type": "new-content", "cadences": ["weekly"] }"#,
+            ),
+            deps,
+            audit,
+        )
+        .await
+        .expect("a rhythmic type fired at a declared cadence");
+        assert_eq!(response["truncated"], false);
     }
 }
