@@ -11,6 +11,7 @@ Related decisions:
 - [ADR 0014 — Transactional mail stays outside the notification catalogue](adr/0014-transactional-mail-outside-notification-catalogue.md)
 - [ADR 0015 — The app owns the notification clock; cadences are opaque strings](adr/0015-app-owns-notification-clock.md)
 - [ADR 0021 — External recipients: a notification address without an identity](adr/0021-external-recipients-without-identity.md)
+- [ADR 0022 — External recipients get their own gate: `recipientsIf`](adr/0022-recipients-get-their-own-gate.md)
 
 ---
 
@@ -93,13 +94,14 @@ In the config, `notificationTypes`, shaped like the other catalogues:
     "default": "on",
     "eligibleIf": "role:editor" },
 
-  // Open to a tenant's external recipients (§7) — mailboxes with no login. Such a type may gate
-  // on the tenant's features, never on a role: a recipient has none, and PUT /config refuses it.
+  // Open to a tenant's external recipients (§7) — mailboxes with no login. `eligibleIf` picks the
+  // members, `recipientsIf` the tenants whose recipients may subscribe. The latter may name the
+  // tenant's features, never a role: a recipient has none, and PUT /config refuses it.
   { "code": "form-submission",
     "name": { "de": "Formular-Eingaben", "en": "Form submissions" },
     "default": "on",
-    "eligibleIf": "feature:forms",
-    "recipients": true }
+    "eligibleIf": "feature:forms + role:forms",
+    "recipientsIf": "feature:forms" }
 ]
 ```
 
@@ -308,10 +310,12 @@ confirmation through the same report the worker files for a contact (`recipientI
 the type's `default` says — nobody ever showed the mailbox a default, so it cannot have agreed to
 it. A recipient has to be created with at least one choice that is not `off`.
 
-**Which types: `recipients: true`.** A type is closed to recipients unless the catalogue says
-otherwise. Such a type may gate on the tenant's `feature:*` (and the `is:system-tenant*` markers)
-but not on a `role:*` — a recipient has none, and `PUT /config` refuses the combination rather than
-guessing what a role predicate means for a mailbox.
+**Which types: `recipientsIf`.** A type is closed to recipients unless it has a `recipientsIf`
+([ADR 0022](adr/0022-recipients-get-their-own-gate.md)). The expression is judged on the tenant's
+`feature:*` and the `is:system-tenant*` markers; `""` opens the type in every tenant. It may not
+name a `role:*` — a recipient has none, and `PUT /config` refuses that rather than guessing what a
+role predicate means for a mailbox. `eligibleIf` does not apply to recipients at all, so it is free
+to narrow the members by role.
 
 **The link in every mail.** Each notification sent to a recipient carries a management link with
 the recipient's own long-lived token, appended to the body above the signature separator and

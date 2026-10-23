@@ -1184,8 +1184,8 @@ mod tests {
         Arc::new(RateLimiter::new(Arc::new(repo), 16))
     }
 
-    /// A catalogue with one type open to recipients (gated on a feature), one with a rhythm that
-    /// is open, and one closed to them.
+    /// A catalogue with one type open to recipients (gated on a feature, its members narrowed by
+    /// role on top), one with a rhythm that is open everywhere, and one closed to them.
     fn config() -> Config {
         let mut config = Config::default();
         config.notification_types = vec![
@@ -1195,8 +1195,8 @@ mod tests {
                 description: None,
                 cadences: Vec::new(),
                 default: Some("on".to_owned()),
-                eligible_if: Some("feature:forms".to_owned()),
-                recipients: true,
+                eligible_if: Some("feature:forms + role:forms".to_owned()),
+                recipients_if: Some("feature:forms".to_owned()),
             },
             NotificationTypeDef {
                 code: "new-content".to_owned(),
@@ -1208,7 +1208,7 @@ mod tests {
                 }],
                 default: None,
                 eligible_if: None,
-                recipients: true,
+                recipients_if: Some(String::new()),
             },
             NotificationTypeDef {
                 code: "build-failed".to_owned(),
@@ -1217,7 +1217,7 @@ mod tests {
                 cadences: Vec::new(),
                 default: Some("on".to_owned()),
                 eligible_if: None,
-                recipients: false,
+                recipients_if: None,
             },
         ];
         config

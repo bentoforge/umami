@@ -486,23 +486,19 @@ pub fn tenant_subjects(
 }
 
 /// Whether a tenant's external recipients may subscribe to `type_def` at all (ADR 0021): the type
-/// has to allow recipients, and its `eligibleIf` has to hold for the tenant. The catalogue gate
-/// guarantees the expression names no role, so evaluating it over the tenant's subjects is exact
-/// rather than a guess.
+/// has to have a `recipientsIf`, and it has to hold for the tenant. `eligibleIf` plays no part — it
+/// narrows the members, usually by role, and a recipient has none. The catalogue gate guarantees
+/// `recipientsIf` names no role, so evaluating it over the tenant's subjects is exact rather than a
+/// guess.
 pub fn eligible_for_recipients(
     type_def: &NotificationTypeDef,
     subjects: &BTreeSet<String>,
 ) -> bool {
-    if !type_def.recipients {
+    let Some(expression) = type_def.recipients_if.as_deref() else {
         return false;
-    }
-    match type_def.eligible_if.as_deref() {
-        None => true,
-        Some(expression) => {
-            let view: BTreeSet<&str> = subjects.iter().map(String::as_str).collect();
-            crate::config::eval_expression(expression, &view)
-        }
-    }
+    };
+    let view: BTreeSet<&str> = subjects.iter().map(String::as_str).collect();
+    crate::config::eval_expression(expression, &view)
 }
 
 /// A recipient's stored choice for a type, in the form [`resolve_delivery`] expects — except that
@@ -1238,7 +1234,7 @@ mod tests {
             ],
             default: None,
             eligible_if: None,
-            recipients: false,
+            recipients_if: None,
         }
     }
 
@@ -1394,7 +1390,7 @@ mod tests {
     fn a_recipient_without_a_choice_is_off_not_defaulted() {
         let type_def = NotificationTypeDef {
             default: Some("weekly".to_owned()),
-            recipients: true,
+            recipients_if: Some(String::new()),
             ..rhythmic()
         };
         let firing = vec!["weekly".to_owned()];
@@ -1434,20 +1430,30 @@ mod tests {
         );
     }
 
-    /// The flag is the gate, and the tenant's features still apply behind it.
+    /// `recipientsIf` is the gate, judged on the tenant's features; the member gate does not
+    /// apply to a mailbox, so a role there neither opens nor closes the type for recipients.
     #[test]
-    fn recipients_need_the_flag_and_the_tenant_features() {
-        let closed = rhythmic();
+    fn recipients_follow_recipients_if_not_eligible_if() {
+        let closed = NotificationTypeDef {
+            eligible_if: Some("feature:forms".to_owned()),
+            ..rhythmic()
+        };
         let with_features: BTreeSet<String> = ["feature:forms".to_owned()].into();
         assert!(!eligible_for_recipients(&closed, &with_features));
 
         let open = NotificationTypeDef {
-            recipients: true,
-            eligible_if: Some("feature:forms".to_owned()),
+            eligible_if: Some("feature:forms + role:editor".to_owned()),
+            recipients_if: Some("feature:forms".to_owned()),
             ..rhythmic()
         };
         assert!(eligible_for_recipients(&open, &with_features));
         assert!(!eligible_for_recipients(&open, &BTreeSet::new()));
+
+        let everywhere = NotificationTypeDef {
+            recipients_if: Some(String::new()),
+            ..rhythmic()
+        };
+        assert!(eligible_for_recipients(&everywhere, &BTreeSet::new()));
 
         let system = tenant_subjects("sys", &[], Some("sys"));
         assert!(system.contains(crate::constants::SYSTEM_TENANT_MARKER));
@@ -1531,8 +1537,10 @@ mod tests {
     /// Dependencies for resolving an audience: one tenant with one user who has a confirmed
     /// address, and a catalogue holding a plain and a rhythmic type.
     fn audience_deps() -> (NotifyDeps, Arc<dyn AuditRepository>) {
-        let mut config = Config::default();
-        config.notification_types = vec![plain(), rhythmic()];
+        let config = Config {
+            notification_types: vec![plain(), rhythmic()],
+            ..Config::default()
+        };
 
         let mut users = MockUserRepository::new();
         let _ = users

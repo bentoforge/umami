@@ -229,17 +229,22 @@ not administering the deployment.
     { "code": "monthly", "name": "Monatlich" }
   ],
   "default": "weekly",              // "on", a cadence code, or omitted for off
-  "eligibleIf": "role:editor",   // DSL over role:*/feature:*/is:system-tenant{,-member}
-  "recipients": false }             // open to the tenant's external recipients? (default false)
+  "eligibleIf": "role:editor",   // members: DSL over role:*/feature:*/is:system-tenant{,-member}
+  "recipientsIf": "feature:forms" } // external recipients: DSL over feature:*/is:system-tenant*;
+                                    //   omitted = closed to them, "" = open in every tenant
 //   Omit `cadences` entirely for a type with no rhythm of its own: the choice is then "on"/"off".
 //   `off` and `on` are reserved and cannot be cadence codes. A user can always choose `off`,
 //   whether or not the type has a rhythm.
 //   eligibleIf is the INPUT vocabulary, not permissions. Session markers (is:2fa, is:passkey,
 //   is:totp) describe how a session authenticated and a notification has no session — naming one
 //   would simply never match, with nothing to explain why.
-//   `recipients: true` opens the type to a tenant's external recipients (mailboxes with no login,
-//   NOTIFICATIONS.md §7). Such a type may gate on feature:* but not on role:* — a recipient has no
-//   roles — and PUT /config refuses the combination.
+//   eligibleIf gates the tenant's MEMBERS only. `recipientsIf` opens the type to a tenant's
+//   external recipients (mailboxes with no login, NOTIFICATIONS.md §7) and is judged on the
+//   tenant's subjects alone: it may name feature:* and is:system-tenant*, never role:* — a
+//   recipient has no roles — and PUT /config refuses one that does. The two are independent, so a
+//   type can reach editors by role and the tenant's info@ mailbox by feature. The boolean
+//   `recipients: true` of earlier versions is still read, as `recipientsIf` = that type's
+//   eligibleIf, and written back as `recipientsIf`.
 
 // BrandingConfig — white-label the UI at runtime (all optional; empty → built-in defaults). umami
 //   serves these at /app/branding.css, /app/logo, /app/favicon. logo/favicon may be a data: URI
